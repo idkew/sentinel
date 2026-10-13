@@ -2,7 +2,7 @@
 
 **Copyright © 2026 Project Rights Holder. All Rights Reserved.**
 
-**Project:** Moderation Panel  
+**Project:** Sentinel  
 **Software Type:** Roblox Game Moderation System  
 **Governing Law:** State of Texas, United States  
 **License Type:** Proprietary — All Rights Reserved
@@ -11,7 +11,7 @@
 
 ## 1. COPYRIGHT AND OWNERSHIP
 
-This software project, referred to throughout this agreement as the "Software," consists of original code and materials associated with the Moderation Panel project, including, where applicable:
+This software project, referred to throughout this agreement as the "Software," consists of original code and materials associated with the Sentinel project, including, where applicable:
 
 - Web-based moderation dashboards and user interfaces.
 - Roblox Lua and Luau scripts and game integrations.
@@ -182,8 +182,8 @@ If any provision is held invalid or unenforceable, it shall be limited or severe
 Requests for authorization must be submitted through a contact method designated by the rights holder.
 
 **Public Rights Holder Designation:** Project Rights Holder  
-**Project:** Moderation Panel  
-**Repository:** https://github.com/idkew/moderation-panel 
+**Project:** Sentinel  
+**Repository:** https://github.com/idkew/sentinel
 
 Permission is not granted merely by submitting a request. The requested use may begin only after the required authorization has been validly granted.
 
