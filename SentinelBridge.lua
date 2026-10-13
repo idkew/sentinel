@@ -23,7 +23,7 @@ local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
 local URL = "http://127.0.0.1:3000"
-local KEY = "PASTE_GAME_KEY_HERE"
+local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
 local MODCALL_COOLDOWN = 30 -- seconds between ModCalls per player
 
@@ -193,6 +193,11 @@ Players.PlayerRemoving:Connect(function(p)
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
 
+KEY = string.gsub(KEY, "%s", "")
+if KEY == "" or string.find(KEY, "INPUT", 1, true) then
+	warn("[Sentinel] No game code set. Open the Sentinel website, copy your game code and paste it over [INPUT CODE HERE] at the top of this script.")
+	return
+end
 task.spawn(setupChat)
 task.spawn(function()
 	while true do
