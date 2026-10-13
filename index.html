@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <meta name="color-scheme" content="light dark">
 <title>Sentinel</title>
 <style>
@@ -143,6 +144,117 @@ code{font-family:var(--m);font-size:12.5px;background:var(--neb);padding:1px 6px
  .top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:15}
  .page{padding:22px 16px 60px}.g2,.g4{grid-template-columns:minmax(0,1fr)}h1{font-size:24px}.ob{grid-template-columns:1fr}.obl{display:none}.obr{padding:24px 16px}.kv2{grid-template-columns:1fr}
 }
+
+/* ===== Sentinel skin: macOS-style ===== */
+:root{
+ --f:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Inter","Segoe UI",system-ui,sans-serif;
+ --bg:#fff;--canvas:#f5f5f7;--side:rgba(238,239,243,.66);--ink:#1d1d1f;--ink2:#3a3a3d;--muted:#6e6e73;--faint:#a1a1a6;
+ --line:rgba(0,0,0,.085);--hover:rgba(0,0,0,.04);--sel:rgba(0,0,0,.065);
+ --ac:#0a7aff;--ac2:#0063d6;--acs:rgba(10,122,255,.1);--acr:rgba(10,122,255,.32);
+ --ok:#1f8a3b;--okb:rgba(48,209,88,.16);--wa:#9a5b00;--wab:rgba(255,159,10,.16);--er:#d70015;--erb:rgba(255,59,48,.12);--in:#0063d6;--inb:rgba(10,122,255,.12);--ne:#58585d;--neb:rgba(0,0,0,.06);
+ --sh:0 0 0 .5px rgba(0,0,0,.09),0 1px 2px rgba(0,0,0,.04),0 4px 14px rgba(0,0,0,.025);--shl:0 0 0 .5px rgba(0,0,0,.14),0 24px 64px rgba(20,24,40,.24),0 6px 18px rgba(0,0,0,.1);
+ --glass:rgba(250,250,252,.78);--rad:12px;--sp:cubic-bezier(.32,.72,0,1)}
+@media(prefers-color-scheme:dark){:root{
+ --bg:#262629;--canvas:#1c1c1e;--side:rgba(38,38,42,.62);--ink:#f5f5f7;--ink2:#d2d2d7;--muted:#98989f;--faint:#636366;
+ --line:rgba(255,255,255,.09);--hover:rgba(255,255,255,.05);--sel:rgba(255,255,255,.09);
+ --ac:#0a84ff;--ac2:#409cff;--acs:rgba(10,132,255,.16);--acr:rgba(10,132,255,.45);
+ --ok:#32d74b;--okb:rgba(48,209,88,.16);--wa:#ffb340;--wab:rgba(255,159,10,.16);--er:#ff6961;--erb:rgba(255,69,58,.16);--in:#64b5ff;--inb:rgba(10,132,255,.18);--ne:#aeaeb2;--neb:rgba(255,255,255,.09);
+ --sh:0 0 0 .5px rgba(255,255,255,.1),0 1px 2px rgba(0,0,0,.3);--shl:0 0 0 .5px rgba(255,255,255,.14),0 24px 64px rgba(0,0,0,.6);--glass:rgba(44,44,48,.78)}}
+html{-webkit-text-size-adjust:100%}
+body{font-size:13.5px;letter-spacing:-.003em;background:var(--canvas);font-optical-sizing:auto;text-rendering:optimizeLegibility}
+body::before{content:"";position:fixed;inset:-10%;z-index:-1;pointer-events:none;opacity:.7;background:radial-gradient(40% 35% at 8% 12%,rgba(10,122,255,.16),transparent 70%),radial-gradient(35% 35% at 4% 85%,rgba(175,82,222,.12),transparent 70%),radial-gradient(30% 30% at 40% 0%,rgba(255,159,10,.07),transparent 70%)}
+::selection{background:var(--acr)}
+h1{font-size:26px;letter-spacing:-.026em;font-weight:700}h2{font-size:17px;letter-spacing:-.016em;font-weight:650}h3{font-size:14.5px;letter-spacing:-.01em;font-weight:620}
+.app{grid-template-columns:252px minmax(0,1fr)}main{background:transparent}
+.side{background:var(--side);-webkit-backdrop-filter:saturate(190%) blur(34px);backdrop-filter:saturate(190%) blur(34px);border-right:.5px solid var(--line);padding:16px 10px 12px}
+.ws{padding:6px 8px;border-radius:9px}.ws b{font-weight:620;letter-spacing:-.01em}
+.logo{border-radius:9px;background:linear-gradient(160deg,#5eb0ff,#0a7aff 55%,#5e5ce6);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.35),0 1px 3px rgba(10,60,160,.35)}
+.search{background:var(--neb);box-shadow:none;border-radius:8px;padding:6px 10px;margin:8px 2px 12px}.search kbd{border:0;background:var(--neb);padding:1px 6px;border-radius:5px;font:11px var(--f)}
+.navl{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--faint);padding:16px 10px 5px}
+.nv{height:30px;padding:0 10px;border-radius:7px;font-weight:500;font-size:13.5px;transition:background .15s}
+.nv:hover{background:var(--hover)}.nv.on{background:var(--sel);color:var(--ink)}.nv .ic{color:var(--ac);width:17px;height:17px}.nv.on .ic{color:var(--ac)}
+.nv .cnt{background:var(--er);height:17px;min-width:17px}
+.me,.ws{transition:background .15s}
+.page{max-width:1120px;padding:36px 44px 90px}.page.anim{animation:in .35s var(--sp)}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}@keyframes pop{from{opacity:0;transform:scale(.96)}}
+.hd{margin-bottom:26px}.hd p{font-size:14px}
+.btn{height:28px;padding:0 13px;border-radius:7px;font-weight:500;font-size:13.5px;background:var(--bg);box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 1px 1.5px rgba(0,0,0,.1);transition:background .12s,box-shadow .12s,transform .12s}
+.btn:hover{background:var(--bg);filter:brightness(.97)}.btn:active{transform:scale(.97);filter:brightness(.93)}
+.btn.pri{background:linear-gradient(180deg,#3d9bff,var(--ac));color:#fff;box-shadow:0 0 0 .5px rgba(0,60,160,.6),0 1px 2px rgba(0,60,160,.25),inset 0 .5px 0 rgba(255,255,255,.3)}.btn.pri:hover{background:linear-gradient(180deg,#3d9bff,var(--ac));filter:brightness(1.06)}
+.btn.red{background:linear-gradient(180deg,#ff6259,#ff3b30);box-shadow:0 0 0 .5px rgba(160,20,10,.6),0 1px 2px rgba(160,20,10,.25),inset 0 .5px 0 rgba(255,255,255,.3)}.btn.red:hover{background:linear-gradient(180deg,#ff6259,#ff3b30);filter:brightness(1.06)}
+.btn.ghost{background:none;box-shadow:none;color:var(--ac)}.btn.ghost:hover{background:var(--acs);filter:none}
+.btn.s{height:24px;padding:0 10px;font-size:12.5px;border-radius:6px}.btn.l{height:34px;padding:0 20px;font-size:14px;border-radius:8px}
+.btn:focus-visible,.inp:focus,.nv:focus-visible{box-shadow:0 0 0 3.5px var(--acr)}
+@media(prefers-color-scheme:dark){.btn{background:#3a3a3d;box-shadow:0 0 0 .5px rgba(255,255,255,.14),0 1px 1.5px rgba(0,0,0,.3)}.btn.ghost{background:none}.inp{background:rgba(255,255,255,.06)!important}}
+.inp{height:30px;border-radius:7px;box-shadow:0 0 0 .5px rgba(0,0,0,.2),inset 0 1px 1.5px rgba(0,0,0,.06);padding:0 10px;font-size:13.5px}
+.inp:focus{box-shadow:0 0 0 .5px var(--ac),0 0 0 3.5px var(--acr)}
+.lab{font-size:12.5px;font-weight:550;color:var(--ink2)}
+.seg{border-radius:8px;padding:2px;background:var(--neb)}.seg button{border-radius:6px;padding:4px 13px;font-size:13px;transition:background .18s,box-shadow .18s}.seg button.on{background:var(--bg);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.14)}
+@media(prefers-color-scheme:dark){.seg button.on{background:#636366;color:#fff}}
+.tog{width:38px;height:22px;background:rgba(120,120,128,.32);transition:background .22s}.tog::after{width:18px;height:18px;top:2px;left:2px;transition:transform .26s var(--sp);box-shadow:0 2px 4px rgba(0,0,0,.28),0 0 0 .5px rgba(0,0,0,.06)}.tog.on{background:#30d158}.tog.on::after{transform:translateX(16px)}
+.tabs{display:inline-flex;gap:2px;padding:2px;background:var(--neb);border-radius:9px;border:0;margin-bottom:24px;max-width:100%}
+.tabs a{padding:5px 14px;border:0;margin:0;border-radius:7px;color:var(--ink2);font-size:13px;transition:background .18s}.tabs a:hover{color:var(--ink)}
+.tabs a.on{background:var(--bg);color:var(--ink);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.14)}
+@media(prefers-color-scheme:dark){.tabs a.on{background:#636366;color:#fff}}
+.chip{box-shadow:inset 0 0 0 .5px var(--line);background:var(--bg)}.chip.on{background:var(--ac);color:#fff}
+.card{border-radius:var(--rad);box-shadow:var(--sh);padding:20px 22px;background:var(--bg)}
+.kpi .kv{font-size:28px;font-weight:650;letter-spacing:-.03em}.kpi .kl{font-weight:550}
+th{font-size:12px;font-weight:550;padding:10px 16px;color:var(--muted);background:transparent}
+td{padding:11px 16px;border-bottom:.5px solid var(--line)}tbody tr:hover{background:var(--hover)}.tbar{border-bottom:.5px solid var(--line)}
+.bdg{border-radius:99px;height:20px;padding:0 9px;font-weight:550}
+.av{background:linear-gradient(160deg,#b8bcc8,#8e92a3);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.3)}
+.bar{height:5px}.bar i{background:var(--ac)}.bar.done i{background:#30d158}
+.banner{border-radius:var(--rad);background:var(--acs)}
+.empty .ei{border-radius:14px}
+.menu,.ckb,.dwr{background:var(--glass);-webkit-backdrop-filter:saturate(190%) blur(40px);backdrop-filter:saturate(190%) blur(40px)}
+.menu{border:0;border-radius:11px;box-shadow:var(--shl);padding:5px;animation:pop .18s var(--sp)}.menu button,.menu a{border-radius:6px;font-size:13.5px;padding:6px 10px}.menu button:hover,.menu a:hover{background:var(--ac);color:#fff}.menu button:hover .ic,.menu a:hover .ic{color:#fff}
+.menu hr{border-top:.5px solid var(--line)}
+.ckb{top:14vh;width:min(660px,calc(100vw - 32px));border-radius:16px;border:0;box-shadow:var(--shl);animation:pop .22s var(--sp)}.ckb input{font-size:19px;padding:20px 22px;letter-spacing:-.01em;border-bottom:.5px solid var(--line)}
+.ckl button{border-radius:8px}.ckl button.on{background:var(--ac);color:#fff}.ckl button.on small{color:rgba(255,255,255,.75)}.ckf{border-top:.5px solid var(--line)}
+#dw .scrim,#ck .scrim{background:rgba(20,24,40,.28);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.dwr{top:10px;right:10px;bottom:10px;border-radius:16px;box-shadow:var(--shl);transition:transform .42s var(--sp)}.dwr.c{border-radius:16px}
+.dwh,.dwf{border-color:var(--line);border-width:.5px}.x{border-radius:50%;background:var(--neb)}
+#toast{bottom:28px}.toast{background:rgba(28,28,32,.82);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border-radius:99px;padding:10px 18px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.28),0 0 0 .5px rgba(255,255,255,.1)}.toast.err{background:rgba(190,20,40,.9)}
+.keybox{border-radius:9px;box-shadow:inset 0 0 0 .5px var(--line);background:var(--neb)}
+code{border-radius:5px}
+.dot.on{background:#30d158}
+.chatl.fl{background:var(--wab)}.ctx{border-radius:10px}
+
+.ckl .sec{text-transform:none;letter-spacing:0;font-size:11.5px}
+/* wallpaper, sheets and windows (sign-in + onboarding) */
+.auth,.wall{min-height:100vh;display:grid;place-items:center;padding:24px;position:relative;overflow:hidden;background:#e9eefb}
+.auth::before,.wall::before{content:"";position:absolute;inset:-20%;background:radial-gradient(38% 42% at 18% 22%,#8ab8ff 0,transparent 70%),radial-gradient(34% 40% at 82% 14%,#d3a8ff 0,transparent 70%),radial-gradient(40% 44% at 78% 86%,#ffc2a1 0,transparent 70%),radial-gradient(36% 40% at 12% 88%,#8fe6d2 0,transparent 70%);animation:drift 28s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate3d(-3%,2%,0) scale(1.08) rotate(4deg)}}
+@media(prefers-color-scheme:dark){.auth,.wall{background:#0d1020}.auth::before,.wall::before{background:radial-gradient(38% 42% at 18% 22%,#1d4ed8 0,transparent 70%),radial-gradient(34% 40% at 82% 14%,#6d28d9 0,transparent 70%),radial-gradient(40% 44% at 78% 86%,#9a3412 0,transparent 70%),radial-gradient(36% 40% at 12% 88%,#0f766e 0,transparent 70%);opacity:.75}}
+.band{display:none}
+.acard{border-radius:20px;background:var(--glass);-webkit-backdrop-filter:saturate(190%) blur(40px);backdrop-filter:saturate(190%) blur(40px);box-shadow:var(--shl);padding:44px 40px 30px;text-align:center;max-width:400px;animation:pop .5s var(--sp)}
+.appi{width:72px;height:72px;border-radius:17px;margin:0 auto 20px;display:grid;place-items:center;color:#fff;font-size:32px;font-weight:700;letter-spacing:-.04em;background:linear-gradient(160deg,#6ec0ff,#0a7aff 55%,#5e5ce6);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.4),0 8px 22px rgba(10,90,220,.38),0 2px 5px rgba(10,60,160,.3)}
+.appi .ic{width:34px;height:34px;stroke-width:1.7}.appi.ok{background:linear-gradient(160deg,#6ee08a,#30d158 55%,#1da34a);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.4),0 8px 22px rgba(30,170,70,.38)}.appi.ok .ic{stroke-width:2.4;animation:pop .5s var(--sp)}
+.appi.gl{background:var(--neb);box-shadow:none}.appi .spin{width:30px;height:30px;border-width:3px}
+.acard .logo{display:none}.acard h1{font-size:23px}.acard .lead{margin:6px 0 26px}
+.oa{height:40px;border-radius:9px;font-weight:550;font-size:14.5px;box-shadow:0 0 0 .5px rgba(0,0,0,.2),0 1px 2px rgba(0,0,0,.1);background:var(--bg);transition:transform .12s,filter .12s}.oa:hover{background:var(--bg);filter:brightness(.97)}.oa:active{transform:scale(.98)}
+.oa.dk{background:#1d1d1f;color:#fff;box-shadow:0 0 0 .5px #000,0 1px 2px rgba(0,0,0,.3)}.oa.dk:hover{background:#1d1d1f;color:#fff;filter:brightness(1.25)}
+.afoot a{color:var(--ink2);opacity:.75}.inv{border-radius:10px}
+.win{position:relative;width:min(780px,100%);min-height:600px;max-height:calc(100vh - 48px);display:flex;flex-direction:column;border-radius:14px;background:var(--glass);-webkit-backdrop-filter:saturate(190%) blur(46px);backdrop-filter:saturate(190%) blur(46px);box-shadow:var(--shl);overflow:hidden;animation:pop .55s var(--sp)}
+.winf{display:contents}
+.wt{height:44px;display:grid;grid-template-columns:90px 1fr 90px;align-items:center;padding:0 16px;flex:none}.wt b{text-align:center;font-size:13px;font-weight:600;color:var(--muted)}
+.tl{display:flex;gap:8px}.tl i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.22)}.tl i:nth-child(1){background:#ff5f57}.tl i:nth-child(2){background:#febc2e}.tl i:nth-child(3){background:#28c840}
+.wb{flex:1;padding:14px 64px 28px;overflow:auto;display:flex;flex-direction:column;align-items:center;text-align:center}
+.wb>*{width:100%;max-width:520px}.wb .appi{width:72px}.wb h1{font-size:28px;margin:0}.wb .lead{color:var(--muted);font-size:15px;line-height:1.5;margin:8px auto 26px}
+.wb .grp{text-align:left}.wb .lab{text-align:left}
+.wf{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:14px 20px;border-top:.5px solid var(--line);flex:none;background:rgba(127,127,127,.04)}.wf>:last-child{justify-self:end;display:flex;gap:8px}.wf>:first-child{justify-self:start}
+.dots{display:flex;gap:7px}.dots i{width:7px;height:7px;border-radius:50%;background:var(--faint);opacity:.45;transition:all .35s var(--sp)}.dots i.done{background:var(--ac);opacity:.55}.dots i.on{background:var(--ac);opacity:1;width:20px;border-radius:4px}
+.grp{background:var(--bg);border-radius:11px;box-shadow:var(--sh);overflow:hidden}
+.gr{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border-bottom:.5px solid var(--line)}.gr:last-child{border:0}
+.gr .gn{width:22px;height:22px;border-radius:50%;background:var(--ac);color:#fff;font-size:12px;font-weight:650;display:grid;place-items:center;flex:none;margin-top:1px}
+.gr .gt{flex:1;min-width:0}.gr .gt>b:first-child{font-weight:600;font-size:14px;display:block}.gr .sm b{font-weight:600;color:var(--ink)}.gr .sm{margin-top:2px}.gr .keybox{margin-top:8px;background:var(--neb)}.gr .row.wrap{margin-top:10px}
+.gr.sw2{align-items:center}
+input.swc{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:99px;background:rgba(120,120,128,.32);position:relative;flex:none;cursor:pointer;transition:background .22s;margin:0}
+input.swc::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.28);transition:transform .26s var(--sp)}
+input.swc:checked{background:#30d158}input.swc:checked::after{transform:translateX(16px)}input.swc:focus-visible{box-shadow:0 0 0 3.5px var(--acr);outline:0}
+.bigin{height:44px!important;font-size:17px!important;text-align:center;border-radius:10px!important;letter-spacing:-.01em}
+@media(max-width:860px){.app{display:block}.side{width:276px;border-radius:0 16px 16px 0}.page{padding:22px 16px 70px}.wb{padding:10px 22px 22px}.win{min-height:0}.dwr{top:6px;right:6px;bottom:6px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
@@ -159,7 +271,7 @@ const fmin=m=>!m?'Permanent':m<60?m+' min':m<1440?(Math.round(m/6)/10)+' h':(Mat
 const date=t=>new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
 const dtime=t=>new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 const ini=n=>String(n||'?').trim().split(/[\s_]+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'?';
-const I={home:'<path d="M4 10.5 12 4l8 6.5V20H4z"/><path d="M10 20v-6h4v6"/>',players:'<circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c.8-3.3 3.3-5.2 6-5.2s5.2 1.9 6 5.2"/><path d="M16 5.5a3 3 0 0 1 0 5.6M18 14.6c1.6.6 2.6 2.1 3 4.9"/>',
+const I={lock:'<rect x="5" y="11" width="14" height="9" rx="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',home:'<path d="M4 10.5 12 4l8 6.5V20H4z"/><path d="M10 20v-6h4v6"/>',players:'<circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c.8-3.3 3.3-5.2 6-5.2s5.2 1.9 6 5.2"/><path d="M16 5.5a3 3 0 0 1 0 5.6M18 14.6c1.6.6 2.6 2.1 3 4.9"/>',
  flag:'<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',book:'<path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/>',team:'<path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
  chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',leave:'<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',rules:'<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 4.4V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
@@ -240,50 +352,57 @@ window.addEventListener('hashchange',onRoute);
 const go=h=>{if(location.hash==='#/'+h)onRoute();else location.hash='#/'+h};
 
 /* ============ screens ============ */
-function render(anim){
+function render(anim){try{return render0(anim)}catch(e){console.error(e);const r=$('#root');if(r)r.innerHTML='<div class="auth"><div class="acard"><div class="appi gl">'+ic('warn')+'</div><h1>Something went wrong</h1><p class="lead">'+esc(String(e&&e.message||e))+'</p><button class="btn pri l w" onclick="location.reload()">Reload</button></div></div>'}}
+function render0(anim){
  const root=$('#root');
- if(!ME||ME.error&&!ME.providers){if(LOADED){LASTERR=LASTERR||'Could not reach the server.';ME=null;S=null;root.innerHTML='<div class="auth"><div class="card" style="text-align:center;max-width:380px"><h1 style="margin:0 0 8px">Couldn\'t load Sentinel</h1><p style="color:var(--mut);margin:0 0 18px">'+esc(LASTERR||'The server did not respond.')+'</p><button class="btn p" onclick="location.reload()">Try again</button> <button class="btn" onclick="fetch(\'/logout\',{method:\'POST\'}).then(()=>{location.hash=\'\';location.reload()})">Sign out</button></div></div>';return}root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
+ if(!ME||ME.error&&!ME.providers){if(LOADED){LASTERR=LASTERR||'Could not reach the server.';ME=null;S=null;root.innerHTML='<div class="auth"><div class="acard"><div class="appi gl">'+ic('warn')+'</div><h1>Couldn\'t load Sentinel</h1><p class="lead">'+esc(LASTERR||'The server did not respond.')+'</p><button class="btn pri l w" onclick="location.reload()">Try again</button><button class="btn ghost w" style="margin-top:8px" onclick="fetch(\'/logout\',{method:\'POST\'}).then(()=>{location.hash=\'\';location.reload()})">Sign out</button></div></div>';return}root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
  if(!ME.user){root.innerHTML=authView();return}
  if(JOIN){root.innerHTML=joinView();return}
  if(!ME.workspaces.length||OB&&(OB.creating||route.page==='setup')){root.innerHTML=obView();fillAv();return}
- if(!S){if(LOADED){root.innerHTML='<div class="auth"><div class="card" style="text-align:center;max-width:380px"><h1 style="margin:0 0 8px">Couldn\'t load Sentinel</h1><p style="color:var(--mut);margin:0 0 18px">'+esc(LASTERR||'The server did not respond.')+'</p><button class="btn p" onclick="location.reload()">Try again</button> <button class="btn" onclick="fetch(\'/logout\',{method:\'POST\'}).then(()=>{location.hash=\'\';location.reload()})">Sign out</button></div></div>';return}root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
+ if(!S){if(LOADED){root.innerHTML='<div class="auth"><div class="acard"><div class="appi gl">'+ic('warn')+'</div><h1>Couldn\'t load Sentinel</h1><p class="lead">'+esc(LASTERR||'The server did not respond.')+'</p><button class="btn pri l w" onclick="location.reload()">Try again</button><button class="btn ghost w" style="margin-top:8px" onclick="fetch(\'/logout\',{method:\'POST\'}).then(()=>{location.hash=\'\';location.reload()})">Sign out</button></div></div>';return}root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
  const p=route.page,scroll=$('main')?$('main').scrollTop:0,doAnim=anim||p+route.tab+route.id!==lastPage;lastPage=p+route.tab+route.id;
  root.innerHTML=`<div class="app">${sideView()}<main><div class="top"><button class="btn s" data-a="side" aria-label="Menu">${ic('menu')}</button><b>${esc(S.workspace.name)}</b><span class="sp"></span><button class="btn s" data-a="cmdk">${ic('search')}</button></div><div class="page ${doAnim?'anim':''}">${(V[p]||V.home)()}</div></main></div>`;
  if(!doAnim&&$('main'))$('main').scrollTop=scroll;fillAv()}
 
 function authView(){const has=k=>ME.providers.includes(k),q=JOIN&&JOIN.code?'?invite='+JOIN.code:'';
- return `<div class="auth"><div class="band"></div><div style="position:relative;width:100%;max-width:420px"><div class="acard"><div class="logo">S</div><h1>Sign in to Sentinel</h1><p class="lead">Moderation and staff management for your Roblox game.</p>
+ return `<div class="auth"><div style="position:relative;width:100%;max-width:400px"><div class="acard"><div class="appi">S</div><h1>Sign in to Sentinel</h1><p class="lead">Moderation and staff tools for your Roblox game.</p>
  ${JOIN&&JOIN.info?`<div class="inv">You're invited to join <b>${esc(JOIN.info.workspace)}</b> as ${esc(JOIN.info.role)}.</div>`:''}
  ${has('google')?`<a class="oa" href="/auth/google${q}">${GOOGLE}Continue with Google</a>`:''}${has('roblox')?`<a class="oa dk" href="/auth/roblox${q}">${RBX}Continue with Roblox</a>`:''}
- <p class="xs muted" style="margin:22px 0 0;text-align:center">By continuing you agree to the <a href="/legal/terms" target="_blank">Terms</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>. You must be 13 or older.</p></div>
+ <p class="xs muted" style="margin:24px 0 0">By continuing you agree to the <a href="/legal/terms" target="_blank">Terms</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>. You must be 13 or older.</p></div>
  <div class="afoot"><a href="/legal/privacy" target="_blank">Privacy</a><a href="/legal/terms" target="_blank">Terms</a><a href="/legal/cookies" target="_blank">Cookies</a></div></div></div>`}
 function joinView(){
- if(!JOIN.info)return `<div class="auth"><div class="band"></div><div class="acard"><h1>Invite not valid</h1><p class="lead">${esc(JOIN.err||'This invite has expired or was already used.')}</p><button class="btn pri l w" data-a="join-no">Continue</button></div></div>`;
- return `<div class="auth"><div class="band"></div><div class="acard"><div class="logo">${esc(ini(JOIN.info.workspace)[0])}</div><h1>Join ${esc(JOIN.info.workspace)}</h1><p class="lead">You'll join as <b>${esc(JOIN.info.role)}</b>, signed in as ${esc(ME.user.name)}.</p>
+ if(!JOIN.info)return `<div class="auth"><div class="acard"><div class="appi gl">${ic('flag')}</div><h1>Invite not valid</h1><p class="lead">${esc(JOIN.err||'This invite has expired or was already used.')}</p><button class="btn pri l w" data-a="join-no">Continue</button></div></div>`;
+ return `<div class="auth"><div class="acard"><div class="appi">${esc(ini(JOIN.info.workspace)[0])}</div><h1>Join ${esc(JOIN.info.workspace)}</h1><p class="lead">You'll join as <b>${esc(JOIN.info.role)}</b>, signed in as ${esc(ME.user.name)}.</p>
  <button class="btn pri l w" data-a="join-yes">Accept invite</button><button class="btn ghost w" style="margin-top:8px" data-a="join-no">Not now</button></div></div>`}
 
 function obView(){
- OB=OB||{step:'name',creating:1};const steps=[['name','Name your game','A label for your team'],['script','Add the script','Paste it into Roblox Studio'],['place','Lock to your place','Stop your key working elsewhere'],['connect','Go live','Join your game to verify']];
- const idx=steps.findIndex(s=>s[0]===OB.step),first=esc((ME.user.name||'').split(' ')[0]);let body='';
- if(OB.step==='name')body=`<h1>Welcome, ${first}</h1><p class="lead">Let's connect your Roblox game. It takes about three minutes, and only you, the owner, can see these setup details.</p>
-  <form data-f="ob-name"><label class="lab" for="obn">What's your game called?</label><input id="obn" class="inp" style="height:42px;font-size:15px" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off">
-  <div class="hint">You can rename it later. Your team will see this name.</div><div class="row mt"><button class="btn pri l">Continue</button>${ME.workspaces.length?`<button type="button" class="btn ghost l" data-a="ob-exit">Cancel</button>`:''}</div></form>`;
- else if(OB.step==='script')body=`<h1>Add Sentinel to your game</h1><p class="lead">Every game gets its own one-time code. Treat it like a password.</p>
-  <div class="inst"><div><div><b>Copy your game code</b>${codeBox()}</div></div>
-  <div><div><b>Download or copy the script</b><div class="row wrap" style="margin-top:10px"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
-  <div><div><b>Put it in ServerScriptService</b><div class="muted sm">In Roblox Studio's Explorer, hover <b>ServerScriptService</b>, click <b>+</b>, choose <b>Script</b> and paste. Then replace <b>[INPUT CODE HERE]</b> at the top with your code.</div></div></div>
-  <div><div><b>Allow HTTP requests</b><div class="muted sm">Home, then <b>Game Settings</b>, then <b>Security</b>. Turn on <b>Allow HTTP Requests</b> and save.</div></div></div></div>
-  <div class="row mt"><button class="btn pri l" data-a="ob" data-v="place">Continue</button></div>`;
- else if(OB.step==='place')body=`<h1>Lock your key to your game</h1><p class="lead">Your Place ID is the number in your game's link, for example roblox.com/games/<b>1234567890</b>/My-Game. Locking stops anyone using a stolen key in another game.</p>
-  <form data-f="ob-place"><label class="lab">Place ID</label><input class="inp" style="height:42px;font-size:15px" name="placeId" inputmode="numeric" placeholder="1234567890" value="${esc(SETUP&&SETUP.placeId||'')}">
-  <label class="chk"><input type="checkbox" name="lock" checked><span><b>Only accept this place</b><br><span class="muted sm">Unpublished Studio places use Place ID 0, so publish first or leave this off while testing.</span></span></label>
-  <div class="row mt"><button class="btn pri l">Save and continue</button><button type="button" class="btn ghost l" data-a="ob" data-v="connect">Skip for now</button></div></form>`;
- else{const okc=OB.ok;body=`<div class="big ${okc?'ok':''}">${okc?ic('check'):'<div class="spin"></div>'}</div><h1>${okc?"You're live":'Join your game'}</h1>
-  <p class="lead">${okc?`Sentinel is receiving data${SETUP&&SETUP.lastPlace?` from place <b>${SETUP.lastPlace}</b>`:''}. Your team can now moderate in real time.`:'Press <b>Play</b> in Studio, or join your published game. This page updates by itself.'}</p>
-  ${okc?`<button class="btn pri l" data-a="ob-done">Open your dashboard</button><p class="sm muted" style="margin-top:18px">Next: invite your team from <b>Team</b>.</p>`:`<button class="btn ghost l" data-a="ob-done">I'll finish this later</button>`}`}
- return `<div class="ob"><aside class="obl"><div class="row" style="margin-bottom:26px"><div class="logo">S</div><b style="font-size:16px">Sentinel</b></div><div class="xs muted b" style="text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px 12px">Set up your game</div>
- ${steps.map(([k,t,s],i)=>`<div class="obs ${i===idx?'on':i<idx?'done':''}"><div class="n">${i<idx?ic('check'):i+1}</div><div><b>${t}</b><small>${s}</small></div></div>`).join('')}
- <div class="sp"></div><div class="sm muted">Only the owner sees this setup. Team members you invite never see your game key.</div></aside><div class="obr"><div class="obc" key="${OB.step}">${body}</div></div></div>`}
+ OB=OB||{step:'name',creating:1};const steps=['name','script','place','connect'],idx=steps.indexOf(OB.step),first=esc((ME.user.name||'').split(' ')[0]);
+ const dots=`<div class="dots" role="img" aria-label="Step ${idx+1} of 4">${steps.map((s,i)=>`<i class="${i===idx?'on':i<idx?'done':''}"></i>`).join('')}</div>`;
+ const back=v=>`<button type="button" class="btn l" data-a="ob" data-v="${v}">Back</button>`;
+ let body='',left='<span></span>',right='',form='';
+ if(OB.step==='name'){form='ob-name';
+  body=`<div class="appi">S</div><h1>Welcome, ${first}</h1><p class="lead">Let's connect your Roblox game. It takes about three minutes, and only you, the owner, will ever see these setup details.</p>
+  <label class="lab" for="obn" style="text-align:center">Game name</label><input id="obn" class="inp bigin" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off" autofocus>
+  <div class="hint">Your team will see this name. You can change it later.</div>`;
+  left=ME.workspaces.length?`<button type="button" class="btn l" data-a="ob-exit">Cancel</button>`:'<span></span>';right=`<button class="btn pri l">Continue</button>`}
+ else if(OB.step==='script'){
+  body=`<div class="appi">${ic('game')}</div><h1>Add Sentinel to your game</h1><p class="lead">Your game has its own one-time code. Treat it like a password.</p>
+  <div class="grp"><div class="gr"><span class="gn">1</span><div class="gt"><b>Copy your game code</b>${codeBox()}</div></div>
+  <div class="gr"><span class="gn">2</span><div class="gt"><b>Get the script</b><div class="sm muted">The same script works for every game. Only the code is yours.</div><div class="row wrap"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
+  <div class="gr"><span class="gn">3</span><div class="gt"><b>Paste it in Roblox Studio</b><div class="sm muted">Hover <b>ServerScriptService</b> in the Explorer, click <b>+</b>, choose <b>Script</b>, paste, then replace <b>[INPUT CODE HERE]</b> with your code.</div></div></div>
+  <div class="gr"><span class="gn">4</span><div class="gt"><b>Allow HTTP requests</b><div class="sm muted">Open <b>Game Settings</b>, then <b>Security</b>, turn on <b>Allow HTTP Requests</b> and save.</div></div></div></div>`;
+  right=`<button class="btn pri l" data-a="ob" data-v="place">Continue</button>`}
+ else if(OB.step==='place'){form='ob-place';
+  body=`<div class="appi">${ic('lock')}</div><h1>Lock it to your game</h1><p class="lead">Your Place ID is the number in your game's link: roblox.com/games/<b>1234567890</b>/My-Game. Locking stops anyone using a stolen code in another game.</p>
+  <div class="grp"><div class="gr" style="display:block"><label class="lab" style="margin:0 0 8px">Place ID</label><input class="inp" name="placeId" inputmode="numeric" placeholder="1234567890" value="${esc(SETUP&&SETUP.placeId||'')}"></div>
+  <div class="gr sw2"><div class="gt"><b>Only accept this place</b><div class="sm muted">Studio tests use Place ID 0. Publish first, or turn this off while testing.</div></div><input type="checkbox" class="swc" name="lock" checked aria-label="Only accept this place"></div></div>`;
+  left=back('script');right=`<button type="button" class="btn l" data-a="ob" data-v="connect">Skip</button><button class="btn pri l">Save and continue</button>`}
+ else{const okc=OB.ok;
+  body=`<div class="appi ${okc?'ok':'gl'}">${okc?ic('check'):'<div class="spin"></div>'}</div><h1>${okc?"You're live":'Join your game'}</h1>
+  <p class="lead">${okc?`Sentinel is receiving data${SETUP&&SETUP.lastPlace?` from place <b>${SETUP.lastPlace}</b>`:''}. Your team can now moderate in real time. Invite them from <b>Team</b>.`:'Press <b>Play</b> in Studio, or join your published game. This page updates by itself.'}</p>`;
+  left=okc?'<span></span>':back('place');right=okc?`<button class="btn pri l" data-a="ob-done">Open dashboard</button>`:`<button class="btn l" data-a="ob-done">Finish later</button>`}
+ const inner=`<div class="wt"><span class="tl" aria-hidden="true"><i></i><i></i><i></i></span><b>Sentinel Setup</b><span></span></div><div class="wb" key="${OB.step}">${body}</div><div class="wf">${left}${dots}<div>${right}</div></div>`;
+ return `<div class="wall"><div class="win">${form?`<form class="winf" data-f="${form}" style="display:contents">${inner}</form>`:inner}</div></div>`}
 
 function sideView(){
  const n=(k,t,icn,c)=>`<a href="#/${k}" class="nv ${route.page===k||(k==='players'&&route.page==='player')?'on':''}">${ic(icn)}${t}${c?`<span class="cnt">${c}</span>`:''}</a>`;
