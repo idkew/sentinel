@@ -7,420 +7,564 @@
 <title>Sentinel</title>
 <style>
 :root{
-  --bg:#f5f5f7;--card:#fff;--ink:#1d1d1f;--muted:#6e6e73;--faint:#a1a1a6;--line:rgba(0,0,0,.09);--fill:rgba(120,120,128,.16);--fill2:rgba(120,120,128,.09);
-  --blue:#0071e3;--blue-ink:#fff;--tint:rgba(0,113,227,.11);--green:#30a14e;--red:#e5342b;--orange:#d97706;--sidebar:rgba(250,250,252,.66);
-  --shadow:0 1px 1px rgba(0,0,0,.03),0 6px 22px rgba(0,0,0,.06);--shadow-lg:0 24px 70px rgba(0,0,0,.22);
-  --wall:radial-gradient(900px 600px at 8% 0%,#cfe0ff 0,transparent 60%),radial-gradient(800px 600px at 0% 100%,#f3d6ff 0,transparent 55%),#eef1f8;
-  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-}
+ --bg:#fff;--side:#f7f8fa;--ink:#1a1f36;--ink2:#3c4257;--muted:#697386;--faint:#a3acb9;--line:#e3e8ee;--hover:#f6f8fa;--sel:#f0f1f7;
+ --ac:#635bff;--ac2:#5148e8;--acs:#efeeff;--acr:rgba(99,91,255,.32);
+ --ok:#0a7c2f;--okb:#d7f7c2;--wa:#983705;--wab:#fcedb9;--er:#c0123c;--erb:#ffe7ef;--in:#0055bc;--inb:#d1ecff;--ne:#545969;--neb:#ebeef1;
+ --sh:0 0 0 1px rgba(60,66,87,.08),0 2px 5px rgba(60,66,87,.06),0 1px 1px rgba(0,0,0,.04);--shl:0 15px 35px rgba(50,50,93,.18),0 5px 15px rgba(0,0,0,.08);
+ --f:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Ubuntu,sans-serif;--m:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media(prefers-color-scheme:dark){:root{
-  --bg:#000;--card:#1c1c1e;--ink:#f5f5f7;--muted:#98989f;--faint:#636366;--line:rgba(255,255,255,.12);--fill:rgba(120,120,128,.36);--fill2:rgba(120,120,128,.2);
-  --blue:#0a84ff;--tint:rgba(10,132,255,.2);--green:#32d74b;--red:#ff453a;--orange:#ff9f0a;--sidebar:rgba(36,36,40,.62);
-  --shadow:0 0 0 .5px rgba(255,255,255,.06),0 8px 28px rgba(0,0,0,.5);--shadow-lg:0 24px 70px rgba(0,0,0,.7);
-  --wall:radial-gradient(900px 600px at 8% 0%,#1b2d57 0,transparent 60%),radial-gradient(800px 600px at 0% 100%,#3a1d52 0,transparent 55%),#0b0b0f;}}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%}
-body{margin:0;font:15px/1.45 var(--font);color:var(--ink);background:var(--wall) fixed;-webkit-font-smoothing:antialiased;letter-spacing:-.011em}
-button,input,select,textarea{font:inherit;color:inherit;letter-spacing:inherit}
-button{cursor:pointer;border:0;background:none;padding:0}
-a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
-h1{font-size:34px;line-height:1.1;letter-spacing:-.03em;margin:0;font-weight:700}
-h2{font-size:20px;letter-spacing:-.02em;margin:0;font-weight:650}
-h3{font-size:15px;margin:0;font-weight:600}
-.sub{color:var(--muted);margin:6px 0 0;font-size:16px}
-.muted{color:var(--muted)}.fine{font-size:12.5px;color:var(--muted)}
-svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+ --bg:#0f1117;--side:#0b0d12;--ink:#e8eaf0;--ink2:#c4c8d4;--muted:#8a91a5;--faint:#596074;--line:#232733;--hover:#161a23;--sel:#1b1f2b;
+ --ac:#7a73ff;--ac2:#8e88ff;--acs:rgba(122,115,255,.14);--acr:rgba(122,115,255,.4);
+ --ok:#5fd37f;--okb:rgba(52,199,89,.14);--wa:#f5b44a;--wab:rgba(245,180,74,.14);--er:#ff7a93;--erb:rgba(255,92,124,.14);--in:#6cb6ff;--inb:rgba(56,139,253,.15);--ne:#a3aabd;--neb:rgba(140,149,170,.15);
+ --sh:0 0 0 1px rgba(255,255,255,.06),0 2px 8px rgba(0,0,0,.35);--shl:0 20px 50px rgba(0,0,0,.6)}}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--f);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}button{background:none;border:0;padding:0;cursor:pointer}
+a{color:var(--ac);text-decoration:none}a:hover{color:var(--ac2)}
+h1{font-size:28px;line-height:1.2;font-weight:700;letter-spacing:-.02em;margin:0}h2{font-size:18px;font-weight:600;margin:0;letter-spacing:-.01em}h3{font-size:15px;font-weight:600;margin:0}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.muted{color:var(--muted)}.sm{font-size:13px}.xs{font-size:12px}.mono{font-family:var(--m);font-size:12.5px}.b{font-weight:600}
+.row{display:flex;align-items:center;gap:10px}.col{display:flex;flex-direction:column;gap:6px}.sp{flex:1}.wrap{flex-wrap:wrap}.mt{margin-top:20px}.mt2{margin-top:32px}
 
-/* ---------- shell ---------- */
-#shell{display:grid;grid-template-columns:252px 1fr;height:100vh;height:100dvh}
-.sb{display:flex;flex-direction:column;gap:6px;padding:14px 12px 12px;background:var(--sidebar);backdrop-filter:saturate(190%) blur(34px);-webkit-backdrop-filter:saturate(190%) blur(34px);border-right:1px solid var(--line);position:relative;z-index:5}
-.wsw{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border-radius:10px;text-align:left;font-weight:600}
-.wsw:hover{background:var(--fill2)}.wsw .wname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.appicon{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#fff;background:linear-gradient(160deg,#4da3ff,#0a5bd6);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.35),0 2px 6px rgba(10,91,214,.35);flex:none}
-.appicon.sm{width:28px;height:28px;border-radius:7px}.appicon.sm svg{width:15px;height:15px}.appicon.lg{width:76px;height:76px;border-radius:19px}.appicon.lg svg{width:38px;height:38px;stroke-width:1.6}
-nav{display:flex;flex-direction:column;gap:2px;margin-top:6px}
-.nv{display:flex;align-items:center;gap:11px;padding:8px 11px;border-radius:9px;font-weight:500;color:var(--ink);text-align:left;position:relative}
-.nv svg{color:var(--blue)}.nv:hover{background:var(--fill2)}.nv.on{background:var(--tint);color:var(--blue);font-weight:600}
-.nv .bd{margin-left:auto;background:var(--red);color:#fff;border-radius:99px;font-size:11.5px;font-weight:600;min-width:19px;height:19px;display:grid;place-items:center;padding:0 6px}
-.sbfoot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
-.conn{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:6px 10px;border-radius:99px;background:var(--fill2)}
-.conn i{width:8px;height:8px;border-radius:50%;background:var(--faint)}.conn.on i{background:var(--green);box-shadow:0 0 0 3px rgba(48,209,88,.2)}
-.me{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 8px}.me>div{flex:1;min-width:0;line-height:1.2}.me b{display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.me small{color:var(--muted);font-size:12px}
-.ico{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--muted)}.ico:hover{background:var(--fill2);color:var(--ink)}
-.av{width:32px;height:32px;border-radius:50%;background:linear-gradient(160deg,#8e8e93,#636366);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:600;flex:none;overflow:hidden}
-.av img{width:100%;height:100%;object-fit:cover}.av.lg{width:46px;height:46px;font-size:15px}.av.xl{width:64px;height:64px;font-size:20px}
-.menu{position:fixed;left:12px;width:228px;top:58px;background:var(--card);border-radius:14px;box-shadow:var(--shadow-lg);border:1px solid var(--line);padding:6px;z-index:20}
-.menu button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:8px;text-align:left}.menu button:hover{background:var(--tint);color:var(--blue)}
-.menu hr{border:0;border-top:1px solid var(--line);margin:6px 4px}.menu .ck{margin-left:auto;color:var(--blue)}
-main{overflow:auto;padding:34px 40px 60px;background:var(--bg)}
-.wrap{max-width:980px;margin:0 auto}
-.head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap}
-.mhead{display:none}
+/* shell */
+.app{display:grid;grid-template-columns:244px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px 10px;gap:4px;z-index:20}
+.ws{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;text-align:left;width:100%}.ws:hover{background:var(--sel)}
+.logo{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;background:linear-gradient(135deg,#7a73ff,#635bff 45%,#0ea5e9);flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
+.ws .n{flex:1;min-width:0;line-height:1.2}.ws b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ws small{color:var(--muted);font-size:12px}
+.search{display:flex;align-items:center;gap:8px;margin:6px 2px 10px;padding:6px 10px;border-radius:7px;color:var(--muted);background:var(--bg);box-shadow:var(--sh);font-size:13px;text-align:left}
+.search kbd{margin-left:auto;font:11px var(--m);color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.navl{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);padding:14px 10px 4px}
+.nv{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;color:var(--ink2);font-weight:500;font-size:14px}
+.nv:hover{background:var(--sel);color:var(--ink)}.nv.on{color:var(--ac);background:var(--acs)}.nv .ic{color:var(--muted)}.nv.on .ic{color:var(--ac)}
+.nv .cnt{margin-left:auto;background:var(--er);color:#fff;border-radius:99px;font-size:11px;font-weight:600;min-width:18px;height:18px;display:grid;place-items:center;padding:0 5px}
+.sfoot{margin-top:auto;display:flex;flex-direction:column;gap:6px}
+.live{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:6px 10px}.dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}.dot.on{background:#30c75a;box-shadow:0 0 0 3px rgba(48,199,90,.18);animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 5px rgba(48,199,90,.06)}}
+.me{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:8px;text-align:left;width:100%}.me:hover{background:var(--sel)}.me .n{flex:1;min-width:0;line-height:1.2}.me b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.me small{font-size:12px;color:var(--muted)}
+.menu{position:fixed;background:var(--bg);border-radius:10px;box-shadow:var(--shl);border:1px solid var(--line);padding:6px;z-index:60;min-width:230px;animation:pop .14s ease}
+.menu button,.menu a{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border-radius:6px;color:var(--ink);font-size:14px;text-align:left}.menu button:hover,.menu a:hover{background:var(--sel)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:5px 2px}.menu .lab2{font-size:12px;color:var(--muted);padding:6px 10px 2px}
+main{min-width:0}.page{max-width:1140px;margin:0 auto;padding:32px 40px 80px}.page.anim{animation:in .22s ease}
+@keyframes in{from{opacity:0;transform:translateY(5px)}}@keyframes pop{from{opacity:0;transform:scale(.97)}}
+.top{display:none}
+.hd{display:flex;align-items:flex-end;gap:16px;margin-bottom:24px;flex-wrap:wrap}.hd .t{flex:1;min-width:240px}.hd p{margin:6px 0 0;color:var(--muted);font-size:14.5px}
+.crumb{font-size:13px;color:var(--muted);margin-bottom:8px}.crumb a{color:var(--muted)}.crumb a:hover{color:var(--ac)}
 
-/* ---------- parts ---------- */
-.card{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:20px 22px}
-.card.tight{padding:6px 0}
-.grid{display:grid;gap:16px}.g2{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
-.gh{grid-template-columns:1.5fr 1fr}
-.mt{margin-top:18px}.mt2{margin-top:30px}.row{display:flex;align-items:center;gap:12px}.sp{flex:1}.wrapf{flex-wrap:wrap}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:36px;padding:0 16px;border-radius:10px;background:var(--blue);color:#fff;font-weight:600;font-size:14.5px;transition:.15s;white-space:nowrap;text-decoration:none}
-.btn:hover{filter:brightness(1.08);text-decoration:none}.btn:active{transform:scale(.98)}
-.btn.gray{background:var(--fill);color:var(--ink)}.btn.gray:hover{filter:brightness(.96)}
-.btn.red{background:var(--red)}.btn.sm{height:30px;padding:0 12px;font-size:13.5px;border-radius:8px}.btn.lg{height:46px;padding:0 24px;font-size:16px;border-radius:12px}
-.btn.plain{background:none;color:var(--blue);padding:0 8px}.btn[disabled]{opacity:.45;pointer-events:none}
-.seg{display:inline-flex;background:var(--fill);padding:2px;border-radius:10px;gap:2px;max-width:100%;overflow:auto}
-.seg button{padding:6px 16px;border-radius:8px;font-weight:500;font-size:14px;color:var(--ink);white-space:nowrap}
-.seg button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.18);font-weight:600}
-@media(prefers-color-scheme:dark){.seg button.on{background:#636366}}
-.field{width:100%;height:40px;padding:0 13px;border-radius:10px;border:1px solid var(--line);background:var(--card);outline:0;transition:.15s}
-textarea.field{height:auto;min-height:84px;padding:10px 13px;resize:vertical}
-.field:focus{border-color:var(--blue);box-shadow:0 0 0 4px var(--tint)}
-.lab{display:block;font-size:13px;font-weight:600;margin:0 0 6px}.help{font-size:12.5px;color:var(--muted);margin-top:5px}
-.pill{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:99px;font-size:12px;font-weight:600;background:var(--fill2);color:var(--muted)}
-.pill.open{background:rgba(255,59,48,.13);color:var(--red)}.pill.claimed{background:rgba(255,159,10,.16);color:var(--orange)}.pill.resolved,.pill.ok{background:rgba(48,209,88,.16);color:var(--green)}.pill.blue{background:var(--tint);color:var(--blue)}
-.list>*{padding:13px 22px;display:flex;align-items:center;gap:14px}.list>*+*{border-top:1px solid var(--line)}
-.list .t{flex:1;min-width:0}.list .t>b{font-weight:600;display:block}.list .t span{color:var(--muted);font-size:13.5px}
-.empty{text-align:center;color:var(--muted);padding:44px 20px}.empty b{display:block;color:var(--ink);font-size:17px;margin-bottom:4px}
-.stat b{display:block;font-size:34px;letter-spacing:-.03em;line-height:1.1}.stat span{color:var(--muted);font-size:13.5px}
-.hero{background:linear-gradient(150deg,#0a84ff,#5e5ce6);color:#fff;position:relative;overflow:hidden}
-.hero .stat span{color:rgba(255,255,255,.8)}.hero b{font-size:56px}
-.spark{position:absolute;left:0;right:0;bottom:0;width:100%;height:70px;opacity:.9}.spark .sf{fill:rgba(255,255,255,.18)}.spark .sl{fill:none;stroke:rgba(255,255,255,.9);stroke-width:2;vector-effect:non-scaling-stroke}
-.sw{position:relative;width:46px;height:28px;border-radius:14px;background:var(--fill);transition:.2s;flex:none}
-.sw::after{content:"";position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.3);transition:.2s}
-.sw.on{background:var(--green)}.sw.on::after{transform:translateX(18px)}
-.pc{display:flex;gap:14px;align-items:center}.pc .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.bar{height:8px;border-radius:99px;background:var(--fill2);overflow:hidden}.bar>i{display:block;height:100%;background:var(--blue);border-radius:99px}.bar.done>i{background:var(--green)}
-table{width:100%;border-collapse:collapse}td,th{padding:11px 22px;text-align:left;border-top:1px solid var(--line)}th{border:0;color:var(--muted);font-size:12.5px;font-weight:600;padding-top:14px}
-.chat{font-size:14px}.chat .ln{padding:9px 22px;display:flex;gap:10px;align-items:baseline}.chat .ln+.ln{border-top:1px solid var(--line)}.chat .ln.fl{background:rgba(255,159,10,.12)}
-.chat .ln .a{opacity:0;transition:.15s;margin-left:auto;display:flex;gap:6px}.chat .ln:hover .a{opacity:1}
-code{background:var(--fill2);border-radius:6px;padding:2px 6px;font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.key{font:14px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0}
-.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{background:var(--fill2);border-radius:99px;padding:3px 11px;font-size:13px}
-.callchat{background:var(--fill2);border-radius:12px;padding:10px 14px;font-size:13.5px;margin-top:10px}.callchat div+div{margin-top:3px}
-.hl{color:var(--orange);font-weight:600}
+/* controls */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:6px;font-weight:500;font-size:14px;white-space:nowrap;transition:background .12s,box-shadow .12s,transform .06s;background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px rgba(60,66,87,.16),0 1px 1px rgba(0,0,0,.08)}
+.btn:hover{background:var(--hover)}.btn:active{transform:translateY(1px)}.btn:focus-visible,.inp:focus,.nv:focus-visible{outline:0;box-shadow:0 0 0 4px var(--acr)}
+.btn.pri{background:var(--ac);color:#fff;box-shadow:0 1px 1px rgba(0,0,0,.12),0 2px 5px rgba(60,66,87,.12),inset 0 -1px 1px rgba(0,0,0,.12)}.btn.pri:hover{background:var(--ac2)}
+.btn.red{background:#df1b41;color:#fff;box-shadow:0 1px 1px rgba(0,0,0,.12)}.btn.red:hover{background:#c0123c}.btn.ghost{box-shadow:none;background:none;color:var(--ac)}.btn.ghost:hover{background:var(--acs)}
+.btn.s{height:28px;padding:0 10px;font-size:13px}.btn.l{height:40px;padding:0 18px;font-size:15px}.btn[disabled]{opacity:.5;pointer-events:none}.btn.w{width:100%}
+@media(prefers-color-scheme:dark){.btn{box-shadow:0 0 0 1px rgba(255,255,255,.1)}}
+.inp{width:100%;height:34px;padding:0 10px;border-radius:6px;border:0;background:var(--bg);box-shadow:0 0 0 1px rgba(60,66,87,.18),0 1px 1px rgba(0,0,0,.06);transition:box-shadow .12s}
+@media(prefers-color-scheme:dark){.inp{box-shadow:0 0 0 1px rgba(255,255,255,.12);background:#0b0d12}}
+textarea.inp{height:auto;padding:8px 10px;resize:vertical;min-height:76px}select.inp{padding-right:28px}
+.lab{display:block;font-weight:500;font-size:13px;margin:16px 0 6px;color:var(--ink2)}.lab:first-child{margin-top:0}.hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+.seg{display:inline-flex;padding:2px;border-radius:7px;background:var(--neb);gap:2px;flex-wrap:wrap}.seg button{padding:5px 12px;border-radius:5px;font-size:13px;font-weight:500;color:var(--ink2)}.seg button.on{background:var(--bg);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.tog{position:relative;width:36px;height:20px;border-radius:99px;background:var(--faint);transition:.18s;flex:none}.tog::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.3)}.tog.on{background:var(--ac)}.tog.on::after{transform:translateX(16px)}
+.chk{display:flex;gap:10px;align-items:flex-start;padding:8px 0;cursor:pointer}.chk input{margin-top:3px;accent-color:var(--ac)}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-bottom:22px;overflow-x:auto}.tabs a{padding:0 1px 10px;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs a:hover{color:var(--ink)}.tabs a.on{color:var(--ac);border-color:var(--ac)}.tabs .n{font-size:12px;background:var(--neb);color:var(--ne);border-radius:99px;padding:1px 7px;margin-left:5px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{padding:3px 11px;border-radius:99px;font-size:13px;font-weight:500;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}.chip.on{background:var(--ink);color:var(--bg);box-shadow:none}
 
-/* ---------- auth + onboarding ---------- */
-.center{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:24px;position:relative}
-.auth-card{width:100%;max-width:400px;text-align:center;background:var(--sidebar);backdrop-filter:saturate(190%) blur(40px);-webkit-backdrop-filter:saturate(190%) blur(40px);border:1px solid var(--line);border-radius:28px;padding:44px 36px 30px;box-shadow:var(--shadow-lg)}
-.auth-card .appicon{margin:0 auto 20px}.auth-card h1{font-size:30px}.auth-card .sub{font-size:15.5px;margin-bottom:26px}
-.oauth{display:flex;align-items:center;justify-content:center;gap:11px;height:50px;border-radius:13px;font-weight:600;font-size:16px;background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);margin-top:10px;text-decoration:none!important;transition:.15s}
-.oauth:hover{transform:translateY(-1px);box-shadow:inset 0 0 0 1px var(--line),0 6px 16px rgba(0,0,0,.1)}.oauth svg{width:20px;height:20px}
-.oauth.dark{background:#1d1d1f;color:#fff;box-shadow:none;--rbx:#1d1d1f}@media(prefers-color-scheme:dark){.oauth.dark{background:#f5f5f7;color:#1d1d1f;--rbx:#f5f5f7}}
-.invite{background:var(--tint);color:var(--blue);border-radius:12px;padding:11px 14px;font-size:14px;margin:-6px 0 18px;font-weight:500}
-.legal{display:flex;gap:16px;justify-content:center;margin-top:20px;font-size:12.5px}.legal a{color:var(--muted)}
-.fixedlegal{position:absolute;bottom:20px;left:0;right:0;margin:0}
-.ob{width:100%;max-width:540px}.dots{display:flex;gap:7px;justify-content:center;margin-bottom:26px}.dots i{width:7px;height:7px;border-radius:50%;background:var(--fill)}.dots i.on{background:var(--blue);width:22px;border-radius:99px}
-.ob h1{font-size:32px;text-align:center}.ob .sub{text-align:center;margin-bottom:26px}
-.steps{display:grid;gap:10px;text-align:left}.stp{display:flex;gap:14px;background:var(--card);border-radius:16px;padding:15px 16px;box-shadow:var(--shadow)}
-.stp .n{width:26px;height:26px;border-radius:50%;background:var(--tint);color:var(--blue);display:grid;place-items:center;font-weight:700;font-size:13px;flex:none;margin-top:1px}
-.stp>div>b{display:block}.stp span{color:var(--muted);font-size:14px}.stp span b{color:var(--ink);font-weight:600}
-.status{width:92px;height:92px;border-radius:50%;margin:0 auto 20px;display:grid;place-items:center;background:var(--fill2);color:var(--muted)}
-.status.ok{background:rgba(48,209,88,.16);color:var(--green)}.status svg{width:40px;height:40px;stroke-width:2}
-.spin{width:34px;height:34px;border-radius:50%;border:3.5px solid var(--fill);border-top-color:var(--blue);animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+/* data */
+.card{background:var(--bg);border-radius:10px;box-shadow:var(--sh);padding:20px}.card.p0{padding:0}.card h3+p{margin:4px 0 0}
+.grid{display:grid;gap:16px}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g4{grid-template-columns:repeat(4,minmax(0,1fr))}.gm{grid-template-columns:minmax(0,1.7fr) minmax(0,1fr)}
+.kpi{padding:16px 18px 12px}.kpi .kl{font-size:13px;color:var(--muted);font-weight:500}.kpi .kv{font-size:26px;font-weight:600;letter-spacing:-.02em;margin:2px 0 4px;font-variant-numeric:tabular-nums}.kpi .kf{font-size:12px;color:var(--faint);display:flex;justify-content:space-between;margin-top:2px}
+.spk{width:100%;height:42px;display:block}.spk .a{fill:url(#sg)}.spk .l{fill:none;stroke:var(--ac);stroke-width:1.8;vector-effect:non-scaling-stroke}
+table{width:100%;border-collapse:collapse}th{text-align:left;font-size:12px;font-weight:500;color:var(--muted);padding:9px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}tr:last-child td{border-bottom:0}tbody tr{transition:background .1s}tbody tr:hover{background:var(--hover)}tr.click{cursor:pointer}
+.tw{overflow-x:auto}.tbar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.bdg{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:4px;font-size:12px;font-weight:500;background:var(--neb);color:var(--ne);white-space:nowrap}
+.bdg.ok{background:var(--okb);color:var(--ok)}.bdg.wa{background:var(--wab);color:var(--wa)}.bdg.er{background:var(--erb);color:var(--er)}.bdg.in{background:var(--inb);color:var(--in)}.bdg.ac{background:var(--acs);color:var(--ac)}
+.rtag{display:inline-flex;align-items:center;gap:6px;font-weight:500;white-space:nowrap}.rtag i{width:9px;height:9px;border-radius:3px;flex:none}
+.av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#c3c8d6,#9aa1b5);color:#fff;font-size:11.5px;font-weight:600;display:grid;place-items:center;flex:none;overflow:hidden}.av img{width:100%;height:100%;object-fit:cover}.av.l{width:42px;height:42px;font-size:14px}.av.xl{width:68px;height:68px;font-size:22px}
+.who{display:flex;align-items:center;gap:11px;min-width:0}.who b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.who small{display:block;font-size:12.5px;color:var(--muted)}
+.bar{height:6px;border-radius:99px;background:var(--neb);overflow:hidden;min-width:90px}.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}.bar.done i{background:#30c75a}
+.empty{padding:48px 20px;text-align:center;color:var(--muted)}.empty .ei{width:44px;height:44px;border-radius:12px;background:var(--acs);color:var(--ac);display:grid;place-items:center;margin:0 auto 12px}.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px}
+.banner{display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:10px;background:var(--acs);margin-bottom:20px}.banner .ic{width:20px;height:20px;color:var(--ac)}.banner.wa{background:var(--wab)}.banner.wa .ic{color:var(--wa)}
+.feed>div{display:flex;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line);font-size:13.5px}.feed>div:last-child{border:0}.feed .t{color:var(--faint);font-size:12px;white-space:nowrap;margin-left:auto}
+.steps{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.steps .arr{color:var(--faint)}
+.kv2{display:grid;grid-template-columns:150px 1fr;gap:10px 16px;font-size:14px}.kv2 dt{color:var(--muted)}.kv2 dd{margin:0}
+.chatl{padding:9px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:baseline}.chatl:last-child{border:0}.chatl.fl{background:var(--wab)}
+.chatl .acts{opacity:0;margin-left:auto;display:flex;gap:6px;transition:.12s}.chatl:hover .acts{opacity:1}
+.ctx{background:var(--hover);border-radius:8px;padding:10px 14px;font-size:13px;margin-top:12px}.ctx div+div{margin-top:3px}
+code{font-family:var(--m);font-size:12.5px;background:var(--neb);padding:1px 6px;border-radius:4px}
+.keybox{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:7px;box-shadow:0 0 0 1px var(--line);font-family:var(--m);font-size:13px}.keybox span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw{display:inline-flex;gap:6px;flex-wrap:wrap}.sw label{width:24px;height:24px;border-radius:6px;cursor:pointer;position:relative}.sw input{position:absolute;opacity:0}.sw input:checked+i{position:absolute;inset:-3px;border-radius:8px;box-shadow:0 0 0 2px var(--ac)}
+.pg{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}.pg:last-child{border:0}
 
-/* ---------- sheet + toast ---------- */
-.scrim{position:fixed;inset:0;background:rgba(0,0,0,.32);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:50;animation:fd .15s}
-.sheet{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;background:var(--card);border-radius:22px;box-shadow:var(--shadow-lg);padding:26px;z-index:51;animation:pp .22s cubic-bezier(.2,.9,.3,1.2)}
-.sheet h2{margin-bottom:6px}.sheet .fl{display:grid;gap:14px;margin:18px 0 22px}.sheet .bt{display:flex;gap:10px;justify-content:flex-end}
-@keyframes fd{from{opacity:0}}@keyframes pp{from{opacity:0;transform:translate(-50%,-46%) scale(.96)}}
-#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:80;display:grid;gap:8px;justify-items:center;pointer-events:none}
-.toast{background:rgba(30,30,32,.9);color:#fff;backdrop-filter:blur(20px);padding:11px 18px;border-radius:99px;font-size:14px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.3);animation:tp .25s}.toast.err{background:rgba(200,40,30,.95)}
-@keyframes tp{from{opacity:0;transform:translateY(10px)}}
+/* drawer, modal, palette, toast */
+#dw .scrim,#ck .scrim{position:fixed;inset:0;background:rgba(15,17,30,.36);z-index:70;opacity:0;transition:opacity .2s}
+#dw.open .scrim,#ck.open .scrim{opacity:1}
+.dwr{position:fixed;top:0;right:0;bottom:0;width:min(480px,100vw);background:var(--bg);z-index:71;display:flex;flex-direction:column;box-shadow:var(--shl);transform:translateX(100%);transition:transform .26s cubic-bezier(.2,.8,.2,1)}
+#dw.open .dwr{transform:none}.dwr.c{top:50%;left:50%;right:auto;bottom:auto;width:min(440px,calc(100vw - 32px));max-height:85vh;border-radius:12px;transform:translate(-50%,-48%) scale(.97);opacity:0;transition:.2s}
+#dw.open .dwr.c{transform:translate(-50%,-50%);opacity:1}
+.dwh{display:flex;align-items:flex-start;gap:12px;padding:20px 24px;border-bottom:1px solid var(--line)}.dwh .t{flex:1}.dwh p{margin:3px 0 0;color:var(--muted);font-size:13.5px}
+.x{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted);font-size:20px}.x:hover{background:var(--sel)}
+.dwb{padding:20px 24px;overflow:auto;flex:1}.dwf{display:flex;justify-content:flex-end;gap:8px;padding:14px 24px;border-top:1px solid var(--line)}
+.esc{margin-top:10px;padding:12px 14px;border-radius:8px;background:var(--acs);font-size:13.5px}
+.ckb{position:fixed;top:12vh;left:50%;transform:translateX(-50%);width:min(620px,calc(100vw - 32px));background:var(--bg);border-radius:12px;box-shadow:var(--shl);z-index:71;overflow:hidden;animation:pop .14s ease}
+.ckb input{width:100%;border:0;outline:0;background:none;padding:18px 20px;font-size:16px;border-bottom:1px solid var(--line)}
+.ckl{max-height:52vh;overflow:auto;padding:6px}.ckl .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);padding:10px 12px 4px}
+.ckl button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:7px;text-align:left}.ckl button.on{background:var(--acs);color:var(--ac)}.ckl small{margin-left:auto;color:var(--faint);font-size:12px}
+.ckf{display:flex;gap:14px;padding:9px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:90;display:grid;gap:8px;justify-items:center}
+.toast{display:flex;align-items:center;gap:9px;background:#1a1f36;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;box-shadow:var(--shl);animation:tin .25s cubic-bezier(.2,.9,.3,1.3)}.toast.err{background:#c0123c}.toast .ic{color:#5fe08a}.toast.err .ic{color:#fff}
+@keyframes tin{from{opacity:0;transform:translateY(12px) scale(.96)}}
+.skel{background:linear-gradient(90deg,var(--neb),var(--hover),var(--neb));background-size:200% 100%;animation:sk 1.2s infinite;border-radius:6px;height:14px}@keyframes sk{to{background-position:-200% 0}}
+.spin{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--neb);border-top-color:var(--ac);animation:rot .8s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
 
+/* auth + onboarding */
+.auth{min-height:100vh;display:grid;place-items:center;padding:24px;position:relative;overflow:hidden;background:var(--side)}
+.band{position:absolute;left:-10%;right:-10%;top:-38vh;height:78vh;transform:skewY(-11deg);background:linear-gradient(115deg,#635bff 0%,#80e9ff 30%,#a960ee 55%,#ff6c95 78%,#ffcb57 100%);background-size:220% 220%;animation:flow 14s ease infinite;opacity:.95}
+@keyframes flow{50%{background-position:100% 50%}}
+.acard{position:relative;width:100%;max-width:420px;background:var(--bg);border-radius:12px;box-shadow:var(--shl);padding:38px 36px 28px}
+.acard .logo{width:40px;height:40px;border-radius:10px;font-size:18px;margin-bottom:22px}.acard h1{font-size:24px}.acard .lead{color:var(--muted);margin:6px 0 24px;font-size:15px}
+.oa{display:flex;align-items:center;justify-content:center;gap:10px;height:42px;border-radius:7px;font-weight:500;font-size:15px;width:100%;margin-top:10px;background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px rgba(60,66,87,.18),0 1px 2px rgba(0,0,0,.08);transition:.12s}.oa:hover{background:var(--hover);color:var(--ink)}.oa svg{width:18px;height:18px}
+.oa.dk{background:#1a1f36;color:#fff;box-shadow:none;--rbx:#1a1f36}.oa.dk:hover{background:#2a2f4a;color:#fff}
+@media(prefers-color-scheme:dark){.oa.dk{background:#e8eaf0;color:#1a1f36;--rbx:#e8eaf0}.oa.dk:hover{background:#fff;color:#1a1f36}}
+.afoot{position:relative;margin-top:22px;display:flex;gap:16px;justify-content:center;font-size:13px}.afoot a{color:var(--muted)}
+.inv{background:var(--acs);color:var(--ac);border-radius:8px;padding:10px 14px;font-size:14px;margin:-8px 0 16px}
+.ob{min-height:100vh;display:grid;grid-template-columns:320px 1fr;background:var(--bg)}
+.obl{background:var(--side);border-right:1px solid var(--line);padding:28px 26px;display:flex;flex-direction:column;gap:6px}
+.obs{display:flex;gap:12px;padding:12px;border-radius:8px;align-items:flex-start}.obs.on{background:var(--bg);box-shadow:var(--sh)}
+.obs .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;flex:none;box-shadow:inset 0 0 0 1.5px var(--faint);color:var(--muted)}
+.obs.on .n{box-shadow:none;background:var(--ac);color:#fff}.obs.done .n{box-shadow:none;background:#30c75a;color:#fff}.obs b{display:block;font-weight:600;font-size:14px}.obs small{color:var(--muted);font-size:12.5px}
+.obr{display:grid;place-items:center;padding:40px}.obc{width:100%;max-width:560px;animation:in .25s ease}.obc h1{font-size:30px}.obc .lead{color:var(--muted);font-size:16px;margin:8px 0 28px}
+.inst{counter-reset:s;display:grid;gap:10px}.inst>div{display:flex;gap:14px;padding:16px;border-radius:10px;box-shadow:var(--sh)}.inst>div::before{counter-increment:s;content:counter(s);width:24px;height:24px;border-radius:50%;background:var(--acs);color:var(--ac);font-weight:700;font-size:12px;display:grid;place-items:center;flex:none}
+.big{width:84px;height:84px;border-radius:50%;margin:0 0 22px;display:grid;place-items:center;background:var(--acs)}.big.ok{background:var(--okb);color:var(--ok)}.big .ic{width:38px;height:38px;stroke-width:2.2}.big .spin{width:34px;height:34px;border-width:3px}
+
+@media(max-width:980px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.gm,.g3{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:860px){
-  #shell{display:block}main{height:100dvh;padding:18px 16px calc(92px + env(safe-area-inset-bottom))}
-  .sb{position:fixed;left:0;right:0;bottom:0;top:auto;flex-direction:row;padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-right:0;border-top:1px solid var(--line);z-index:30}
-  .sb .wsw,.sb .sbfoot{display:none}.sb nav{flex-direction:row;width:100%;margin:0;justify-content:space-around}
-  .nv{flex-direction:column;gap:2px;font-size:11px;padding:6px 10px;background:none!important}.nv .bd{position:absolute;top:0;right:2px;min-width:16px;height:16px;font-size:10px}
-  .mhead{display:flex;align-items:center;gap:10px;margin-bottom:14px}.mhead .wsw{width:auto;flex:1}
-  .menu{top:62px;left:12px;right:12px;width:auto}.g2,.g3,.g4,.gh{grid-template-columns:1fr}h1{font-size:30px}.hero b{font-size:46px}
-  .g4,.gh .g2{grid-template-columns:1fr 1fr}.list>*{padding:12px 16px}td,th{padding:10px 12px}
+ .app{display:block}.side{position:fixed;left:0;top:0;bottom:0;width:270px;transform:translateX(-100%);transition:transform .25s;box-shadow:var(--shl)}.side.open{transform:none}
+ .top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:15}
+ .page{padding:22px 16px 60px}.g2,.g4{grid-template-columns:minmax(0,1fr)}h1{font-size:24px}.ob{grid-template-columns:1fr}.obl{display:none}.obr{padding:24px 16px}.kv2{grid-template-columns:1fr}
 }
 </style>
 </head>
 <body>
-<div id="root"></div><div id="sheet"></div><div id="toast"></div>
+<svg width="0" height="0" style="position:absolute"><defs><linearGradient id="sg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#635bff" stop-opacity=".22"/><stop offset="1" stop-color="#635bff" stop-opacity="0"/></linearGradient></defs></svg>
+<div id="root"></div><div id="dw"></div><div id="ck"></div><div id="mn"></div><div id="toast"></div>
 <script>
 "use strict";
+/* ============ helpers ============ */
 const $=(s,e=document)=>e.querySelector(s),$$=(s,e=document)=>[...e.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const ago=t=>{const s=Math.max(0,(Date.now()-t)/1000|0);return s<5?'just now':s<60?s+'s ago':s<3600?(s/60|0)+'m ago':s<86400?(s/3600|0)+'h ago':(s/86400|0)+'d ago'};
-const dur=sec=>{const m=Math.round(sec/60);return m<60?m+'m':(m/60|0)+'h '+(m%60)+'m'};
-const initials=n=>String(n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'?';
-const RANK={helper:1,moderator:2,admin:3};
-const IC={
- shield:'<path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/>',home:'<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/>',
- players:'<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.8-3.2 3.3-5 6-5s5.2 1.8 6 5"/><circle cx="17.5" cy="9" r="2.4"/><path d="M16.5 14.2c2.3.2 4 1.6 4.5 4.3"/>',
- reports:'<path d="M5 21V4"/><path d="M5 5h11l-2 3.5 2 3.5H5"/>',activity:'<path d="M3 13h4l3-8 4 15 3-7h4"/>',
- settings:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
- chev:'<path d="M7 10l5 5 5-5"/>',check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',plus:'<path d="M12 5v14M5 12h14"/>',out:'<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 8l-4 4 4 4M6 12h10"/>',
- bolt:'<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>'};
-const svg=n=>`<svg class="i" viewBox="0 0 24 24">${IC[n]}</svg>`;
+const ago=t=>{const s=Math.max(0,(Date.now()-t)/1000|0);return s<10?'just now':s<60?s+'s ago':s<3600?(s/60|0)+'m ago':s<86400?(s/3600|0)+'h ago':s<2592000?(s/86400|0)+'d ago':new Date(t).toLocaleDateString()};
+const dur=sec=>{sec=Math.round(sec||0);const m=Math.round(sec/60);return sec<60&&sec>0?'<1m':m<60?m+'m':(m/60|0)+'h '+(m%60?m%60+'m':'')};
+const fmin=m=>!m?'Permanent':m<60?m+' min':m<1440?(Math.round(m/6)/10)+' h':(Math.round(m/144)/10)+' days';
+const date=t=>new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+const dtime=t=>new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const ini=n=>String(n||'?').trim().split(/[\s_]+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'?';
+const I={home:'<path d="M4 10.5 12 4l8 6.5V20H4z"/><path d="M10 20v-6h4v6"/>',players:'<circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c.8-3.3 3.3-5.2 6-5.2s5.2 1.9 6 5.2"/><path d="M16 5.5a3 3 0 0 1 0 5.6M18 14.6c1.6.6 2.6 2.1 3 4.9"/>',
+ flag:'<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',book:'<path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/>',team:'<path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+ chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',leave:'<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',rules:'<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 4.4V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+ search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',chev:'<path d="m8 10 4 4 4-4"/>',check:'<path d="m5 12.5 4.5 4.5L19 7.5"/>',plus:'<path d="M12 5v14M5 12h14"/>',out:'<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10"/>',
+ up:'<path d="m6 15 6-6 6 6"/>',down:'<path d="m6 9 6 6 6-6"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',bolt:'<path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/>',link:'<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+ menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',x:'<path d="M6 6l12 12M18 6 6 18"/>',copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',dl:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',game:'<rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3M15 12h.01M17.5 13.5h.01"/>'};
+const ic=n=>`<svg class="ic" viewBox="0 0 24 24">${I[n]}</svg>`;
 const GOOGLE='<svg viewBox="0 0 24 24"><path fill="#4285F4" d="M23 12.27c0-.8-.07-1.56-.2-2.3H12v4.35h6.18a5.28 5.28 0 0 1-2.3 3.47v2.88h3.7C21.75 18.7 23 15.7 23 12.27z"/><path fill="#34A853" d="M12 23.5c3.1 0 5.7-1.03 7.6-2.8l-3.7-2.88c-1.03.7-2.35 1.1-3.9 1.1-3 0-5.5-2.02-6.4-4.73H1.8v2.97A11.5 11.5 0 0 0 12 23.5z"/><path fill="#FBBC05" d="M5.6 14.2a6.9 6.9 0 0 1 0-4.4V6.83H1.8a11.5 11.5 0 0 0 0 10.34z"/><path fill="#EA4335" d="M12 5.07c1.7 0 3.2.58 4.4 1.73l3.3-3.3C17.7 1.6 15.1.5 12 .5 7.5.5 3.7 3 1.8 6.83L5.6 9.8C6.5 7.1 9 5.07 12 5.07z"/></svg>';
-const ROBLOX='<svg viewBox="0 0 24 24"><g transform="rotate(14 12 12)"><rect x="4" y="4" width="16" height="16" rx="2.6" fill="currentColor"/><rect x="9.6" y="9.6" width="4.8" height="4.8" rx=".8" fill="var(--rbx,#1d1d1f)"/></g></svg>';
+const RBX='<svg viewBox="0 0 24 24"><g transform="rotate(14 12 12)"><rect x="4" y="4" width="16" height="16" rx="2.6" fill="currentColor"/><rect x="9.6" y="9.6" width="4.8" height="4.8" rx=".8" fill="var(--rbx)"/></g></svg>';
+const COLORS=['#635bff','#0ea5e9','#10b981','#84cc16','#f59e0b','#f97316','#ef4444','#ec4899','#a855f7','#64748b'];
 
-let ME=null,S=null,SETUP=null,JOIN=null,OB=null,found=null,menuOpen=false,page='home',busy=false;
-const tab={players:'online',reports:'calls',activity:'sessions',settings:'game'};
-const AV={},AVQ=new Set();
-const can=n=>!!S&&RANK[S.me.role]>=n;
-const roleLabel=()=>S.me.owner?'Owner':S.me.role[0].toUpperCase()+S.me.role.slice(1);
+/* ============ state ============ */
+let ME=null,S=null,SETUP=null,OB=null,JOIN=null,PROF=null,LB=null,AVC={},AVQ=new Set(),route={page:'home'},lastPage='',sideOpen=false;
+const LBF={type:'',q:''},PT={tab:'logbook',f:''};
+const P=p=>!!S&&S.me.perms.includes(p);
+const rk=id=>(S&&S.ranks.find(r=>r.id===id))||{name:'No rank',color:'#a3acb9',pos:0};
+const rtag=id=>{const r=rk(id);return `<span class="rtag"><i style="background:${esc(r.color)}"></i>${esc(r.name)}</span>`};
+const below=pos=>S.me.owner||S.me.pos>pos;
 
-/* ---------- plumbing ---------- */
-function toast(msg,kind){const t=document.createElement('div');t.className='toast'+(kind?' '+kind:'');t.textContent=msg;$('#toast').append(t);setTimeout(()=>t.remove(),3200)}
+function toast(m,kind){const t=document.createElement('div');t.className='toast'+(kind?' '+kind:'');t.innerHTML=(kind==='err'?ic('info'):ic('check'))+esc(m);$('#toast').append(t);setTimeout(()=>{t.style.transition='.3s';t.style.opacity=0;setTimeout(()=>t.remove(),300)},3000)}
 async function api(path,body){
-  let r;try{r=await fetch(path,body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})}catch{toast('No connection. Check your internet.','err');return{error:'offline',_s:0}}
-  let j={};try{j=await r.json()}catch{}
-  if(typeof j!=='object'||!j)j={};j._s=r.status;
-  if(r.status===429)toast(j.error||'Slow down for a moment.','err');
-  else if(r.status===401&&ME&&ME.user){ME.user=null;S=null;render()}
-  return j}
-const fail=r=>{if(r.error&&r._s!==429)toast(r.error,'err');return!!r.error};
-async function loadMe(){ME=await api('/api/me');return ME}
-async function loadState(){
-  S=await api('/api/state');
-  if(S.code==='no_workspace'){await loadMe();S=ME.current?await api('/api/state'):null}
-  if(S&&S.error)S=null}
-async function refresh(){await loadState();render()}
+ let r;try{r=await fetch(path,body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})}catch{toast('No connection. Check your internet.','err');return{error:'offline',_s:0}}
+ let j={};try{j=await r.json()}catch{} if(!j||typeof j!=='object')j={};j._s=r.status;
+ if(r.status===429)toast(j.error||'Slow down a moment.','err');else if(r.status===401&&ME&&ME.user){ME=await (await fetch('/api/me')).json();S=null;render()}
+ return j}
+const bad=r=>{if(r.error&&r._s!==429){toast(r.error,'err');return true}return!!r.error};
+async function loadMe(){ME=await api('/api/me')}
+async function loadState(){const s=await api('/api/state');if(s.code==='no_workspace'){await loadMe();S=ME.current?await api('/api/state'):null}else S=s.error?null:s}
+async function refresh(){await loadState();await pageData();render()}
+async function pageData(){
+ if(!S)return;
+ if(route.page==='player'&&route.id){const r=await api('/api/player?userId='+route.id);PROF=r.error?{error:r.error}:r}
+ if(route.page==='logbook'){LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`)}
+ if(S.me.owner&&(route.page==='settings'&&(route.tab||'general')==='game'||route.page==='setup'))SETUP=await api('/api/setup')}
 
-function sheet(o){return new Promise(res=>{
-  const w=$('#sheet');const f=(o.fields||[]).map(x=>`<div><label class="lab" for="sf_${x.name}">${esc(x.label)}</label>${
-    x.type==='select'?`<select class="field" id="sf_${x.name}" name="${x.name}">${x.options.map(([v,t])=>`<option value="${esc(v)}"${v==x.value?' selected':''}>${esc(t)}</option>`).join('')}</select>`:
-    x.type==='textarea'?`<textarea class="field" id="sf_${x.name}" name="${x.name}" placeholder="${esc(x.placeholder||'')}">${esc(x.value||'')}</textarea>`:
-    `<input class="field" id="sf_${x.name}" name="${x.name}" type="${x.type||'text'}" value="${esc(x.value??'')}" placeholder="${esc(x.placeholder||'')}" ${x.required?'required':''} autocomplete="off">`}${x.help?`<div class="help">${esc(x.help)}</div>`:''}</div>`).join('');
-  w.innerHTML=`<div class="scrim"></div><form class="sheet" role="dialog" aria-modal="true"><h2>${esc(o.title)}</h2>${o.text?`<p class="muted" style="margin:6px 0 0">${esc(o.text)}</p>`:''}<div class="fl">${f}</div><div class="bt"><button type="button" class="btn gray" data-x="cancel">Cancel</button><button class="btn${o.danger?' red':''}">${esc(o.ok||'OK')}</button></div></form>`;
-  const close=v=>{w.innerHTML='';document.removeEventListener('keydown',kd);res(v)};
-  const kd=e=>{if(e.key==='Escape')close(null)};document.addEventListener('keydown',kd);
-  $('.scrim',w).onclick=()=>close(null);$('[data-x=cancel]',w).onclick=()=>close(null);
-  $('form',w).onsubmit=e=>{e.preventDefault();const v={};new FormData(e.target).forEach((x,k)=>v[k]=x);close(v)};
-  const first=$('input,select,textarea',w);if(first)first.focus()})}
-const sheetOpen=()=>!!$('#sheet .sheet');
+function av(id,name,c=''){const u=AVC[id];if(id&&!(id in AVC))AVQ.add(id);return `<span class="av ${c}" data-av="${id||''}">${u?`<img src="${esc(u)}" alt="">`:esc(ini(name))}</span>`}
+async function fillAv(){const ids=[...AVQ].slice(0,80);AVQ.clear();if(ids.length&&S){const r=await api('/api/avatars?ids='+ids.join(','));ids.forEach(i=>AVC[i]=r[i]||'')}
+ $$('[data-av]').forEach(e=>{const u=AVC[e.dataset.av];if(u&&!e.querySelector('img'))e.innerHTML=`<img src="${esc(u)}" alt="">`})}
+function spark(v){if(!v||!v.length)v=[0];if(v.length<2)v=[v[0],v[0]];const W=200,H=42,m=Math.max(1,...v),pts=v.map((x,i)=>[i/(v.length-1)*W,H-3-x/m*(H-8)]);const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+ return `<svg class="spk" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path class="a" d="${d} L${W} ${H} L0 ${H}Z"/><path class="l" d="${d}"/></svg>`}
+const kpi=(l,v,s,f1,f2)=>`<div class="card kpi"><div class="kl">${l}</div><div class="kv">${v}</div>${s?spark(s):''}<div class="kf"><span>${f1||''}</span><span>${f2||''}</span></div></div>`;
+const empty=(t,s,icn='info',act='')=>`<div class="empty"><div class="ei">${ic(icn)}</div><b>${t}</b>${s?`<div class="sm">${s}</div>`:''}${act?`<div style="margin-top:14px">${act}</div>`:''}</div>`;
+const hd=(t,s,a='',crumb='')=>`${crumb?`<div class="crumb">${crumb}</div>`:''}<div class="hd"><div class="t"><h1>${t}</h1>${s?`<p>${s}</p>`:''}</div>${a?`<div class="row wrap">${a}</div>`:''}</div>`;
+const tabs=(base,items,cur)=>`<div class="tabs">${items.map(([k,t,n])=>`<a href="#/${base}/${k}" class="${cur===k?'on':''}">${t}${n?`<span class="n">${n}</span>`:''}</a>`).join('')}</div>`;
+const LTYPE={Warned:'wa',Kicked:'wa',Muted:'in',Unmuted:'',Suspended:'er',Banned:'er',Unbanned:'ok',Points:'ac',Note:''};
+const actBtn=(p,cls='s')=>MODP()?`<button class="btn ${cls}" data-a="mod" data-uid="${p.userId}" data-n="${esc(p.name)}">Moderate</button>`:'';
+const MODP=()=>['mod.warn','mod.kick','mod.mute','mod.ban','mod.permban'].some(P);
 
-function avatar(id,name,cls=''){const u=AV[id];if(!u&&id)AVQ.add(id);return `<span class="av ${cls}" data-uid="${id||''}">${u?`<img src="${esc(u)}" alt="">`:esc(initials(name))}</span>`}
-async function fillAvatars(){
-  const ids=[...AVQ].filter(i=>!(i in AV)).slice(0,60);AVQ.clear();
-  if(ids.length&&S){const r=await api('/api/avatars?ids='+ids.join(','));ids.forEach(i=>AV[i]=r[i]||'')}
-  $$('.av[data-uid]').forEach(e=>{const u=AV[e.dataset.uid];if(u&&!e.querySelector('img'))e.innerHTML=`<img src="${esc(u)}" alt="">`})}
+/* ============ drawer / modal / menus ============ */
+function drawer(o){return new Promise(res=>{
+ const w=$('#dw');w.innerHTML=`<div class="scrim"></div><form class="dwr ${o.center?'c':''}" novalidate><div class="dwh"><div class="t"><h2>${esc(o.title)}</h2>${o.sub?`<p>${o.sub}</p>`:''}</div><button type="button" class="x" data-x aria-label="Close">${ic('x')}</button></div><div class="dwb">${o.html||''}</div>${o.ok===false?'':`<div class="dwf"><button type="button" class="btn" data-x>Cancel</button><button class="btn ${o.danger?'red':'pri'}">${esc(o.ok||'Save')}</button></div>`}</form>`;
+ requestAnimationFrame(()=>requestAnimationFrame(()=>w.classList.add('open')));
+ const f=$('form',w);let extra=null;
+ const close=v=>{w.classList.remove('open');document.removeEventListener('keydown',kd);setTimeout(()=>{if(!w.classList.contains('open'))w.innerHTML=''},260);res(v)};
+ const kd=e=>{if(e.key==='Escape')close(null)};document.addEventListener('keydown',kd);
+ $('.scrim',w).onclick=()=>close(null);$$('[data-x]',w).forEach(b=>b.onclick=()=>close(null));
+ f.onsubmit=e=>{e.preventDefault();const v={};for(const[k,x]of new FormData(f)){if(k in v)v[k]=[].concat(v[k],x);else v[k]=x}if(extra)Object.assign(v,extra());if(o.check){const m=o.check(v);if(m){toast(m,'err');return}}close(v)};
+ if(o.mount)extra=o.mount(f)||null;const first=$('input:not([type=checkbox]):not([type=radio]),select,textarea',f);if(first&&!o.noFocus)setTimeout(()=>first.focus(),80)})}
+const dwOpen=()=>$('#dw').classList.contains('open');
+const confirmBox=(title,text,ok,danger=true)=>drawer({center:1,title,sub:esc(text),ok,danger,html:''}).then(v=>!!v);
+function menu(anchor,html){const m=$('#mn');const r=anchor.getBoundingClientRect();m.innerHTML=`<div class="menu" style="left:${Math.min(r.left,innerWidth-250)}px;${r.top>innerHeight/2?`bottom:${innerHeight-r.top+6}px`:`top:${r.bottom+6}px`}">${html}</div>`}
+const closeMenu=()=>$('#mn').innerHTML='';
 
-/* ---------- screens ---------- */
-function render(){
-  const root=$('#root');
-  if(!ME){root.innerHTML='<div class="center"><div class="spin"></div></div>';return}
-  if(!ME.user)root.innerHTML=authScreen();
-  else if(JOIN)root.innerHTML=joinScreen();
-  else if(OB||!ME.workspaces.length)root.innerHTML=onboarding();
-  else if(!S)root.innerHTML='<div class="center"><div class="spin"></div></div>';
-  else{const keep=$('#main')&&page===root.dataset.page?$('#main').scrollTop:0;root.innerHTML=shell();root.dataset.page=page;if(keep)$('#main').scrollTop=keep}
-  fillAvatars()}
+/* ============ routing ============ */
+const PAGES=['home','players','player','reports','logbook','team','activity','leave','rulebook','settings','setup'];
+function parse(){const h=location.hash.replace(/^#\/?/,''),[a,b]=h.split('/');
+ if(a==='join'&&/^[a-f0-9]{28}$/.test(b||''))return{page:'join',id:b};if(a==='linked')return{page:'home',linked:1};
+ return{page:PAGES.includes(a)?a:'home',tab:a==='player'?null:(b||null),id:a==='player'?b:null}}
+async function onRoute(){
+ const r=parse();if(r.page==='join'){JOIN={code:r.id};const pv=await api('/api/invite?code='+r.id);if(pv._s===200)JOIN.info=pv;else JOIN.err=pv.error;render();return}
+ if(r.linked){toast('Roblox account linked');history.replaceState(null,'','#/');}
+ route=r;sideOpen=false;closeMenu();if(route.page!=='player')PROF=null;if(route.page==='player'&&PROF&&String(PROF.userId)!==route.id)PROF=null;
+ if(S&&route.page==='setup'&&!S.me.owner){location.hash='#/';return}
+ if(S&&route.page==='setup'&&!OB)OB={step:'script'};
+ render(true);if(S){await pageData();render()}}
+window.addEventListener('hashchange',onRoute);
+const go=h=>{if(location.hash==='#/'+h)onRoute();else location.hash='#/'+h};
 
-function authScreen(){
-  const has=k=>ME.providers.includes(k),inv=JOIN&&JOIN.code?'?invite='+JOIN.code:'';
-  return `<div class="center"><div class="auth-card"><div class="appicon lg">${svg('shield')}</div><h1>Sentinel</h1><p class="sub">Keep your Roblox game friendly.<br>Moderation that just works.</p>
-  ${JOIN&&JOIN.info?`<div class="invite">You're invited to join <b>${esc(JOIN.info.workspace)}</b> as ${esc(JOIN.info.role)}.</div>`:''}${JOIN&&JOIN.err?`<div class="invite" style="background:rgba(255,59,48,.12);color:var(--red)">${esc(JOIN.err)}</div>`:''}
-  ${has('google')?`<a class="oauth" href="/auth/google${inv}">${GOOGLE}Continue with Google</a>`:''}${has('roblox')?`<a class="oauth dark" href="/auth/roblox${inv}">${ROBLOX}Continue with Roblox</a>`:''}
-  <p class="fine" style="margin:20px 0 0">By continuing you agree to the <a href="/legal/terms" target="_blank">Terms</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>. You must be 13 or older.</p></div>
-  <div class="legal fixedlegal"><a href="/legal/privacy" target="_blank">Privacy</a><a href="/legal/terms" target="_blank">Terms</a><a href="/legal/cookies" target="_blank">Cookies</a></div></div>`}
+/* ============ screens ============ */
+function render(anim){
+ const root=$('#root');
+ if(!ME){root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
+ if(!ME.user){root.innerHTML=authView();return}
+ if(JOIN){root.innerHTML=joinView();return}
+ if(!ME.workspaces.length||OB&&(OB.creating||route.page==='setup')){root.innerHTML=obView();fillAv();return}
+ if(!S){root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
+ const p=route.page,scroll=$('main')?$('main').scrollTop:0,doAnim=anim||p+route.tab+route.id!==lastPage;lastPage=p+route.tab+route.id;
+ root.innerHTML=`<div class="app">${sideView()}<main><div class="top"><button class="btn s" data-a="side" aria-label="Menu">${ic('menu')}</button><b>${esc(S.workspace.name)}</b><span class="sp"></span><button class="btn s" data-a="cmdk">${ic('search')}</button></div><div class="page ${doAnim?'anim':''}">${(V[p]||V.home)()}</div></main></div>`;
+ if(!doAnim&&$('main'))$('main').scrollTop=scroll;fillAv()}
 
-function joinScreen(){
-  if(!JOIN.info)return `<div class="center"><div class="auth-card"><h1 style="font-size:24px">Invite not valid</h1><p class="sub">${esc(JOIN.err||'This invite has expired or was already used.')}</p><button class="btn gray lg" style="width:100%" data-a="join-cancel">Continue</button></div></div>`;
-  return `<div class="center"><div class="auth-card"><div class="appicon lg">${svg('players')}</div><h1 style="font-size:26px">Join ${esc(JOIN.info.workspace)}</h1><p class="sub">You'll join as <b>${esc(JOIN.info.role)}</b>, signed in as ${esc(ME.user.name)}.</p>
-  <button class="btn lg" style="width:100%" data-a="join-accept">Join workspace</button><button class="btn plain" style="margin-top:12px" data-a="join-cancel">Not now</button></div></div>`}
+function authView(){const has=k=>ME.providers.includes(k),q=JOIN&&JOIN.code?'?invite='+JOIN.code:'';
+ return `<div class="auth"><div class="band"></div><div style="position:relative;width:100%;max-width:420px"><div class="acard"><div class="logo">S</div><h1>Sign in to Sentinel</h1><p class="lead">Moderation and staff management for your Roblox game.</p>
+ ${JOIN&&JOIN.info?`<div class="inv">You're invited to join <b>${esc(JOIN.info.workspace)}</b> as ${esc(JOIN.info.role)}.</div>`:''}
+ ${has('google')?`<a class="oa" href="/auth/google${q}">${GOOGLE}Continue with Google</a>`:''}${has('roblox')?`<a class="oa dk" href="/auth/roblox${q}">${RBX}Continue with Roblox</a>`:''}
+ <p class="xs muted" style="margin:22px 0 0;text-align:center">By continuing you agree to the <a href="/legal/terms" target="_blank">Terms</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>. You must be 13 or older.</p></div>
+ <div class="afoot"><a href="/legal/privacy" target="_blank">Privacy</a><a href="/legal/terms" target="_blank">Terms</a><a href="/legal/cookies" target="_blank">Cookies</a></div></div></div>`}
+function joinView(){
+ if(!JOIN.info)return `<div class="auth"><div class="band"></div><div class="acard"><h1>Invite not valid</h1><p class="lead">${esc(JOIN.err||'This invite has expired or was already used.')}</p><button class="btn pri l w" data-a="join-no">Continue</button></div></div>`;
+ return `<div class="auth"><div class="band"></div><div class="acard"><div class="logo">${esc(ini(JOIN.info.workspace)[0])}</div><h1>Join ${esc(JOIN.info.workspace)}</h1><p class="lead">You'll join as <b>${esc(JOIN.info.role)}</b>, signed in as ${esc(ME.user.name)}.</p>
+ <button class="btn pri l w" data-a="join-yes">Accept invite</button><button class="btn ghost w" style="margin-top:8px" data-a="join-no">Not now</button></div></div>`}
 
-function onboarding(){
-  OB=OB||{step:1};const st=OB.step,first=esc(ME.user.name.split(' ')[0]);
-  const dots=`<div class="dots">${[1,2,3].map(i=>`<i class="${i<=st?'on':''}"></i>`).join('')}</div>`;
-  let inner='';
-  if(st===1)inner=`<h1>Welcome, ${first}</h1><p class="sub">Let's set up Sentinel for your game.<br>It takes about two minutes.</p>
-   <form data-f="ob-name" class="card" style="padding:26px"><label class="lab" for="obn">What's your game called?</label><input id="obn" class="field" name="name" maxlength="40" placeholder="My Roblox Game" autocomplete="off" value="${esc(OB.name||'')}" required>
-   <div class="help">This is just a label for you and your team. You can change it later.</div><button class="btn lg" style="width:100%;margin-top:20px">Continue</button></form>
-   ${ME.workspaces.length?`<p style="text-align:center;margin-top:14px"><button class="btn plain" data-a="ob-cancel">Cancel</button></p>`:`<p style="text-align:center;margin-top:14px"><button class="btn plain" data-a="signout">Sign out</button></p>`}`;
-  else if(st===2)inner=`<h1>Add Sentinel to your game</h1><p class="sub">Three quick steps in Roblox Studio.</p><div class="steps">
-   <div class="stp"><div class="n">1</div><div><b>Create a Script</b><span>In Explorer, hover <b>ServerScriptService</b>, click <b>+</b> and choose <b>Script</b>.</span></div></div>
-   <div class="stp"><div class="n">2</div><div style="flex:1"><b>Paste our code</b><span>Delete what's inside and paste this. It already contains your game's private key.</span>
-     <div class="row wrapf" style="margin-top:10px"><button class="btn sm" data-a="copy-script">Copy script</button><a class="btn sm gray" href="/api/bridge?download=1">Download .lua</a></div></div></div>
-   <div class="stp"><div class="n">3</div><div><b>Allow HTTP requests</b><span>Home, then <b>Game Settings</b>, then <b>Security</b>. Turn on <b>Allow HTTP Requests</b>.</span></div></div></div>
-   <button class="btn lg" style="width:100%;margin-top:20px" data-a="ob-next">I've done this</button>`;
-  else inner=`<div class="status ${OB.ok?'ok':''}">${OB.ok?`<svg class="i" viewBox="0 0 24 24">${IC.check}</svg>`:'<div class="spin"></div>'}</div>
-   <h1>${OB.ok?"You're connected":'Waiting for your game'}</h1><p class="sub">${OB.ok?'Sentinel can now see your players and moderate in real time.':'Press <b>Play</b> in Roblox Studio. This page updates by itself.'}</p>
-   <button class="btn lg" style="width:100%" data-a="ob-done" ${OB.ok?'':'disabled'}>Open Sentinel</button>
-   ${OB.ok?'':'<p style="text-align:center;margin-top:14px"><button class="btn plain" data-a="ob-done">Skip for now</button></p>'}`;
-  return `<div class="center"><div class="ob">${dots}${inner}</div></div>`}
+function obView(){
+ OB=OB||{step:'name',creating:1};const steps=[['name','Name your game','A label for your team'],['script','Add the script','Paste it into Roblox Studio'],['place','Lock to your place','Stop your key working elsewhere'],['connect','Go live','Join your game to verify']];
+ const idx=steps.findIndex(s=>s[0]===OB.step),first=esc((ME.user.name||'').split(' ')[0]);let body='';
+ if(OB.step==='name')body=`<h1>Welcome, ${first}</h1><p class="lead">Let's connect your Roblox game. It takes about three minutes, and only you, the owner, can see these setup details.</p>
+  <form data-f="ob-name"><label class="lab" for="obn">What's your game called?</label><input id="obn" class="inp" style="height:42px;font-size:15px" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off">
+  <div class="hint">You can rename it later. Your team will see this name.</div><div class="row mt"><button class="btn pri l">Continue</button>${ME.workspaces.length?`<button type="button" class="btn ghost l" data-a="ob-exit">Cancel</button>`:''}</div></form>`;
+ else if(OB.step==='script')body=`<h1>Add Sentinel to your game</h1><p class="lead">This script carries your game's private key. Treat it like a password.</p>
+  <div class="inst"><div><div><b>Download or copy the script</b><div class="row wrap" style="margin-top:10px"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
+  <div><div><b>Put it in ServerScriptService</b><div class="muted sm">In Roblox Studio's Explorer, hover <b>ServerScriptService</b>, click <b>+</b>, choose <b>Script</b> and paste.</div></div></div>
+  <div><div><b>Allow HTTP requests</b><div class="muted sm">Home, then <b>Game Settings</b>, then <b>Security</b>. Turn on <b>Allow HTTP Requests</b> and save.</div></div></div></div>
+  <div class="row mt"><button class="btn pri l" data-a="ob" data-v="place">Continue</button></div>`;
+ else if(OB.step==='place')body=`<h1>Lock your key to your game</h1><p class="lead">Your Place ID is the number in your game's link, for example roblox.com/games/<b>1234567890</b>/My-Game. Locking stops anyone using a stolen key in another game.</p>
+  <form data-f="ob-place"><label class="lab">Place ID</label><input class="inp" style="height:42px;font-size:15px" name="placeId" inputmode="numeric" placeholder="1234567890" value="${esc(SETUP&&SETUP.placeId||'')}">
+  <label class="chk"><input type="checkbox" name="lock" checked><span><b>Only accept this place</b><br><span class="muted sm">Unpublished Studio places use Place ID 0, so publish first or leave this off while testing.</span></span></label>
+  <div class="row mt"><button class="btn pri l">Save and continue</button><button type="button" class="btn ghost l" data-a="ob" data-v="connect">Skip for now</button></div></form>`;
+ else{const okc=OB.ok;body=`<div class="big ${okc?'ok':''}">${okc?ic('check'):'<div class="spin"></div>'}</div><h1>${okc?"You're live":'Join your game'}</h1>
+  <p class="lead">${okc?`Sentinel is receiving data${SETUP&&SETUP.lastPlace?` from place <b>${SETUP.lastPlace}</b>`:''}. Your team can now moderate in real time.`:'Press <b>Play</b> in Studio, or join your published game. This page updates by itself.'}</p>
+  ${okc?`<button class="btn pri l" data-a="ob-done">Open your dashboard</button><p class="sm muted" style="margin-top:18px">Next: invite your team from <b>Team</b>.</p>`:`<button class="btn ghost l" data-a="ob-done">I'll finish this later</button>`}`}
+ return `<div class="ob"><aside class="obl"><div class="row" style="margin-bottom:26px"><div class="logo">S</div><b style="font-size:16px">Sentinel</b></div><div class="xs muted b" style="text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px 12px">Set up your game</div>
+ ${steps.map(([k,t,s],i)=>`<div class="obs ${i===idx?'on':i<idx?'done':''}"><div class="n">${i<idx?ic('check'):i+1}</div><div><b>${t}</b><small>${s}</small></div></div>`).join('')}
+ <div class="sp"></div><div class="sm muted">Only the owner sees this setup. Team members you invite never see your game key.</div></aside><div class="obr"><div class="obc" key="${OB.step}">${body}</div></div></div>`}
 
-function shell(){
-  const nav=[['home','Home'],['players','Players'],['reports','Reports'],['activity','Activity'],['settings','Settings']];
-  const menu=menuOpen?`<div class="menu">${ME.workspaces.map(w=>`<button data-a="ws-switch" data-id="${w.id}">${esc(w.name)}${w.id===S.workspace.id?`<span class="ck">${svg('check')}</span>`:''}</button>`).join('')}<hr>${ME.workspaces.length<ME.maxPerUser?`<button data-a="ws-new">${svg('plus')}New workspace</button>`:''}<button data-a="signout">${svg('out')}Sign out</button></div>`:'';
-  const sw=`<button class="wsw" data-a="wsmenu" aria-haspopup="true"><span class="appicon sm">${svg('shield')}</span><span class="wname">${esc(S.workspace.name)}</span>${svg('chev')}</button>`;
-  return `<div id="shell"><aside class="sb">${sw}<nav>${nav.map(([k,t])=>`<button class="nv ${page===k?'on':''}" data-a="nav" data-id="${k}">${svg(k)}${t}${k==='reports'&&S.openCalls?`<span class="bd">${S.openCalls}</span>`:''}</button>`).join('')}</nav>
-   <div class="sbfoot"><div class="conn ${S.connected?'on':''}"><i></i>${S.connected?`Game online${S.servers>1?' · '+S.servers+' servers':''}`:'Waiting for game'}</div>
-   <div class="me">${avatar('',S.me.name)}<div><b>${esc(S.me.name)}</b><small>${roleLabel()}</small></div><button class="ico" data-a="signout" title="Sign out" aria-label="Sign out">${svg('out')}</button></div></div></aside>
-   <main id="main"><div class="wrap"><div class="mhead">${sw}</div>${PAGES[page]()}</div></main>${menu}</div>`}
+function sideView(){
+ const n=(k,t,icn,c)=>`<a href="#/${k}" class="nv ${route.page===k||(k==='players'&&route.page==='player')?'on':''}">${ic(icn)}${t}${c?`<span class="cnt">${c}</span>`:''}</a>`;
+ const me=ME.user,wsr=S.me.owner?'Owner':rk(S.me.rank).name;
+ return `<aside class="side ${sideOpen?'open':''}"><button class="ws" data-a="wsmenu"><div class="logo">${esc(ini(S.workspace.name)[0])}</div><div class="n"><b>${esc(S.workspace.name)}</b><small>${esc(wsr)}</small></div>${ic('chev')}</button>
+ <button class="search" data-a="cmdk">${ic('search')}Search<kbd>${navigator.platform.includes('Mac')?'⌘':'Ctrl'} K</kbd></button>
+ ${n('home','Home','home')}${n('players','Players','players')}${n('reports','Reports','flag',S.openCalls)}${n('logbook','Logbook','book')}
+ <div class="navl">Staff</div>${n('team','Team','team')}${n('activity','Activity','chart')}${n('leave','Leave','leave',P('loa.review')?S.loa.all.filter(x=>x.status==='pending').length:0)}
+ <div class="navl">Configure</div>${n('rulebook','Rulebook','rules')}${n('settings','Settings','gear')}
+ <div class="sfoot"><div class="live"><span class="dot ${S.connected?'on':''}"></span>${S.connected?`Live · ${S.serverCount} server${S.serverCount>1?'s':''} · ${S.players.length} playing`:S.workspace.everConnected?'Game offline':'Not connected yet'}</div>
+ <button class="me" data-a="memenu">${av('',me.name)}<div class="n"><b>${esc(me.name)}</b><small>${me.roblox?'@'+esc(me.roblox.name):me.provider==='google'?'Google account':'Roblox account'}</small></div>${ic('chev')}</button></div></aside>`}
 
-const seg=(key,items)=>`<div class="seg" role="tablist">${items.map(([k,t])=>`<button class="${tab[key]===k?'on':''}" data-a="tab" data-k="${key}" data-id="${k}">${t}</button>`).join('')}</div>`;
-const head=(t,s,right='')=>`<div class="head"><div><h1>${t}</h1>${s?`<p class="sub">${s}</p>`:''}</div>${right}</div>`;
-const spark=v=>{if(v.length<2)v=[0,v[0]||0];const W=300,H=70,m=Math.max(1,...v),d=v.map((x,i)=>(i?'L':'M')+(i/(v.length-1)*W).toFixed(1)+' '+(H-6-x/m*(H-22)).toFixed(1)).join(' ');return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path class="sf" d="${d} L${W} ${H} L0 ${H}Z"/><path class="sl" d="${d}"/></svg>`};
-const empty=(t,s)=>`<div class="empty"><b>${t}</b>${s||''}</div>`;
-const pActs=p=>`<div class="acts">${can(1)?`<button class="btn sm gray" data-a="act" data-do="warn" data-uid="${p.userId}" data-n="${esc(p.name)}">Warn</button><button class="btn sm gray" data-a="act" data-do="kick" data-uid="${p.userId}" data-n="${esc(p.name)}">Kick</button>`:''}${can(2)?`<button class="btn sm gray" data-a="act" data-do="mute" data-uid="${p.userId}" data-n="${esc(p.name)}">Mute</button><button class="btn sm gray" data-a="act" data-do="points" data-uid="${p.userId}" data-n="${esc(p.name)}">Points</button><button class="btn sm red" data-a="act" data-do="ban" data-uid="${p.userId}" data-n="${esc(p.name)}">Ban</button>`:''}</div>`;
+/* ============ pages ============ */
+const V={
+home(){
+ const s=S.series,st=S.stats,hr=new Date().getHours(),gr=hr<12?'Good morning':hr<18?'Good afternoon':'Good evening',me=S.team.find(t=>t.uid===S.me.uid),q=rk(S.me.rank).quota||0;
+ let banner='';if(!S.workspace.everConnected)banner=S.me.owner?`<div class="banner">${ic('game')}<div class="sp"><b>Finish connecting your game</b><div class="sm muted">Add the script to start tracking players and moderating.</div></div><a class="btn pri" href="#/setup">Continue setup</a></div>`:`<div class="banner wa">${ic('info')}<div class="sp"><b>Waiting for the owner</b><div class="sm muted">The workspace owner still needs to connect the game. Everything will appear here once they do.</div></div></div>`;
+ return hd(`${gr}, ${esc(S.me.name.split(' ')[0])}`,`Here's what's happening in <b>${esc(S.workspace.name)}</b> right now.`,P('announce')?`<button class="btn" data-a="announce">${ic('bolt')}Announce</button>`:'')+banner+
+ `<div class="grid g4">${kpi('Playing now',S.players.length,S.history.map(h=>h.n).slice(-60),`Peak today ${s.peak[13]}`,'live')}${kpi('Players today',s.players[13],s.players,`${s.players.reduce((a,b)=>a+b,0)} visits`,'14 days')}${kpi('Moderation actions',s.actions[13],s.actions,`${s.actions.reduce((a,b)=>a+b,0)} total`,'14 days')}${kpi('Reports',s.reports[13],s.reports,`${S.openCalls} open`,'14 days')}</div>
+ <div class="grid gm mt"><div class="col" style="gap:16px">
+  <div class="card p0"><div class="tbar"><h3>Live servers</h3><span class="sp"></span><span class="sm muted">${S.serverCount} online</span></div>${S.servers.length?`<div class="tw"><table><thead><tr><th>Server</th><th>Players</th><th>Uptime</th></tr></thead><tbody>${S.servers.map(x=>`<tr><td class="mono">${esc(x.id)}</td><td>${x.players}</td><td class="muted">${dur(x.uptime/1000)}</td></tr>`).join('')}</tbody></table></div>`:empty('No servers running','Servers appear here while people play.','game')}</div>
+  <div class="card p0"><div class="tbar"><h3>Recent activity</h3></div><div class="feed">${S.feed.length?S.feed.slice(0,10).map(f=>`<div><span>${esc(f.text)}</span><span class="t">${ago(f.t)}</span></div>`).join(''):empty('Nothing yet','Joins, reports and moderation show up here.')}</div></div></div>
+ <div class="col" style="gap:16px">
+  <div class="card"><h3>Your week</h3>${me&&me.linked?`<div class="row" style="margin-top:12px"><div class="sp"><div style="font-size:24px;font-weight:600">${dur(me.week)}</div><div class="sm muted">in game${q?` of ${dur(q*60)} goal`:''}</div></div>${me.onLeave?'<span class="bdg in">On leave</span>':''}</div>${q?`<div class="bar ${me.week>=q*60?'done':''}" style="margin-top:12px"><i style="width:${Math.min(100,me.week/(q*60)*100)}%"></i></div>`:''}`:`<p class="sm muted">Link your Roblox account so your in-game time counts toward your rank's activity goal.</p><button class="btn s" data-a="link">${ic('link')}Link Roblox</button>`}</div>
+  ${S.session?`<div class="card"><div class="row"><span class="bdg ok">Live</span><h3>${esc(S.session.type)}</h3></div><p class="sm muted">${S.session.attendees.length} present · started ${ago(S.session.start)}</p><a class="btn s" href="#/activity">Open session</a></div>`:''}
+  <div class="card"><h3>Needs attention</h3><div style="margin-top:8px">${[[S.openCalls,'open reports','#/reports'],[P('loa.review')?S.loa.all.filter(x=>x.status==='pending').length:0,'leave requests','#/leave'],[st.activeBans,'active bans','#/players/banned'],[st.activeMutes,'active mutes','#/players/banned']].map(([n,t,h])=>`<a class="pg" href="${h}" style="color:var(--ink)"><span>${t}</span><b>${n}</b></a>`).join('')}</div></div></div></div>`},
 
-const PAGES={
-home:()=>{
-  const st=S.stats,setup=!S.connected&&!st.joins;
-  return head('Home',esc(S.workspace.name))+
-  (setup?`<div class="card mt" style="background:var(--tint);box-shadow:none;margin:0 0 16px"><div class="row"><div class="sp"><h3>Finish setting up</h3><span class="muted">Your game hasn't connected yet. Add the script to start moderating.</span></div><button class="btn" data-a="goto" data-id="settings" data-tab="game">Set up</button></div></div>`:'')+
-  `<div class="grid gh"><div class="card hero" style="min-height:190px"><div class="stat"><span>Players online</span><b>${S.players.length}</b><span>Peak ${st.peak}</span></div>${spark(S.history.map(h=>h.n))}</div>
-   <div class="grid g2"><div class="card stat"><b>${S.openCalls}</b><span>Open reports</span></div><div class="card stat"><b>${st.activeBans}</b><span>Bans</span></div><div class="card stat"><b>${st.activeMutes}</b><span>Mutes</span></div><div class="card stat"><b>${st.kicks}</b><span>Kicks</span></div></div></div>
-   <div class="grid g2 mt">${can(2)?`<div class="card"><h3>Announce to all servers</h3><p class="muted" style="margin:4px 0 14px">Shows a banner to every player.</p><form data-f="announce"><input class="field" name="text" placeholder="Server restarting in 5 minutes" maxlength="200" required><div class="row" style="margin-top:12px"><span class="sp"></span><button class="btn">Send</button></div></form></div>`:''}
-   <div class="card tight" style="${can(2)?'':'grid-column:1/-1'}"><div style="padding:16px 22px 6px"><h3>Recent activity</h3></div><div class="list">${S.feed.length?S.feed.slice(0,7).map(f=>`<div style="padding:10px 22px"><div class="t"><span style="color:var(--ink)">${esc(f.text)}</span></div><span class="fine">${ago(f.t)}</span></div>`).join(''):empty('Nothing yet','Activity from your game shows up here.')}</div></div></div>`},
+players(){
+ const t=route.tab||'online';let b='';
+ if(t==='online')b=S.players.length?`<div class="card p0 tw"><table><thead><tr><th>Player</th><th>Server</th><th>This week</th><th>Status</th><th></th></tr></thead><tbody>${S.players.map(p=>{const bd=S.board.find(x=>x.userId===p.userId),mu=S.mutes.some(m=>m.userId===p.userId);
+  return `<tr class="click" data-go="player/${p.userId}"><td><div class="who">${av(p.userId,p.name)}<div><b>${esc(p.displayName||p.name)}</b><small>@${esc(p.name)}</small></div></div></td><td class="mono">${esc(p.server)}</td><td>${bd?dur(bd.week):'—'}</td><td>${mu?'<span class="bdg in">Muted</span>':'<span class="bdg ok">Playing</span>'}</td><td style="text-align:right">${actBtn(p)}</td></tr>`}).join('')}</tbody></table></div>`:`<div class="card">${empty('No one is playing',S.connected?'Players appear here the moment they join.':'Your game is offline right now.','players')}</div>`;
+ else{const li=(x,k)=>`<tr class="click" data-go="player/${x.userId}"><td><div class="who">${av(x.userId,x.name)}<b>${esc(x.name)}</b></div></td><td>${k==='ban'?(x.expires?'<span class="bdg wa">Suspended</span>':'<span class="bdg er">Banned</span>'):'<span class="bdg in">Muted</span>'}</td><td class="sm">${esc(x.reason||'')}</td><td class="muted sm">${x.expires?'until '+dtime(x.expires):'permanent'}</td><td style="text-align:right">${(k==='ban'?P('mod.unban'):P('mod.mute'))?`<button class="btn s" data-a="lift" data-k="${k}" data-uid="${x.userId}" data-n="${esc(x.name)}">${k==='ban'?'Unban':'Unmute'}</button>`:''}</td></tr>`;
+  const rows=[...S.bans.map(x=>li(x,'ban')),...S.mutes.map(x=>li(x,'mute'))];b=rows.length?`<div class="card p0 tw"><table><thead><tr><th>Player</th><th>Status</th><th>Reason</th><th>Ends</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`:`<div class="card">${empty('Nobody is banned or muted','Bans and mutes you apply show up here.','check')}</div>`}
+ return hd('Players','Everyone in your game right now, and everyone who isn\'t allowed in.',`<form data-f="lookup" class="row"><input class="inp" name="q" placeholder="Find a Roblox username" style="width:240px" required><button class="btn">${ic('search')}Find</button></form>`)+tabs('players',[['online','Online',S.players.length||''],['banned','Banned & muted',(S.bans.length+S.mutes.length)||'']],t)+b},
 
-players:()=>{
-  const t=tab.players;
-  let body='';
-  if(t==='online')body=S.players.length?`<div class="grid g2">${S.players.map(p=>`<div class="card pc">${avatar(p.userId,p.name,'lg')}<div style="flex:1;min-width:0"><b>${esc(p.displayName&&p.displayName!==p.name?p.displayName:p.name)}</b><div class="muted" style="font-size:13px">@${esc(p.name)} · server ${esc(p.server)}</div>${pActs(p)}</div></div>`).join('')}</div>`:`<div class="card">${empty('No one is online','Players show up here while they play.')}</div>`;
-  else if(t==='search')body=`<form data-f="search" class="row"><input class="field" name="q" placeholder="Roblox username" maxlength="40" required style="max-width:420px"><button class="btn">Search</button></form><div class="mt">${found?foundCard(found):''}</div>`;
-  else{const li=(x,kind)=>`<div>${avatar(x.userId,x.name)}<div class="t"><b>${esc(x.name)}</b><span>${esc(x.reason||'')} · ${x.expires?'until '+new Date(x.expires).toLocaleString():'permanent'}</span></div>${can(kind==='ban'?3:2)?`<button class="btn sm gray" data-a="act" data-do="${kind==='ban'?'unban':'unmute'}" data-uid="${x.userId}" data-n="${esc(x.name)}">${kind==='ban'?'Unban':'Unmute'}</button>`:''}</div>`;
-    body=`<h3 style="margin:0 0 10px 4px">Banned</h3><div class="card tight list">${S.bans.length?S.bans.map(x=>li(x,'ban')).join(''):empty('No active bans')}</div><h3 style="margin:24px 0 10px 4px">Muted</h3><div class="card tight list">${S.mutes.length?S.mutes.map(x=>li(x,'mute')).join(''):empty('No active mutes')}</div>`}
-  return head('Players','Who is playing, and who is not allowed to.',seg('players',[['online','Online ('+S.players.length+')'],['search','Search'],['banned','Banned & muted']]))+body},
+player(){
+ if(!PROF)return `<div class="crumb"><a href="#/players">Players</a></div><div class="card"><div class="skel" style="width:40%;height:22px"></div><div class="skel" style="width:70%;margin-top:14px"></div><div class="skel" style="width:55%;margin-top:10px"></div></div>`;
+ if(PROF.error)return `<div class="crumb"><a href="#/players">Players</a></div><div class="card">${empty('Player not found',esc(PROF.error))}</div>`;
+ const p=PROF,pl=p.play||{total:0,week:0,points:0},f=PT.f,lb=p.logbook.filter(e=>!f||(f==='mod'?['Warned','Kicked','Muted','Suspended','Banned'].includes(e.type):e.type===f));
+ const actions=`${actBtn(p,'')}${P('logbook.note')?`<button class="btn" data-a="note">Add note</button>`:''}${P('points.manage')?`<button class="btn" data-a="points" data-uid="${p.userId}" data-n="${esc(p.name)}">Points</button>`:''}${P('privacy.manage')?`<button class="btn" data-a="pmenu">${ic('chev')}</button>`:''}`;
+ let body='';
+ if(PT.tab==='logbook')body=`<div class="row wrap" style="margin-bottom:12px"><div class="chips">${[['','All'],['mod','Punishments'],['Note','Notes'],['Points','Points']].map(([k,t])=>`<button class="chip ${f===k?'on':''}" data-a="pf" data-v="${k}">${t}</button>`).join('')}</div></div>
+  <div class="card p0 tw">${lb.length?`<table><thead><tr><th>Date</th><th>Entry</th><th>Details</th><th>By</th><th>Status</th><th></th></tr></thead><tbody>${lb.map(e=>`<tr style="${e.status==='reverted'?'opacity:.55':''}"><td class="sm muted" style="white-space:nowrap">${dtime(e.time)}</td><td><span class="bdg ${LTYPE[e.type]||''}">${esc(e.type)}</span></td><td class="sm">${esc(e.reason||'')}${e.minutes?` <span class="muted">· ${fmin(e.minutes)}</span>`:''}</td><td class="sm">${esc(e.by||'—')}</td><td>${e.status==='reverted'?`<span class="bdg" title="by ${esc(e.revertedBy)}">Reverted</span>`:'<span class="bdg ok">Active</span>'}</td><td style="text-align:right">${P('logbook.revert')&&e.status!=='reverted'&&e.type!=='Note'?`<button class="btn s" data-a="revert" data-id="${e.id}" data-t="${esc(e.type)}">Revert</button>`:''}</td></tr>`).join('')}</tbody></table>`:empty('No entries','Warnings, bans, points and notes for this player appear here.','book')}</div>`;
+ else if(PT.tab==='chat')body=`<div class="card p0">${p.chat.length?p.chat.map(m=>`<div class="chatl ${m.flagged?'fl':''}"><span class="xs muted" style="min-width:64px">${ago(m.t)}</span><span>${esc(m.text)}</span></div>`).join(''):empty('No recent messages','Chat from the last 24 hours shows here.')}</div>`;
+ else body=`<div class="card p0">${p.reports.length?`<table><thead><tr><th>#</th><th>Report</th><th>Status</th><th>When</th></tr></thead><tbody>${p.reports.map(r=>`<tr><td class="mono">${r.id}</td><td>${esc(r.text)}</td><td><span class="bdg ${r.status==='open'?'er':r.status==='claimed'?'wa':'ok'}">${r.status}</span></td><td class="muted sm">${ago(r.t)}</td></tr>`).join('')}</tbody></table>`:empty('No reports filed','Reports this player sends with !modcall appear here.','flag')}</div>`;
+ return `<div class="crumb"><a href="#/players">Players</a> / ${esc(p.name)}</div><div class="hd"><div class="t"><div class="who" style="gap:16px">${av(p.userId,p.name,'xl')}<div><h1>${esc(p.displayName||p.name)}</h1><div class="muted" style="margin-top:4px">@${esc(p.name)} · <span class="mono">${p.userId}</span>${p.created?' · on Roblox since '+new Date(p.created).getFullYear():''}</div>
+  <div class="row wrap" style="margin-top:8px;gap:6px">${p.online?`<span class="bdg ok">Online · ${esc(p.server)}</span>`:'<span class="bdg">Offline</span>'}${p.banned?`<span class="bdg er">${p.banned.expires?'Suspended':'Banned'}</span>`:''}${p.muted?'<span class="bdg in">Muted</span>':''}</div></div></div></div><div class="row wrap">${actions}</div></div>
+  <div class="grid g4">${kpi('This week',dur(pl.week))}${kpi('Total playtime',dur(pl.total))}${kpi('Points',pl.points)}${kpi('Sessions attended',p.sessions)}</div>
+  <div class="tabs mt">${[['logbook','Logbook',p.logbook.length],['chat','Chat',p.chat.length],['reports','Reports',p.reports.length]].map(([k,t,n])=>`<a href="javascript:void 0" data-a="ptab" data-v="${k}" class="${PT.tab===k?'on':''}">${t}${n?`<span class="n">${n}</span>`:''}</a>`).join('')}</div>${body}`},
 
-reports:()=>{
-  const t=tab.reports;let body='';
-  if(t==='calls')body=S.calls.length?S.calls.map(c=>`<div class="card mt" style="margin-top:0;margin-bottom:14px"><div class="row"><b>Report #${c.id}</b><span class="pill ${c.status}">${c.status}</span><span class="sp"></span><span class="fine">${ago(c.t)} · server ${esc(c.server)}</span></div>
-     <p style="margin:10px 0 4px"><b>${esc(c.from.name)}</b> says: ${esc(c.text)}</p>${c.by?`<div class="fine">Handled by ${esc(c.by)}</div>`:''}${c.note?`<div class="fine">Note: ${esc(c.note)}</div>`:''}
-     ${c.chat.length?`<div class="callchat"><div class="fine" style="margin-bottom:4px">Chat around that moment</div>${c.chat.map(m=>`<div class="${m.flagged?'hl':''}"><b>${esc(m.name)}</b> ${esc(m.text)}</div>`).join('')}</div>`:''}
-     <div class="acts row" style="margin-top:14px;gap:8px"><button class="btn sm gray" data-a="act" data-do="warn" data-uid="${c.from.userId}" data-n="${esc(c.from.name)}">Warn reporter</button>${c.status==='open'?`<button class="btn sm" data-a="call" data-op="claim" data-id="${c.id}">Claim</button>`:''}${c.status!=='resolved'?`<button class="btn sm" data-a="call" data-op="resolve" data-id="${c.id}">Resolve</button>`:''}</div></div>`).join(''):`<div class="card">${empty('No reports','When a player types <code>!modcall</code> in chat, it appears here.')}</div>`;
-  else body=`<div class="card tight chat">${S.chat.length?S.chat.map(m=>`<div class="ln ${m.flagged?'fl':''}"><span class="fine" style="min-width:56px">${ago(m.t)}</span><span><b>${esc(m.name)}</b> ${esc(m.text)}</span>${can(1)?`<span class="a"><button class="btn sm gray" data-a="act" data-do="warn" data-uid="${m.userId}" data-n="${esc(m.name)}">Warn</button>${can(2)?`<button class="btn sm gray" data-a="act" data-do="mute" data-uid="${m.userId}" data-n="${esc(m.name)}">Mute</button>`:''}</span>`:''}</div>`).join(''):empty('No chat yet','Messages from your game appear here as they are sent.')}</div>`;
-  return head('Reports','Player reports and the live chat.',seg('reports',[['calls','Reports'+(S.openCalls?' ('+S.openCalls+')':'')],['chat','Live chat']]))+body},
+reports(){
+ const t=route.tab||'open',list=S.calls.filter(c=>t==='all'||c.status===t);let b='';
+ if(t==='chat')b=`<div class="card p0">${S.chat.length?S.chat.map(m=>`<div class="chatl ${m.flagged?'fl':''}"><span class="xs muted" style="min-width:64px">${ago(m.t)}</span><span><a href="#/player/${m.userId}" class="b" style="color:var(--ink)">${esc(m.name)}</a> ${esc(m.text)}</span><span class="acts">${actBtn({userId:m.userId,name:m.name})}</span></div>`).join(''):empty('No chat yet','Messages appear here as players send them.')}</div>`;
+ else b=list.length?list.map(c=>`<div class="card" style="margin-bottom:12px"><div class="row wrap"><span class="mono muted">#${c.id}</span><span class="bdg ${c.status==='open'?'er':c.status==='claimed'?'wa':'ok'}">${c.status==='open'?'Open':c.status==='claimed'?'Claimed':'Resolved'}</span><a href="#/player/${c.from.userId}" class="who" style="color:var(--ink)">${av(c.from.userId,c.from.name)}<b>${esc(c.from.name)}</b></a><span class="sp"></span><span class="sm muted">${ago(c.t)} · server <span class="mono">${esc(c.server)}</span></span></div>
+  <p style="margin:12px 0 0;font-size:15px">${esc(c.text)}</p>${c.by?`<div class="sm muted" style="margin-top:6px">${c.status==='resolved'?'Resolved':'Claimed'} by ${esc(c.by)}${c.note?` · “${esc(c.note)}”`:''}</div>`:''}
+  ${c.chat.length?`<details style="margin-top:10px"><summary class="sm" style="cursor:pointer;color:var(--ac)">Chat around that moment (${c.chat.length})</summary><div class="ctx">${c.chat.map(m=>`<div style="${m.flagged?'color:var(--wa);font-weight:500':''}"><b>${esc(m.name)}</b> ${esc(m.text)}</div>`).join('')}</div></details>`:''}
+  ${P('reports.handle')&&c.status!=='resolved'?`<div class="row" style="margin-top:14px">${c.status==='open'?`<button class="btn s pri" data-a="call" data-op="claim" data-id="${c.id}">Claim</button>`:''}<button class="btn s" data-a="call" data-op="resolve" data-id="${c.id}">Resolve</button></div>`:''}</div>`).join(''):`<div class="card">${empty(t==='open'?'No open reports':'Nothing here','Players type <code>!modcall</code> and a message to reach your team.','flag')}</div>`;
+ return hd('Reports','What players are asking your team for help with.')+tabs('reports',[['open','Open',S.calls.filter(c=>c.status==='open').length||''],['claimed','Claimed'],['resolved','Resolved'],['all','All'],...(P('chat.view')?[['chat','Live chat']]:[])],t)+b},
 
-activity:()=>{
-  const t=tab.activity;let body='';
-  if(t==='sessions'){const s=S.session;
-    body=s?`<div class="card"><div class="row"><span class="pill ok">Running</span><h2>${esc(s.type)}</h2><span class="sp"></span><span class="muted">${dur((Date.now()-s.start)/1000)} · ${s.attendees.length} present</span></div>${s.notes?`<p class="muted" style="margin:8px 0 0">${esc(s.notes)}</p>`:''}
-      <div class="chips" style="margin:14px 0">${s.attendees.length?s.attendees.map(a=>`<span class="chip">${esc(a.name)}</span>`).join(''):'<span class="muted">Players type <code>!attend</code> to be marked present.</span>'}</div>
-      <div class="row"><button class="btn gray" data-a="sess" data-op="addall">Add everyone in game</button><button class="btn red" data-a="sess" data-op="end">End session</button></div></div>`
-    :`<div class="card"><h3>Start a session</h3><p class="muted" style="margin:4px 0 14px">Announces it in game. Players type <code>!attend</code> to check in.</p><form data-f="sess-start" class="row wrapf"><select class="field" name="type" style="max-width:180px"><option>Training</option><option>Shift</option><option>Event</option><option>Meeting</option></select><input class="field" name="notes" placeholder="Notes (optional)" maxlength="200" style="flex:1;min-width:160px"><button class="btn">Start</button></form></div>`;
-    body+=`<h3 style="margin:26px 0 10px 4px">Past sessions</h3><div class="card tight list">${S.sessions.length?S.sessions.map(x=>`<div><div class="t"><b>${esc(x.type)}</b><span>${new Date(x.start).toLocaleString()} · ${dur((x.end-x.start)/1000)}</span></div><span class="pill blue">${x.attendees.length} attended</span></div>`).join(''):empty('No sessions yet')}</div>`}
-  else{const q=S.settings.quotaMinutes*60;
-    body=`<div class="card tight">${S.board.length?`<table><tr><th>#</th><th>Player</th><th>This week</th><th>Points</th>${can(2)?'<th></th>':''}</tr>${S.board.map((b,i)=>`<tr><td class="muted">${i+1}</td><td><div class="row">${avatar(b.userId,b.name)}<b>${esc(b.name)}</b></div></td><td style="min-width:150px"><div class="fine">${dur(b.week)} of ${dur(q)}</div><div class="bar ${b.week>=q?'done':''}"><i style="width:${Math.min(100,b.week/q*100)}%"></i></div></td><td><b>${b.points}</b></td>${can(2)?`<td><button class="btn sm gray" data-a="act" data-do="points" data-uid="${b.userId}" data-n="${esc(b.name)}">Points</button></td>`:''}</tr>`).join('')}</table>`:empty('No activity yet','Playtime is tracked automatically while people play.')}</div>`}
-  return head('Activity','Sessions, playtime and points.',seg('activity',[['sessions','Sessions'],['board','Leaderboard']]))+body},
+logbook(){
+ const d=LB;return hd('Logbook','Every warning, kick, mute, ban, point and note across your game.')+
+ `<div class="row wrap" style="margin-bottom:14px"><div class="chips">${[['','All'],['warn','Warnings'],['kick','Kicks'],['mute','Mutes'],['ban','Bans'],['points','Points'],['note','Notes']].map(([k,t])=>`<button class="chip ${LBF.type===k?'on':''}" data-a="lbf" data-v="${k}">${t}</button>`).join('')}</div><span class="sp"></span><form data-f="lbq"><input class="inp" name="q" value="${esc(LBF.q)}" placeholder="Search player, reason or moderator" style="width:280px"></form></div>
+ <div class="card p0 tw">${!d?'<div style="padding:20px"><div class="skel"></div><div class="skel" style="margin-top:12px;width:80%"></div></div>':d.entries&&d.entries.length?`<table><thead><tr><th>When</th><th>Player</th><th>Entry</th><th>Details</th><th>By</th><th>Status</th></tr></thead><tbody>${d.entries.map(e=>`<tr class="click" data-go="player/${e.userId}" style="${e.status==='reverted'?'opacity:.55':''}"><td class="sm muted" style="white-space:nowrap">${dtime(e.time)}</td><td><div class="who">${av(e.userId,e.name)}<b>${esc(e.name)}</b></div></td><td><span class="bdg ${LTYPE[e.type]||''}">${esc(e.type)}</span></td><td class="sm">${esc(e.reason||'')}${e.minutes?` <span class="muted">· ${fmin(e.minutes)}</span>`:''}</td><td class="sm">${esc(e.by||'—')}</td><td>${e.status==='reverted'?'<span class="bdg">Reverted</span>':'<span class="bdg ok">Active</span>'}</td></tr>`).join('')}</tbody></table>${d.total>200?`<div class="sm muted" style="padding:12px 14px">Showing the latest 200 of ${d.total}.</div>`:''}`:empty('No entries yet','Moderation from the dashboard and automations lands here.','book')}</div>`},
 
-settings:()=>{
-  const tabs=[['game','Game',3],['team','Team',3],['auto','Automations',3],['mod','Moderation',2],['ws','Workspace',1]].filter(x=>can(x[2]));
-  if(!tabs.some(x=>x[0]===tab.settings))tab.settings=tabs[0][0];
-  return head('Settings','',seg('settings',tabs.map(x=>[x[0],x[1]])))+SET[tab.settings]()}
+team(){
+ const t=route.tab||'members';let b='',a='';
+ if(t==='members'){a=P('team.manage')?`<button class="btn pri" data-a="invite">${ic('plus')}Invite member</button>`:'';
+  b=`<div class="card p0 tw"><table><thead><tr><th>Member</th><th>Rank</th><th>In game this week</th><th>Status</th><th>Joined</th><th></th></tr></thead><tbody>${S.team.map(m=>{const r=rk(m.rank),q=r.quota||0,can=P('team.manage')&&!m.owner&&m.uid!==S.me.uid&&below(r.pos);
+   return `<tr><td><div class="who">${av(m.robloxId,m.name)}<div><b>${esc(m.name)}</b><small>${m.via}${m.owner?' · Owner':''}</small></div></div></td><td>${can?`<select class="inp" style="width:170px;height:30px" data-a="setrank" data-uid="${m.uid}">${S.ranks.filter(x=>below(x.pos)||x.id===m.rank).map(x=>`<option value="${x.id}" ${x.id===m.rank?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:m.owner?'<span class="rtag"><i style="background:#1a1f36"></i>Owner</span>':rtag(m.rank)}</td>
+   <td>${m.linked?`<div class="sm">${dur(m.week)}${q?` <span class="muted">/ ${dur(q*60)}</span>`:''}</div>${q?`<div class="bar ${m.week>=q*60?'done':''}" style="margin-top:5px"><i style="width:${Math.min(100,m.week/(q*60)*100)}%"></i></div>`:''}`:'<span class="sm muted">Roblox not linked</span>'}</td>
+   <td>${m.onLeave?'<span class="bdg in">On leave</span>':m.online?'<span class="bdg ok">In game</span>':'<span class="sm muted">—</span>'}</td><td class="sm muted">${m.joined?date(m.joined):'—'}</td><td style="text-align:right">${can?`<button class="btn s" data-a="remove" data-uid="${m.uid}" data-n="${esc(m.name)}">Remove</button>`:''}</td></tr>`}).join('')}</tbody></table></div>`}
+ else if(t==='ranks'){a=P('ranks.manage')?`<button class="btn pri" data-a="rank-new">${ic('plus')}New rank</button>`:'';
+  b=`<p class="muted" style="margin:-8px 0 16px">Higher ranks can manage everyone below them. Change the order with the arrows. Nobody can grant a power they don't have.</p><div class="card p0 tw"><table><thead><tr><th>Rank</th><th>Members</th><th>Permissions</th><th>Weekly goal</th><th>Action limit</th><th></th></tr></thead><tbody>${S.ranks.map((r,i)=>{const ed=P('ranks.manage')&&below(r.pos);
+   return `<tr><td>${rtag(r.id)}</td><td>${r.count}</td><td class="sm">${r.perms.length} of ${S.perms.length}${r.perms.some(x=>S.perms.find(p=>p.id===x&&p.danger))?' <span class="bdg wa" style="margin-left:4px">Elevated</span>':''}</td><td class="sm">${r.quota?dur(r.quota*60):'—'}</td><td class="sm">${r.limit?r.limit+' / hour':'No limit'}</td>
+   <td style="text-align:right;white-space:nowrap">${ed?`<button class="btn s" data-a="rank-move" data-id="${r.id}" data-v="up" ${i===0||!below(S.ranks[i-1].pos)?'disabled':''} aria-label="Move up">${ic('up')}</button> <button class="btn s" data-a="rank-move" data-id="${r.id}" data-v="down" ${i===S.ranks.length-1?'disabled':''} aria-label="Move down">${ic('down')}</button> <button class="btn s" data-a="rank-edit" data-id="${r.id}">Edit</button>`:''}</td></tr>`}).join('')}</tbody></table></div>`}
+ else{a=`<button class="btn pri" data-a="invite">${ic('plus')}New invite</button>`;b=S.invites.length?`<div class="card p0 tw"><table><thead><tr><th>Link</th><th>Rank</th><th>Expires</th><th></th></tr></thead><tbody>${S.invites.map(i=>`<tr><td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${location.origin}/#/join/${i.code}</td><td>${rtag(i.rank)}</td><td class="sm muted">${date(i.exp)}</td><td style="text-align:right;white-space:nowrap"><button class="btn s" data-a="inv-copy" data-c="${i.code}">${ic('copy')}Copy</button> <button class="btn s" data-a="inv-revoke" data-c="${i.code}">Revoke</button></td></tr>`).join('')}</tbody></table></div>`:`<div class="card">${empty('No open invites','Each invite link works once and expires after 7 days.','link')}</div>`}
+ return hd('Team',`${S.team.length} member${S.team.length>1?'s':''} · ${S.ranks.length} ranks`,a)+tabs('team',[['members','Members'],['ranks','Ranks'],...(P('team.manage')?[['invites','Invites',S.invites.length||'']]:[])],t)+b},
+
+activity(){
+ const t=route.tab||'sessions';let b='';
+ if(t==='sessions'){const s=S.session;
+  b=(s?`<div class="card"><div class="row wrap"><span class="bdg ok">Live</span><h2>${esc(s.type)}</h2><span class="sp"></span><span class="muted sm">Hosted by ${esc(s.host||'—')} · ${dur((Date.now()-s.start)/1000)}</span></div>${s.notes?`<p class="muted">${esc(s.notes)}</p>`:''}
+   <div class="chips" style="margin:16px 0">${s.attendees.length?s.attendees.map(a=>`<span class="chip">${esc(a.name)}</span>`).join(''):'<span class="muted sm">Players type <code>!attend</code> in chat to check in.</span>'}</div>${P('sessions.host')?`<div class="row"><button class="btn" data-a="sess" data-op="addall">Add everyone in game</button><button class="btn red" data-a="sess" data-op="end">End session</button></div>`:''}</div>`
+   :P('sessions.host')?`<div class="card"><h3>Host a session</h3><p class="muted sm">We announce it in game. Players type <code>!attend</code> to check in${S.rules.sessionpoints.enabled?` and earn ${S.rules.sessionpoints.points} points when it ends`:''}.</p><form data-f="sess" class="row wrap mt"><select class="inp" name="type" style="width:160px"><option>Training</option><option>Shift</option><option>Tryout</option><option>Event</option><option>Meeting</option></select><input class="inp" name="notes" placeholder="Notes (optional)" style="flex:1;min-width:180px"><button class="btn pri">Start session</button></form></div>`:'')+
+   `<h3 class="mt2" style="margin-bottom:12px">History</h3><div class="card p0 tw">${S.sessions.length?`<table><thead><tr><th>Session</th><th>Host</th><th>Date</th><th>Length</th><th>Attended</th></tr></thead><tbody>${S.sessions.map(x=>`<tr><td class="b">${esc(x.type)}</td><td class="sm">${esc(x.host||'—')}</td><td class="sm muted">${dtime(x.start)}</td><td class="sm">${dur((x.end-x.start)/1000)}</td><td><span class="bdg ac">${x.attendees.length}</span></td></tr>`).join('')}</tbody></table>`:empty('No sessions yet','Trainings, shifts and events you host are listed here.','leave')}</div>`}
+ else{const q=S.settings.quotaMinutes*60;b=`<div class="card p0 tw">${S.board.length?`<table><thead><tr><th>#</th><th>Player</th><th>This week</th><th>All time</th><th>Points</th></tr></thead><tbody>${S.board.map((x,i)=>`<tr class="click" data-go="player/${x.userId}"><td class="muted">${i+1}</td><td><div class="who">${av(x.userId,x.name)}<b>${esc(x.name)}</b></div></td><td style="min-width:170px"><div class="sm">${dur(x.week)} <span class="muted">/ ${dur(q)}</span></div><div class="bar ${x.week>=q?'done':''}" style="margin-top:5px"><i style="width:${Math.min(100,x.week/q*100)}%"></i></div></td><td class="sm">${dur(x.total)}</td><td class="b">${x.points}</td></tr>`).join('')}</tbody></table>`:empty('No activity yet','Playtime is tracked automatically while people play.','chart')}</div>`}
+ return hd('Activity','Sessions, playtime and points.')+tabs('activity',[['sessions','Sessions'],['leaderboard','Leaderboard']],t)+b},
+
+leave(){
+ const st=x=>`<span class="bdg ${x.status==='approved'?'ok':x.status==='pending'?'wa':x.status==='denied'?'er':''}">${x.status[0].toUpperCase()+x.status.slice(1)}</span>`,now=Date.now();
+ const mine=`<div class="card p0 tw">${S.loa.mine.length?`<table><thead><tr><th>Dates</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${S.loa.mine.map(x=>`<tr><td class="sm">${date(x.start)} – ${date(x.end)}</td><td class="sm">${esc(x.reason||'—')}${x.note?`<div class="muted xs">“${esc(x.note)}” · ${esc(x.by)}</div>`:''}</td><td>${st(x)}</td><td style="text-align:right">${['pending','approved'].includes(x.status)&&x.end>now?`<button class="btn s" data-a="loa-cancel" data-id="${x.id}">Cancel</button>`:''}</td></tr>`).join('')}</tbody></table>`:empty('No leave requests','Taking a break? Request leave so your activity goal pauses.','leave')}</div>`;
+ let rev='';if(P('loa.review')){const pend=S.loa.all.filter(x=>x.status==='pending'),act=S.loa.all.filter(x=>x.status==='approved'&&x.start<=now&&x.end>=now);
+  rev=`<h3 class="mt2" style="margin-bottom:12px">Waiting for review</h3><div class="card p0 tw">${pend.length?`<table><thead><tr><th>Member</th><th>Dates</th><th>Reason</th><th></th></tr></thead><tbody>${pend.map(x=>`<tr><td class="b">${esc(x.name)}</td><td class="sm">${date(x.start)} – ${date(x.end)}</td><td class="sm">${esc(x.reason||'—')}</td><td style="text-align:right;white-space:nowrap">${x.uid===S.me.uid&&!S.me.owner?'<span class="xs muted">Needs someone else</span>':`<button class="btn s pri" data-a="loa-ok" data-id="${x.id}">Approve</button> <button class="btn s" data-a="loa-no" data-id="${x.id}">Deny</button>`}</td></tr>`).join('')}</tbody></table>`:empty('All caught up','New requests from your team appear here.','check')}</div>
+  <h3 class="mt2" style="margin-bottom:12px">On leave now</h3><div class="card p0">${act.length?`<table><tbody>${act.map(x=>`<tr><td class="b">${esc(x.name)}</td><td class="sm muted">back ${date(x.end)}</td></tr>`).join('')}</tbody></table>`:empty('Everyone is around')}</div>`}
+ return hd('Leave','Request time off and keep track of who is away.',`<button class="btn pri" data-a="loa-new">${ic('plus')}Request leave</button>`)+`<h3 style="margin-bottom:12px">Your requests</h3>`+mine+rev},
+
+rulebook(){
+ const sev={low:['Low','ok'],medium:['Medium','in'],high:['High','wa'],critical:['Critical','er']},stepT=s=>({warn:'Warn',kick:'Kick',mute:'Mute '+fmin(s.minutes),ban:s.minutes?'Suspend '+fmin(s.minutes):'Ban'})[s.type];
+ return hd('Rulebook','Write your rules once. Moderators pick a rule and Sentinel applies the right punishment for that offense.',P('rulebook.manage')?`<button class="btn pri" data-a="rule-new">${ic('plus')}New rule</button>`:'')+
+ (S.rulebook.length?`<div class="grid g2">${S.rulebook.map(r=>`<div class="card"><div class="row"><h3 class="sp">${esc(r.title)}</h3><span class="bdg ${sev[r.severity][1]}">${sev[r.severity][0]}</span></div>${r.desc?`<p class="sm muted" style="margin:8px 0 0">${esc(r.desc)}</p>`:''}
+  <div class="steps" style="margin-top:14px">${r.steps.map((s,i)=>`${i?`<span class="arr">→</span>`:''}<span class="bdg ${s.type==='ban'?'er':s.type==='warn'?'wa':s.type==='mute'?'in':'wa'}">${i+1}. ${stepT(s)}</span>`).join('')}</div>
+  <div class="row" style="margin-top:14px"><span class="xs muted sp">Edited by ${esc(r.by||'—')} · ${ago(r.updated||0)}</span>${P('rulebook.manage')?`<button class="btn s" data-a="rule-edit" data-id="${r.id}">Edit</button>`:''}</div></div>`).join('')}</div>`
+ :`<div class="card">${empty('No rules yet','Add rules like “Spamming: warn, then kick, then 1 day ban”. Repeat offenses escalate automatically.','rules',P('rulebook.manage')?`<button class="btn pri" data-a="rule-new">${ic('plus')}Write your first rule</button>`:'')}</div>`)},
+
+settings(){
+ const tbs=[['general','General',1],['game','Game',S.me.owner],['automations','Automations',P('automations.manage')],['notifications','Notifications',P('webhooks.manage')],['audit','Audit log',P('audit.view')],['legal','Legal',1]].filter(x=>x[2]);
+ const t=tbs.some(x=>x[0]===route.tab)?route.tab:'general';return hd('Settings','')+tabs('settings',tbs.map(x=>[x[0],x[1]]),t)+SET[t]()}
 };
 
 const SET={
-game:()=>{
-  if(!SETUP)return '<div class="card"><div class="empty"><div class="spin" style="margin:0 auto"></div></div></div>';
-  return `<div class="card"><div class="row"><div class="status ${S.connected?'ok':''}" style="width:48px;height:48px;margin:0">${S.connected?`<svg class="i" viewBox="0 0 24 24" style="width:22px;height:22px">${IC.check}</svg>`:'<div class="spin" style="width:20px;height:20px;border-width:3px"></div>'}</div>
-   <div class="sp"><h3>${S.connected?'Your game is connected':'Waiting for your game'}</h3><span class="muted">${S.connected?`${S.servers} server${S.servers>1?'s':''} online right now.`:'Press Play in Studio after adding the script.'}</span></div></div></div>
-  <div class="grid g2 mt"><div class="card"><h3>Install the script</h3><p class="muted" style="margin:6px 0 14px">Put it in a Script inside <b>ServerScriptService</b>, then turn on <b>Allow HTTP Requests</b> in Game Settings, Security.</p><div class="row wrapf"><button class="btn" data-a="copy-script">Copy script</button><a class="btn gray" href="/api/bridge?download=1">Download .lua</a></div></div>
-  <div class="card"><h3>Game key</h3><p class="muted" style="margin:6px 0 14px">Private to your game. Anyone with it can send commands.</p><div class="row"><input class="field key" id="gk" type="password" readonly value="${esc(SETUP.gameKey)}" aria-label="Game key"><button class="btn gray" data-a="key-show">Show</button><button class="btn gray" data-a="key-copy">Copy</button></div>
-   <div class="row" style="margin-top:12px"><button class="btn plain" style="padding:0" data-a="key-rotate">Make a new key…</button></div></div></div>
-  <div class="card mt"><h3>In-game commands</h3><div class="list" style="margin:8px -22px -6px"><div><div class="t"><b><code>!modcall</code> your message</b><span>Players report a problem to your moderators</span></div></div><div><div class="t"><b><code>!attend</code></b><span>Players check in to a running session</span></div></div></div></div>`},
-
-team:()=>`<div class="card tight"><div style="padding:16px 22px 6px"><h3>Team (${S.team.length})</h3></div><div class="list">${S.team.map(m=>`<div>${avatar('',m.name)}<div class="t"><b>${esc(m.name)}</b><span>Signed in with ${m.via}${m.owner?' · Owner':''}</span></div>${m.owner||m.uid===S.me.uid?`<span class="pill">${m.owner?'Owner':m.role}</span>`:`<select class="field" style="width:130px;height:34px" data-a="role" data-uid="${m.uid}">${['helper','moderator','admin'].map(r=>`<option value="${r}"${r===m.role?' selected':''}>${r[0].toUpperCase()+r.slice(1)}</option>`).join('')}</select><button class="btn sm gray" data-a="remove" data-uid="${m.uid}" data-n="${esc(m.name)}">Remove</button>`}</div>`).join('')}</div></div>
-  <div class="card mt"><h3>Invite someone</h3><p class="muted" style="margin:4px 0 14px">They'll sign in with Google or Roblox and join your workspace. Each link works once and expires in 7 days.</p>
-   <form data-f="invite" class="row wrapf"><select class="field" name="role" style="max-width:200px"><option value="helper">Helper (warn, kick, reports)</option><option value="moderator">Moderator (+ mute, bans, points)</option><option value="admin">Admin (everything)</option></select><button class="btn">Create invite link</button></form>
-   ${S.invites.length?`<div class="list" style="margin:16px -22px -6px">${S.invites.map(i=>`<div><div class="t"><b class="key" style="font-size:12.5px;word-break:break-all">${location.origin}/#/join/${i.code}</b><span>${i.role} · expires ${new Date(i.exp).toLocaleDateString()}</span></div><button class="btn sm" data-a="invite-copy" data-code="${i.code}">Copy</button><button class="btn sm gray" data-a="invite-revoke" data-code="${i.code}">Revoke</button></div>`).join('')}</div>`:''}</div>`,
-
-auto:()=>{
-  const R={autosuspend:['Auto-suspend','Suspend someone after repeated warnings.',[['warns','warnings in a row'],['minutes','minute suspension']]],sessionpoints:['Session points','Give points to everyone who attends a session.',[['points','points each']]],
-    flaggedmute:['Auto-mute','Mute people who keep sending flagged words.',[['count','flagged messages'],['minutes','minute mute']]],welcome:['Welcome message','Show a message to every player who joins.',[['text','Message',1]]]};
-  return `<div class="card tight list">${Object.entries(R).map(([id,[t,d,f]])=>{const r=S.rules[id];return `<div style="align-items:flex-start;flex-wrap:wrap"><div class="t" style="min-width:220px"><b>${t}</b><span>${d}</span>
-   <div class="row wrapf" style="margin-top:10px">${f.map(([k,l,txt])=>txt?`<input class="field" data-a="rule-param" data-id="${id}" data-k="${k}" value="${esc(r[k])}" maxlength="120" style="max-width:360px" aria-label="${l}">`:`<input class="field" type="number" min="1" data-a="rule-param" data-id="${id}" data-k="${k}" value="${r[k]}" style="width:84px;height:34px" aria-label="${l}"><span class="muted" style="margin-right:6px">${l}</span>`).join('')}</div></div>
-   <button class="sw ${r.enabled?'on':''}" role="switch" aria-checked="${r.enabled}" aria-label="${t}" data-a="rule-toggle" data-id="${id}"></button></div>`}).join('')}</div>`},
-
-mod:()=>`<div class="card"><h3>Flagged words</h3><p class="muted" style="margin:4px 0 14px">Messages containing these are highlighted in Reports. Separate with commas.</p><form data-f="words"><textarea class="field" name="w">${esc(S.flagWords.join(', '))}</textarea><div class="row" style="margin-top:12px"><span class="sp"></span><button class="btn">Save words</button></div></form></div>
-  ${can(3)?`<div class="card mt"><h3>Weekly playtime goal</h3><p class="muted" style="margin:4px 0 14px">Shown as a progress bar on the leaderboard.</p><form data-f="quota" class="row"><input class="field" type="number" min="1" name="m" value="${S.settings.quotaMinutes}" style="width:110px"><span class="muted">minutes per week</span><span class="sp"></span><button class="btn">Save</button></form></div>`:''}`,
-
-ws:()=>`${can(3)?`<div class="card"><h3>Workspace name</h3><form data-f="rename" class="row" style="margin-top:12px"><input class="field" name="name" value="${esc(S.workspace.name)}" maxlength="40" required><button class="btn">Save</button></form></div>`:''}
-  <div class="card mt tight"><div class="list"><div><div class="t"><b>Privacy Policy</b></div><a href="/legal/privacy" target="_blank">View</a></div><div><div class="t"><b>Terms of Service</b></div><a href="/legal/terms" target="_blank">View</a></div><div><div class="t"><b>Cookie Policy</b></div><a href="/legal/cookies" target="_blank">View</a></div><div><div class="t"><b>Player Notice</b><span>Show this to players in your game</span></div><a href="/legal/player-notice" target="_blank">View</a></div></div></div>
-  ${can(2)&&S.audit.length?`<div class="card mt tight"><div style="padding:16px 22px 6px"><h3>Recent changes</h3></div><div class="list">${S.audit.slice(0,12).map(a=>`<div style="padding:9px 22px"><div class="t"><span style="color:var(--ink)"><b>${esc(a.user)}</b> ${esc(a.text)}</span></div><span class="fine">${ago(a.t)}</span></div>`).join('')}</div></div>`:''}
-  <div class="card mt"><h3>${S.me.owner?'Delete workspace':'Leave workspace'}</h3><p class="muted" style="margin:4px 0 14px">${S.me.owner?'Permanently erases this workspace and everything in it: players, logs, reports and team. This cannot be undone.':'You will lose access to this workspace until someone invites you again.'}</p><button class="btn red" data-a="${S.me.owner?'ws-delete':'ws-leave'}">${S.me.owner?'Delete workspace…':'Leave workspace…'}</button></div>`
+general(){const u=ME.user;return `<div class="grid g2"><div class="card"><h3>Workspace</h3>${S.me.owner?`<form data-f="rename" class="row mt"><input class="inp" name="name" value="${esc(S.workspace.name)}" maxlength="40" required><button class="btn">Save</button></form>`:`<p class="muted">${esc(S.workspace.name)}</p>`}
+ <dl class="kv2 mt"><dt>Your rank</dt><dd>${S.me.owner?'Owner (all permissions)':rtag(S.me.rank)}</dd><dt>Workspace ID</dt><dd class="mono">${S.workspace.id}</dd></dl></div>
+ <div class="card"><h3>Your account</h3><dl class="kv2 mt"><dt>Signed in with</dt><dd>${u.provider==='google'?'Google':'Roblox'}</dd><dt>Roblox account</dt><dd>${u.roblox?`@${esc(u.roblox.name)}${u.roblox.viaLogin?'':` <button class="btn s ghost" data-a="unlink">Unlink</button>`}`:`<button class="btn s" data-a="link">${ic('link')}Link Roblox</button>`}</dd></dl><p class="xs muted" style="margin-top:12px">Linking lets Sentinel count your in-game time toward your rank's weekly goal.</p></div></div>
+ <div class="card mt" style="box-shadow:0 0 0 1px var(--erb)"><h3>${S.me.owner?'Delete workspace':'Leave workspace'}</h3><p class="sm muted">${S.me.owner?'Permanently erases this workspace for everyone: players, logbook, reports, ranks and team. This cannot be undone.':'You will lose access until someone invites you again.'}</p><button class="btn red" data-a="${S.me.owner?'ws-del':'ws-leave'}">${S.me.owner?'Delete workspace':'Leave workspace'}</button></div>`},
+game(){const s=SETUP;if(!s)return '<div class="card"><div class="skel"></div></div>';
+ return `<div class="grid g2"><div class="card"><div class="row"><span class="dot ${S.connected?'on':''}"></span><h3>${S.connected?'Connected':'Not connected right now'}</h3></div><dl class="kv2 mt"><dt>Servers online</dt><dd>${S.serverCount}</dd><dt>Last place seen</dt><dd class="mono">${s.lastPlace??'—'}</dd><dt>First connected</dt><dd>${s.connectedAt?date(s.connectedAt):'Never'}</dd></dl></div>
+ <div class="card"><h3>Place lock</h3><p class="sm muted">Only accept your game's place, so a leaked key is useless elsewhere.</p><form data-f="place" class="mt"><div class="row"><input class="inp" name="placeId" inputmode="numeric" placeholder="Place ID" value="${esc(s.placeId||'')}"><button class="btn">Save</button></div><label class="chk"><input type="checkbox" name="lock" ${s.placeLock?'checked':''}><span class="sm">Reject every other place${s.lastPlace===0?' <span class="muted">(Studio tests use 0)</span>':''}</span></label></form></div></div>
+ <div class="card mt"><h3>Game script</h3><p class="sm muted">Put it in a Script in <b>ServerScriptService</b> and turn on <b>Allow HTTP Requests</b>. Only you can see this.</p><div class="row wrap mt"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a><a class="btn ghost" href="#/setup">Open setup guide</a></div>
+ <label class="lab mt">Game key</label><div class="keybox"><span id="gk">${'•'.repeat(36)}</span><button class="btn s" data-a="key-show">Reveal</button><button class="btn s" data-a="key-copy">${ic('copy')}</button></div><div class="row mt"><button class="btn red s" data-a="key-rotate">Roll key…</button><span class="xs muted">Rolling breaks the old key immediately.</span></div></div>`},
+automations(){const R={autosuspend:['Auto-suspend','Suspend someone after repeated warnings.',[['warns','warnings in a row'],['minutes','minute suspension']]],flaggedmute:['Auto-mute','Mute people who keep using flagged words.',[['count','flagged messages'],['minutes','minute mute']]],sessionpoints:['Session points','Reward everyone who attends a session.',[['points','points each']]],welcome:['Welcome message','Greet every player who joins.',[['text','Message',1]]]};
+ return `<div class="card p0">${Object.entries(R).map(([id,[t,d,f]])=>{const r=S.rules[id];return `<div class="row" style="padding:18px 20px;border-bottom:1px solid var(--line);align-items:flex-start"><div class="sp"><b>${t}</b><div class="sm muted">${d}</div><div class="row wrap" style="margin-top:10px">${f.map(([k,l,tx])=>tx?`<input class="inp" data-a="rp" data-id="${id}" data-k="${k}" value="${esc(r[k])}" maxlength="120" style="max-width:420px">`:`<input class="inp" type="number" min="1" data-a="rp" data-id="${id}" data-k="${k}" value="${r[k]}" style="width:80px;height:30px"><span class="sm muted">${l}</span>`).join('')}</div></div><button class="tog ${r.enabled?'on':''}" role="switch" aria-checked="${r.enabled}" aria-label="${t}" data-a="rt" data-id="${id}"></button></div>`}).join('')}</div>
+ <div class="grid g2 mt"><div class="card"><h3>Flagged words</h3><p class="sm muted">Highlighted in chat and reports. Separate with commas.</p><form data-f="words" class="mt"><textarea class="inp" name="w">${esc(S.flagWords.join(', '))}</textarea><div class="row mt"><span class="sp"></span><button class="btn">Save words</button></div></form></div>
+ <div class="card"><h3>Player weekly goal</h3><p class="sm muted">The target on the player leaderboard. Staff goals are set per rank in Team, Ranks.</p><form data-f="quota" class="row mt"><input class="inp" type="number" min="1" name="m" value="${S.settings.quotaMinutes}" style="width:110px"><span class="muted sm">minutes</span><span class="sp"></span><button class="btn">Save</button></form></div></div>`},
+notifications(){const w=S.webhook,E=[['reports','New reports'],['bans','Bans, suspensions and unbans'],['kicks','Kicks'],['warns','Warnings'],['loa','Leave requests and decisions'],['sessions','Sessions starting and ending']];
+ return `<div class="card"><h3>Discord</h3><p class="sm muted">Send updates to a Discord channel. In Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL.</p>
+ <form data-f="hook" class="mt"><label class="lab">Webhook URL</label><div class="row"><input class="inp" name="url" placeholder="${w.set?'Saved (ends in …'+esc(w.hint)+'). Paste a new one to replace it.':'https://discord.com/api/webhooks/…'}"><button class="btn">Save</button>${w.set?`<button type="button" class="btn" data-a="hook-test">Send test</button>`:''}</div></form>
+ <div class="mt">${E.map(([k,t])=>`<div class="pg"><span>${t}</span><button class="tog ${w.events[k]?'on':''}" role="switch" aria-checked="${!!w.events[k]}" aria-label="${t}" data-a="ht" data-k="${k}"></button></div>`).join('')}</div>${w.set?`<button class="btn ghost s mt" data-a="hook-clear">Disconnect Discord</button>`:''}</div>`},
+audit(){return `<div class="card p0 tw">${S.audit.length?`<table><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${S.audit.map(a=>`<tr><td class="sm muted" style="white-space:nowrap">${dtime(a.t)}</td><td class="b sm">${esc(a.user)}</td><td class="sm">${esc(a.text)}</td></tr>`).join('')}</tbody></table>`:empty('Nothing logged yet')}</div>`},
+legal(){return `<div class="card p0">${[['privacy','Privacy Policy','What we collect and why'],['terms','Terms of Service','The rules for using Sentinel'],['cookies','Cookie Policy','The few cookies we use'],['acceptable-use','Acceptable Use','What staff must not do'],['player-notice','Player Notice','Show this to players in your game']].map(([k,t,d])=>`<a href="/legal/${k}" target="_blank" class="row" style="padding:14px 20px;border-bottom:1px solid var(--line);color:var(--ink)"><div class="sp"><b>${t}</b><div class="sm muted">${d}</div></div>${ic('link')}</a>`).join('')}</div>`}
 };
 
-function foundCard(f){
-  const p=f.play;
-  return `<div class="card"><div class="pc">${avatar(f.userId,f.name,'xl')}<div style="flex:1;min-width:0"><h2>${esc(f.displayName||f.name)}</h2><div class="muted">@${esc(f.name)} · ID ${f.userId}${f.created?' · joined Roblox '+new Date(f.created).getFullYear():''}</div>
-   <div class="row wrapf" style="margin-top:8px;gap:6px">${f.online?'<span class="pill ok">Online</span>':'<span class="pill">Offline</span>'}${f.banned?'<span class="pill open">Banned</span>':''}${f.muted?'<span class="pill claimed">Muted</span>':''}${p?`<span class="pill blue">${dur(p.total)} played</span><span class="pill blue">${p.points} points</span>`:''}</div>${pActs(f)}
-   ${can(3)?`<div class="row" style="margin-top:12px;gap:8px"><a class="btn sm gray" href="/api/export?userId=${f.userId}">Export their data</a><button class="btn sm gray" data-a="erase" data-uid="${f.userId}" data-n="${esc(f.name)}">Erase their data</button></div>`:''}</div></div>
-   ${f.logbook.length?`<h3 style="margin:20px 0 8px 4px">Logbook</h3><div class="card tight list">${[...f.logbook].reverse().slice(0,25).map(e=>`<div><span class="pill">${esc(e.type)}</span><div class="t"><b>${esc(e.reason||'')}</b><span>by ${esc(e.by||'?')} · ${new Date(e.time).toLocaleString()}</span></div></div>`).join('')}</div>`:''}</div>`}
+/* ============ dialogs ============ */
+async function moderate(p){
+ const acts=[['warn','Warn','mod.warn'],['kick','Kick','mod.kick'],['mute','Mute','mod.mute'],['ban','Suspend','mod.ban'],['perm','Ban','mod.permban']].filter(a=>P(a[2]));
+ if(!acts.length)return toast('Your rank cannot moderate players','err');
+ const rules=S.rulebook;let chosen=acts[0][0];
+ const v=await drawer({title:'Moderate '+p.name,sub:'Logged to their logbook and applied in game within seconds.',ok:'Apply',danger:true,
+  html:`${rules.length?`<label class="lab">Rule broken</label><select class="inp" name="rule"><option value="">None, I'll choose the action</option>${rules.map(r=>`<option value="${r.id}">${esc(r.title)}</option>`).join('')}</select><div id="escb"></div>`:''}
+  <div id="man"><label class="lab">Action</label><div class="seg" id="aseg">${acts.map((a,i)=>`<button type="button" data-v="${a[0]}" class="${i?'':'on'}">${a[1]}</button>`).join('')}</div>
+  <div id="durw" hidden><label class="lab">Length</label><div class="row"><input class="inp" name="dur" type="number" min="1" value="1" style="width:100px"><select class="inp" name="unit" style="width:120px"><option value="60">hours</option><option value="1440">days</option><option value="1">minutes</option></select></div></div></div>
+  <label class="lab">Details ${rules.length?'<span class="muted">(optional with a rule)</span>':''}</label><textarea class="inp" name="reason" placeholder="What happened?"></textarea>`,
+  mount(f){const seg=$('#aseg',f),dw=$('#durw',f),sel=$('select[name=rule]',f);
+   const upd=()=>{dw.hidden=!['mute','ban'].includes(chosen)};
+   seg.onclick=e=>{const b=e.target.closest('button');if(!b)return;chosen=b.dataset.v;$$('button',seg).forEach(x=>x.classList.toggle('on',x===b));upd()};upd();
+   if(sel)sel.onchange=async()=>{const box=$('#escb',f);$('#man',f).hidden=!!sel.value;if(!sel.value){box.innerHTML='';return}box.innerHTML='<div class="esc">Checking their history…</div>';
+    const r=await api(`/api/escalation?userId=${p.userId}&rule=${sel.value}`);if(r.error){box.innerHTML='';return}
+    const s=r.step,lbl={warn:'a warning',kick:'a kick',mute:'a '+fmin(s.minutes)+' mute',ban:s.minutes?'a '+fmin(s.minutes)+' suspension':'a permanent ban'}[s.type];
+    box.innerHTML=`<div class="esc"><b>Offense #${r.offense}</b> under this rule, so they'll receive <b>${lbl}</b>.</div>`};
+   return()=>({action:chosen})},
+  check:v=>!v.rule&&!String(v.reason||'').trim()?'Add some details so your team knows what happened':''});
+ if(!v)return;
+ const body={userId:p.userId,name:p.name,reason:v.reason};
+ if(v.rule)body.ruleId=v.rule;else{body.action=v.action==='perm'?'ban':v.action;body.minutes=v.action==='perm'?0:['mute','ban'].includes(v.action)?Math.round(+v.dur*+v.unit):0}
+ const r=await api('/api/action',body);if(bad(r))return;
+ const a=r.applied||{action:body.action};toast(({warn:'Warning sent',kick:'Kick sent',mute:'Muted',ban:a.minutes?'Suspended':'Banned'})[a.action]||'Done');refresh()}
+async function rankEditor(r){
+ const groups={};S.perms.forEach(p=>(groups[p.group]||=[]).push(p));const mine=new Set(S.me.perms);const cur=r||{name:'',color:COLORS[2],perms:[],quota:0,limit:0};
+ const v=await drawer({title:r?'Edit '+r.name:'New rank',sub:'Ranks decide what people can do. New ranks start at the bottom.',ok:r?'Save rank':'Create rank',
+  html:`<label class="lab">Name</label><input class="inp" name="name" maxlength="32" value="${esc(cur.name)}" placeholder="Senior Moderator" required>
+  <label class="lab">Color</label><div class="sw">${COLORS.map(c=>`<label style="background:${c}"><input type="radio" name="color" value="${c}" ${c===cur.color?'checked':''}><i></i></label>`).join('')}</div>
+  <div class="grid g2" style="gap:12px"><div><label class="lab">Weekly in-game goal</label><div class="row"><input class="inp" type="number" min="0" name="quota" value="${cur.quota||0}"><span class="sm muted" style="white-space:nowrap">min</span></div></div><div><label class="lab">Action limit</label><div class="row"><input class="inp" type="number" min="0" name="limit" value="${cur.limit||0}"><span class="sm muted" style="white-space:nowrap">per hour</span></div></div></div><div class="hint">0 means no goal or no limit. The limit counts warns, kicks, mutes and bans.</div>
+  <label class="lab" style="margin-top:22px">Permissions</label>${Object.entries(groups).map(([g,ps])=>`<div class="xs muted b" style="text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px">${g}</div>${ps.map(p=>`<label class="chk" style="${mine.has(p.id)?'':'opacity:.45'}"><input type="checkbox" name="perm" value="${p.id}" ${cur.perms.includes(p.id)?'checked':''} ${mine.has(p.id)?'':'disabled'}><span>${esc(p.label)} ${p.danger?'<span class="bdg wa">Elevated</span>':''}</span></label>`).join('')}`).join('')}
+  ${r?`<div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)"><button type="button" class="btn red s" data-del>Delete rank</button></div>`:''}`,
+  mount(f){const d=$('[data-del]',f);if(d)d.onclick=async()=>{const x=await api('/api/ranks',{op:'delete',id:r.id});if(!bad(x)){$('#dw .scrim').click();toast('Rank deleted');refresh()}}}});
+ if(!v)return;const perms=[].concat(v.perm||[]);
+ const x=await api('/api/ranks',{op:r?'update':'create',id:r&&r.id,name:v.name,color:v.color,quota:+v.quota,limit:+v.limit,perms});if(!bad(x)){toast(r?'Rank saved':'Rank created');refresh()}}
+async function ruleEditor(r){
+ const cur=r||{title:'',desc:'',severity:'medium',steps:[{type:'warn',minutes:0},{type:'kick',minutes:0},{type:'ban',minutes:1440}]};
+ const stepRow=s=>`<div class="row st" style="margin-top:8px"><select class="inp" name="st_type" style="width:130px">${[['warn','Warn'],['kick','Kick'],['mute','Mute'],['ban','Suspend / ban']].map(([k,t])=>`<option value="${k}" ${s.type===k?'selected':''}>${t}</option>`).join('')}</select><input class="inp" type="number" min="0" name="st_min" value="${s.minutes||0}" style="width:100px" title="Minutes (0 = permanent ban)"><span class="xs muted">min</span><button type="button" class="btn s" data-rm aria-label="Remove step">${ic('x')}</button></div>`;
+ const v=await drawer({title:r?'Edit rule':'New rule',sub:'Each offense moves to the next step. The last step repeats.',ok:'Save rule',
+  html:`<label class="lab">Title</label><input class="inp" name="title" maxlength="60" value="${esc(cur.title)}" placeholder="Spamming chat" required>
+  <label class="lab">Description</label><textarea class="inp" name="desc" maxlength="400" placeholder="What counts as breaking this rule?">${esc(cur.desc)}</textarea>
+  <label class="lab">Severity</label><select class="inp" name="severity">${['low','medium','high','critical'].map(s=>`<option value="${s}" ${cur.severity===s?'selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}</select>
+  <label class="lab">Punishment ladder</label><div class="hint" style="margin:0 0 4px">For mute and suspend, set the length in minutes (1440 is a day). A ban with 0 minutes is permanent.</div><div id="stl">${cur.steps.map(stepRow).join('')}</div><button type="button" class="btn s" style="margin-top:10px" data-add>${ic('plus')}Add step</button>
+  ${r?`<div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)"><button type="button" class="btn red s" data-del>Delete rule</button></div>`:''}`,
+  mount(f){$('[data-add]',f).onclick=()=>{if($$('.st',f).length<8)$('#stl',f).insertAdjacentHTML('beforeend',stepRow({type:'warn',minutes:0}))};$('#stl',f).onclick=e=>{if(e.target.closest('[data-rm]')&&$$('.st',f).length>1)e.target.closest('.st').remove()};
+   const d=$('[data-del]',f);if(d)d.onclick=async()=>{const x=await api('/api/rulebook',{op:'delete',id:r.id});if(!bad(x)){$('#dw .scrim').click();toast('Rule deleted');refresh()}}}});
+ if(!v)return;const types=[].concat(v.st_type||[]),mins=[].concat(v.st_min||[]);
+ const x=await api('/api/rulebook',{op:'save',id:r&&r.id,title:v.title,desc:v.desc,severity:v.severity,steps:types.map((t,i)=>({type:t,minutes:+mins[i]||0}))});if(!bad(x)){toast('Rule saved');refresh()}}
 
-/* ---------- actions ---------- */
-const done=async(r,msg)=>{if(fail(r))return false;toast(msg);await refresh();return true};
-async function doAct(a,p){
-  const L={warn:'Warn',kick:'Kick',mute:'Mute',ban:'Ban',unban:'Unban',unmute:'Unmute',points:'Give points to'};
-  if(a==='unban'||a==='unmute')return done(await api('/api/action',{action:a,userId:p.userId,name:p.name,reason:'Lifted'}),L[a]+' done');
-  const fields=a==='points'?[{name:'amount',label:'Points (use a minus to remove)',type:'number',value:5,required:1},{name:'reason',label:'Reason',value:'',required:1}]:
-   [{name:'reason',label:'Reason',placeholder:'What happened?',required:1},...(a==='mute'||a==='ban'?[{name:'minutes',label:a==='ban'&&can(3)?'Minutes (0 = permanent)':'Minutes',type:'number',value:a==='mute'?10:(can(3)?0:60),help:a==='ban'&&!can(3)?'Moderators can suspend for a set time. Admins can ban permanently.':''}]:[])];
-  const v=await sheet({title:`${L[a]} ${p.name}`,fields,ok:a==='points'?'Give points':L[a],danger:a==='ban'||a==='kick'});if(!v)return;
-  let minutes=+v.minutes||0;if(a==='ban'&&!can(3)&&minutes<1)minutes=60;
-  return done(await api('/api/action',{action:a,userId:p.userId,name:p.name,reason:v.reason,minutes,amount:+v.amount||0}),a==='points'?'Points updated':L[a]+' sent');
-}
-const ensureSetup=async()=>{if(!SETUP&&can(3)){const r=await api('/api/setup');if(!r.error){SETUP=r;render()}}};
+/* ============ command palette ============ */
+let CK=null;
+function cmdItems(q){q=q.trim().toLowerCase();const pages=[['home','Home','home'],['players','Players','players'],['reports','Reports','flag'],['logbook','Logbook','book'],['team','Team','team'],['team/ranks','Ranks','team'],['activity','Activity','chart'],['leave','Leave','leave'],['rulebook','Rulebook','rules'],['settings','Settings','gear'],...(S.me.owner?[['settings/game','Game connection','game']]:[]),['settings/automations','Automations','bolt']];
+ const actions=[P('announce')&&['announce','Send an announcement','bolt'],P('team.manage')&&['invite','Invite a member','plus'],P('rulebook.manage')&&['rule-new','Write a rule','rules'],['loa-new','Request leave','leave'],P('ranks.manage')&&['rank-new','Create a rank','team']].filter(Boolean);
+ const m=s=>!q||s.toLowerCase().includes(q),out=[];
+ const pl=S.players.filter(p=>m(p.name)||m(p.displayName||'')).slice(0,6).map(p=>({sec:'Players online',t:p.displayName||p.name,s:'@'+p.name,icn:'players',run:()=>go('player/'+p.userId)}));
+ out.push(...pl,...actions.filter(a=>m(a[1])).map(a=>({sec:'Actions',t:a[1],icn:a[2],run:()=>act(a[0])})),...pages.filter(p=>m(p[1])).map(p=>({sec:'Go to',t:p[1],icn:p[2],run:()=>go(p[0])})));
+ if(q.length>=3&&/^[\w ]+$/.test(q))out.push({sec:'Roblox',t:`Look up “${q}”`,s:'Find any player',icn:'search',run:()=>lookup(q)});return out}
+function openCk(){if(!S)return;CK={q:'',i:0};renderCk()}
+function renderCk(){const w=$('#ck');if(!CK){w.innerHTML='';w.classList.remove('open');return}const items=cmdItems(CK.q);CK.items=items;CK.i=Math.min(CK.i,Math.max(0,items.length-1));let sec='';
+ const list=items.map((it,i)=>`${it.sec!==sec?(sec=it.sec,`<div class="sec">${esc(sec)}</div>`):''}<button class="${i===CK.i?'on':''}" data-ck="${i}">${ic(it.icn)}${esc(it.t)}${it.s?`<small>${esc(it.s)}</small>`:''}</button>`).join('');
+ const had=$('.ckb input',w);if(had){$('.ckl',w).innerHTML=list||'<div class="empty sm">No matches</div>';return}
+ w.innerHTML=`<div class="scrim"></div><div class="ckb"><input placeholder="Search players, pages and actions…" aria-label="Search"><div class="ckl">${list}</div><div class="ckf"><span>↑↓ to move</span><span>↵ to open</span><span>esc to close</span></div></div>`;w.classList.add('open');
+ const inp=$('input',w);inp.focus();inp.oninput=()=>{CK.q=inp.value;CK.i=0;renderCk()};$('.scrim',w).onclick=closeCk;
+ $('.ckl',w).onclick=e=>{const b=e.target.closest('[data-ck]');if(b){const it=CK.items[+b.dataset.ck];closeCk();it.run()}}}
+function closeCk(){CK=null;renderCk()}
+async function lookup(q){toast('Looking up '+q+'…');const r=await api('/api/lookup?name='+encodeURIComponent(q));if(r._s===404)return toast('No player with that username','err');if(!bad(r)){PROF=r;go('player/'+r.userId)}}
+
+/* ============ actions ============ */
 async function copyScript(){try{const t=await (await fetch('/api/bridge')).text();await navigator.clipboard.writeText(t);toast('Script copied')}catch{toast('Could not copy. Use Download instead.','err')}}
-async function startOnboardingStep(n){OB.step=n;if(n===2||n===3){SETUP=SETUP||await api('/api/setup')}render();if(n===3)pollOB()}
-let obTimer=null;
-async function pollOB(){clearTimeout(obTimer);if(!OB||OB.step!==3)return;const r=await api('/api/state');if(r&&r.connected&&!OB.ok){OB.ok=true;render()}if(OB&&OB.step===3&&!OB.ok)obTimer=setTimeout(pollOB,3000)}
-
+let obT=null;async function pollOb(){clearTimeout(obT);if(!OB||OB.step!=='connect'||OB.ok)return;const s=await api('/api/state');if(s.connected){OB.ok=1;SETUP=await api('/api/setup');render();return}obT=setTimeout(pollOb,3000)}
+async function obStep(st){OB.step=st;if(!SETUP||SETUP.error)SETUP=await api('/api/setup');render();if(st==='connect')pollOb()}
+async function act(a,el){const d=el?el.dataset:{};
+ if(a==='announce'){const v=await drawer({center:1,title:'Announce to every server',sub:'Shows a banner to all players right now.',ok:'Send',html:`<textarea class="inp" name="t" maxlength="200" placeholder="Server restarting in 5 minutes" required></textarea>`,check:v=>v.t.trim()?'':'Write a message'});if(v){const r=await api('/api/action',{action:'announce',reason:v.t});if(!bad(r)){toast('Announcement sent');refresh()}}}
+ else if(a==='invite'){const opts=S.ranks.filter(r=>below(r.pos));if(!opts.length)return toast('There are no ranks below yours','err');
+  const v=await drawer({title:'Invite a member',sub:'They sign in with Google or Roblox. The link works once and expires in 7 days.',ok:'Create link',html:`<label class="lab">Rank</label><select class="inp" name="rank">${opts.reverse().map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select>`});
+  if(v){const r=await api('/api/team',{op:'invite',rank:v.rank});if(!bad(r)){try{await navigator.clipboard.writeText(r.link);toast('Invite link copied')}catch{toast('Invite created')}await refresh();if(route.page==='team'&&route.tab!=='invites')go('team/invites')}}}
+ else if(a==='rule-new')ruleEditor(null);else if(a==='rank-new')rankEditor(null);
+ else if(a==='loa-new'){const t=new Date().toISOString().slice(0,10);const v=await drawer({title:'Request leave',sub:'Your activity goal pauses while your leave is approved and active.',ok:'Send request',html:`<div class="grid g2" style="gap:12px"><div><label class="lab">From</label><input class="inp" type="date" name="start" value="${t}" min="${t}" required></div><div><label class="lab">Until</label><input class="inp" type="date" name="end" min="${t}" required></div></div><label class="lab">Reason</label><textarea class="inp" name="reason" maxlength="300" placeholder="Exams, holiday, need a break…"></textarea>`,check:v=>!v.end?'Pick an end date':''});
+  if(v){const r=await api('/api/loa',{op:'request',...v});if(!bad(r)){toast('Leave requested');refresh()}}}
+}
 document.addEventListener('click',async e=>{
-  const el=e.target.closest('[data-a]');
-  if(menuOpen&&!(el&&el.dataset.a==='wsmenu')&&!e.target.closest('.menu')){menuOpen=false;if(!el||el.dataset.a==='nav'){render()}}
-  if(!el)return;const a=el.dataset.a,d=el.dataset,p=()=>({userId:+d.uid,name:d.n});
-  if(a==='nav'){page=d.id;menuOpen=false;if(page==='settings')ensureSetup();render()}
-  else if(a==='goto'){page=d.id;if(d.tab)tab[d.id]=d.tab;if(page==='settings')ensureSetup();render()}
-  else if(a==='tab'){tab[d.k]=d.id;render();if(d.k==='settings'&&d.id==='game')ensureSetup()}
-  else if(a==='wsmenu'){menuOpen=!menuOpen;render()}
-  else if(a==='ws-switch'){menuOpen=false;SETUP=null;const r=await api('/api/switch',{id:d.id});if(!fail(r)){found=null;page='home';await refresh()}}
-  else if(a==='ws-new'){menuOpen=false;OB={step:1,extra:1};render()}
-  else if(a==='ob-cancel'){OB=null;render()}
-  else if(a==='ob-next')startOnboardingStep(3);
-  else if(a==='ob-done'){clearTimeout(obTimer);OB=null;SETUP=null;page='home';await loadMe();await refresh()}
-  else if(a==='signout'){await api('/logout',{});ME=await api('/api/me');S=null;SETUP=null;OB=null;menuOpen=false;render()}
-  else if(a==='copy-script')copyScript();
-  else if(a==='key-show'){const i=$('#gk');i.type=i.type==='password'?'text':'password';el.textContent=i.type==='password'?'Show':'Hide'}
-  else if(a==='key-copy'){try{await navigator.clipboard.writeText(SETUP.gameKey);toast('Key copied')}catch{toast('Could not copy','err')}}
-  else if(a==='key-rotate'){const v=await sheet({title:'Make a new game key?',text:'Your current key stops working immediately. You will need to download and paste the script into your game again.',ok:'Make new key',danger:true});if(v){const r=await api('/api/workspace',{op:'rotatekey'});if(!fail(r)){SETUP=null;toast('New key created. Download the script again.');await ensureSetup();await refresh()}}}
-  else if(a==='act')doAct(d.do,p());
-  else if(a==='erase'){const v=await sheet({title:'Erase '+d.n+'\'s data?',text:'Removes their logbook, playtime, points and reports. An active ban is kept so they can\'t come back. This cannot be undone.',ok:'Erase',danger:true});if(v)done(await api('/api/erase',{userId:+d.uid}),'Data erased').then(()=>{found=null;render()})}
-  else if(a==='call'){let note='';if(d.op==='resolve'){const v=await sheet({title:'Resolve report #'+d.id,fields:[{name:'note',label:'Note for the player (optional)',placeholder:'Handled, thanks!'}],ok:'Resolve'});if(!v)return;note=v.note}done(await api('/api/call',{id:+d.id,op:d.op,note}),d.op==='claim'?'Report claimed':'Report resolved')}
-  else if(a==='sess')done(await api('/api/session',{op:d.op}),d.op==='end'?'Session ended':'Added');
-  else if(a==='rule-toggle'){const r=S.rules[d.id];done(await api('/api/rules',{id:d.id,enabled:!r.enabled,params:r}),'Saved')}
-  else if(a==='invite-copy'){try{await navigator.clipboard.writeText(location.origin+'/#/join/'+d.code);toast('Invite link copied')}catch{toast('Could not copy','err')}}
-  else if(a==='invite-revoke')done(await api('/api/team',{op:'revoke',code:d.code}),'Invite revoked');
-  else if(a==='remove'){const v=await sheet({title:'Remove '+d.n+'?',text:'They lose access to this workspace immediately.',ok:'Remove',danger:true});if(v)done(await api('/api/team',{op:'remove',uid:d.uid}),'Removed')}
-  else if(a==='ws-leave'){const v=await sheet({title:'Leave this workspace?',ok:'Leave',danger:true});if(v){const r=await api('/api/team',{op:'leave'});if(!fail(r)){S=null;SETUP=null;await loadMe();await refresh()}}}
-  else if(a==='ws-delete'){const v=await sheet({title:'Delete '+S.workspace.name+'?',text:'This permanently erases everything in this workspace for everyone.',fields:[{name:'confirm',label:'Type the workspace name to confirm',placeholder:S.workspace.name,required:1}],ok:'Delete forever',danger:true});if(v){const r=await api('/api/workspace',{op:'delete',confirm:v.confirm});if(!fail(r)){S=null;SETUP=null;page='home';await loadMe();toast('Workspace deleted');await refresh()}}}
-  else if(a==='join-accept'){const r=await api('/api/join',{code:JOIN.code});if(!fail(r)){JOIN=null;history.replaceState(null,'',location.pathname);SETUP=null;await loadMe();await refresh()}}
-  else if(a==='join-cancel'){JOIN=null;history.replaceState(null,'',location.pathname);render()}
+ const g=e.target.closest('[data-go]');if(g&&!e.target.closest('button,a,select,input')){go(g.dataset.go);return}
+ const el=e.target.closest('[data-a]');const inMenu=e.target.closest('.menu');if(!inMenu&&!(el&&['wsmenu','memenu','pmenu'].includes(el.dataset.a)))closeMenu();
+ if(!el)return;const a=el.dataset.a,d=el.dataset,pp=()=>({userId:+d.uid,name:d.n});
+ if(a==='cmdk')openCk();else if(a==='side'){sideOpen=!sideOpen;$('.side').classList.toggle('open',sideOpen)}
+ else if(a==='wsmenu')menu(el,`<div class="lab2">Workspaces</div>${ME.workspaces.map(w=>`<button data-a="ws-sw" data-id="${w.id}"><span class="logo" style="width:22px;height:22px;font-size:11px;border-radius:6px">${esc(ini(w.name)[0])}</span><span class="sp">${esc(w.name)}<br><span class="xs muted">${w.owner?'Owner':esc(w.rank)}</span></span>${w.id===S.workspace.id?ic('check'):''}</button>`).join('')}<hr>${ME.workspaces.length<ME.maxPerUser?`<button data-a="ws-new">${ic('plus')}New workspace</button>`:''}`);
+ else if(a==='memenu')menu(el,`<div class="lab2">${esc(ME.user.name)}</div>${ME.user.roblox?`<button disabled>${ic('check')}Roblox: @${esc(ME.user.roblox.name)}</button>`:`<button data-a="link">${ic('link')}Link Roblox account</button>`}<a href="#/settings/general">${ic('gear')}Account settings</a><hr><button data-a="signout">${ic('out')}Sign out</button>`);
+ else if(a==='pmenu')menu(el,`<a href="/api/export?userId=${PROF.userId}">${ic('dl')}Export their data</a><button data-a="erase">${ic('x')}Erase their data…</button>`);
+ else if(a==='ws-sw'){closeMenu();SETUP=null;const r=await api('/api/switch',{id:d.id});if(!bad(r)){await loadMe();location.hash='#/';await refresh();toast('Switched workspace')}}
+ else if(a==='ws-new'){closeMenu();OB={step:'name',creating:1};render()}
+ else if(a==='ob-exit'){OB=null;render()}
+ else if(a==='ob')obStep(d.v);
+ else if(a==='ob-done'){clearTimeout(obT);OB=null;await loadMe();await loadState();location.hash='#/';render(true)}
+ else if(a==='signout'){closeMenu();await api('/logout',{});await loadMe();S=null;SETUP=null;OB=null;location.hash='';render()}
+ else if(a==='link'){closeMenu();location.href='/auth/roblox?link=1'}
+ else if(a==='unlink'){const r=await api('/api/me/unlink',{});if(!bad(r)){await loadMe();toast('Roblox account unlinked');refresh()}}
+ else if(a==='copy-script')copyScript();
+ else if(a==='key-show'){const k=$('#gk');k.textContent=k.textContent.startsWith('•')?SETUP.gameKey:'•'.repeat(36);el.textContent=k.textContent.startsWith('•')?'Reveal':'Hide'}
+ else if(a==='key-copy'){try{await navigator.clipboard.writeText(SETUP.gameKey);toast('Key copied')}catch{toast('Could not copy','err')}}
+ else if(a==='key-rotate'){if(await confirmBox('Roll your game key?','The current key stops working at once. You will need to paste the new script into your game.','Roll key')){const r=await api('/api/workspace',{op:'rotatekey'});if(!bad(r)){SETUP=await api('/api/setup');toast('New key ready. Update the script in your game.');render()}}}
+ else if(a==='mod')moderate(pp());
+ else if(a==='points'){const v=await drawer({center:1,title:'Points for '+d.n,ok:'Apply',html:`<label class="lab">Amount</label><input class="inp" type="number" name="amount" value="5" required><div class="hint">Use a minus to remove points.</div><label class="lab">Reason</label><input class="inp" name="reason" maxlength="200" placeholder="Helped a new player" required>`,check:v=>!+v.amount?'Enter an amount':!v.reason.trim()?'Add a reason':''});if(v){const r=await api('/api/action',{action:'points',userId:+d.uid,name:d.n,amount:+v.amount,reason:v.reason});if(!bad(r)){toast('Points updated');refresh()}}}
+ else if(a==='lift'){const r=await api('/api/action',{action:d.k==='ban'?'unban':'unmute',userId:+d.uid,name:d.n,reason:'Lifted from the dashboard'});if(!bad(r)){toast(d.k==='ban'?'Unbanned':'Unmuted');refresh()}}
+ else if(a==='note'){const v=await drawer({center:1,title:'Note on '+PROF.name,sub:'Only staff can see notes.',ok:'Add note',html:`<textarea class="inp" name="t" maxlength="500" placeholder="What should the team know?" required></textarea>`,check:v=>v.t.trim()?'':'Write a note'});if(v){const r=await api('/api/entry',{op:'note',userId:PROF.userId,name:PROF.name,text:v.t});if(!bad(r)){toast('Note added');refresh()}}}
+ else if(a==='revert'){if(await confirmBox('Revert this '+d.t.toLowerCase()+'?','It stays on the record, marked as reverted. Bans and mutes are lifted and points are taken back.','Revert')){const r=await api('/api/entry',{op:'revert',userId:PROF.userId,id:d.id});if(!bad(r)){toast('Reverted');refresh()}}}
+ else if(a==='erase'){closeMenu();if(await confirmBox('Erase '+PROF.name+"'s data?",'Removes their logbook, playtime, points and reports. An active ban is kept so they cannot return. This cannot be undone.','Erase data')){const r=await api('/api/erase',{userId:PROF.userId});if(!bad(r)){toast('Data erased');location.hash='#/players'}}}
+ else if(a==='ptab'){PT.tab=d.v;render()}else if(a==='pf'){PT.f=d.v;render()}
+ else if(a==='lbf'){LBF.type=d.v;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
+ else if(a==='call'){let note='';if(d.op==='resolve'){const v=await drawer({center:1,title:'Resolve report #'+d.id,ok:'Resolve',html:`<label class="lab">Message to the player (optional)</label><input class="inp" name="note" maxlength="200" placeholder="Thanks, we've dealt with it.">`});if(!v)return;note=v.note}const r=await api('/api/call',{id:+d.id,op:d.op,note});if(!bad(r)){toast(d.op==='claim'?'Claimed. The player has been told.':'Resolved');refresh()}}
+ else if(a==='sess'){if(d.op==='end'&&!await confirmBox('End this session?',S.rules.sessionpoints.enabled?`Everyone present gets ${S.rules.sessionpoints.points} points.`:'Attendance will be saved.','End session',false))return;const r=await api('/api/session',{op:d.op});if(!bad(r)){toast(d.op==='end'?'Session ended':'Everyone in game added');refresh()}}
+ else if(a==='remove'){if(await confirmBox('Remove '+d.n+'?','They lose access to this workspace immediately.','Remove')){const r=await api('/api/team',{op:'remove',uid:d.uid});if(!bad(r)){toast('Removed');refresh()}}}
+ else if(a==='rank-edit')rankEditor(S.ranks.find(r=>r.id===d.id));
+ else if(a==='rank-move'){const r=await api('/api/ranks',{op:'move',id:d.id,dir:d.v});if(!bad(r))refresh()}
+ else if(a==='rule-edit')ruleEditor(S.rulebook.find(r=>r.id===d.id));
+ else if(a==='inv-copy'){try{await navigator.clipboard.writeText(location.origin+'/#/join/'+d.c);toast('Invite link copied')}catch{toast('Could not copy','err')}}
+ else if(a==='inv-revoke'){const r=await api('/api/team',{op:'revoke',code:d.c});if(!bad(r)){toast('Invite revoked');refresh()}}
+ else if(a==='loa-ok'||a==='loa-no'){const v=await drawer({center:1,title:(a==='loa-ok'?'Approve':'Deny')+' leave',ok:a==='loa-ok'?'Approve':'Deny',danger:a==='loa-no',html:`<label class="lab">Note (optional)</label><input class="inp" name="note" maxlength="200">`});if(v){const r=await api('/api/loa',{op:'decide',id:d.id,approve:a==='loa-ok',note:v.note});if(!bad(r)){toast(a==='loa-ok'?'Approved':'Denied');refresh()}}}
+ else if(a==='loa-cancel'){const r=await api('/api/loa',{op:'cancel',id:d.id});if(!bad(r)){toast('Cancelled');refresh()}}
+ else if(a==='rt'){const r=S.rules[d.id];const x=await api('/api/rules',{id:d.id,enabled:!r.enabled,params:r});if(!bad(x)){toast(r.enabled?'Turned off':'Turned on');refresh()}}
+ else if(a==='ht'){const ev={...S.webhook.events,[d.k]:!S.webhook.events[d.k]};const x=await api('/api/webhook',{op:'save',events:ev});if(!bad(x))refresh()}
+ else if(a==='hook-test'){const x=await api('/api/webhook',{op:'test'});if(!bad(x))toast('Test sent to Discord')}
+ else if(a==='hook-clear'){const x=await api('/api/webhook',{op:'save',url:''});if(!bad(x)){toast('Discord disconnected');refresh()}}
+ else if(a==='ws-leave'){if(await confirmBox('Leave this workspace?','You will lose access until someone invites you again.','Leave')){const r=await api('/api/team',{op:'leave'});if(!bad(r)){S=null;await loadMe();location.hash='#/';await refresh()}}}
+ else if(a==='ws-del'){const v=await drawer({center:1,title:'Delete '+S.workspace.name+'?',sub:'This permanently erases everything in this workspace for everyone.',ok:'Delete forever',danger:true,html:`<label class="lab">Type <b>${esc(S.workspace.name)}</b> to confirm</label><input class="inp" name="c" autocomplete="off" required>`,check:v=>v.c!==S.workspace.name?'The name does not match':''});if(v){const r=await api('/api/workspace',{op:'delete',confirm:v.c});if(!bad(r)){S=null;SETUP=null;await loadMe();toast('Workspace deleted');location.hash='#/';await refresh()}}}
+ else if(a==='join-yes'){const r=await api('/api/join',{code:JOIN.code});if(!bad(r)){JOIN=null;history.replaceState(null,'','#/');await loadMe();await refresh();toast('Welcome to the team')}}
+ else if(a==='join-no'){JOIN=null;history.replaceState(null,'','#/');render()}
+ else act(a,el);
 });
-document.addEventListener('change',async e=>{
-  const el=e.target.closest('[data-a]');if(!el)return;
-  if(el.dataset.a==='role')done(await api('/api/team',{op:'setrole',uid:el.dataset.uid,role:el.value}),'Role updated');
-  else if(el.dataset.a==='rule-param'){const id=el.dataset.id,r={...S.rules[id]};r[el.dataset.k]=el.type==='number'?+el.value:el.value;const x=await api('/api/rules',{id,enabled:r.enabled,params:r});if(!fail(x)){toast('Saved');await loadState()}}
-});
-document.addEventListener('submit',async e=>{
-  const f=e.target.closest('[data-f]');if(!f)return;e.preventDefault();const k=f.dataset.f,v=Object.fromEntries(new FormData(f));
-  if(k==='ob-name'){const b=f.querySelector('button');b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(fail(r))return;OB.name=v.name;SETUP=null;await loadMe();await startOnboardingStep(2)}
-  else if(k==='announce')done(await api('/api/action',{action:'announce',reason:v.text}),'Announcement sent');
-  else if(k==='search'){const r=await api('/api/lookup?name='+encodeURIComponent(v.q.trim()));if(r._s===404){found=null;toast('No player with that username','err')}else if(!fail(r))found=r;render()}
-  else if(k==='sess-start')done(await api('/api/session',{op:'start',type:v.type,notes:v.notes}),'Session started');
-  else if(k==='words')done(await api('/api/flagwords',{words:v.w.split(',')}),'Words saved');
-  else if(k==='quota')done(await api('/api/settings',{quotaMinutes:+v.m}),'Saved');
-  else if(k==='rename')done(await api('/api/workspace',{op:'rename',name:v.name}),'Renamed').then(()=>loadMe());
-  else if(k==='invite'){const r=await api('/api/team',{op:'invite',role:v.role});if(!fail(r)){try{await navigator.clipboard.writeText(r.link);toast('Invite link copied')}catch{toast('Invite created')}await refresh()}}
-});
+document.addEventListener('change',async e=>{const el=e.target.closest('[data-a]');if(!el)return;const d=el.dataset;
+ if(d.a==='setrank'){const r=await api('/api/team',{op:'setrank',uid:d.uid,rank:el.value});if(!bad(r)){toast('Rank updated')}refresh()}
+ else if(d.a==='rp'){const r={...S.rules[d.id]};r[d.k]=el.type==='number'?+el.value:el.value;const x=await api('/api/rules',{id:d.id,enabled:r.enabled,params:r});if(!bad(x)){toast('Saved');await loadState()}}});
+document.addEventListener('submit',async e=>{const f=e.target.closest('[data-f]');if(!f)return;e.preventDefault();const k=f.dataset.f,v=Object.fromEntries(new FormData(f));
+ if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;await loadMe();SETUP=null;await loadState();obStep('script')}
+ else if(k==='ob-place'){if(v.placeId){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(bad(r))return}obStep('connect')}
+ else if(k==='lookup'){lookup(v.q.trim())}
+ else if(k==='lbq'){LBF.q=v.q;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
+ else if(k==='sess'){const r=await api('/api/session',{op:'start',type:v.type,notes:v.notes});if(!bad(r)){toast('Session started and announced');refresh()}}
+ else if(k==='rename'){const r=await api('/api/workspace',{op:'rename',name:v.name});if(!bad(r)){toast('Saved');await loadMe();refresh()}}
+ else if(k==='place'){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(!bad(r)){toast('Place settings saved');refresh()}}
+ else if(k==='words'){const r=await api('/api/flagwords',{words:v.w.split(',')});if(!bad(r)){toast('Words saved');refresh()}}
+ else if(k==='quota'){const r=await api('/api/settings',{quotaMinutes:+v.m});if(!bad(r)){toast('Saved');refresh()}}
+ else if(k==='hook'){if(!v.url.trim())return toast('Paste a webhook URL first','err');const r=await api('/api/webhook',{op:'save',url:v.url.trim()});if(!bad(r)){toast('Discord connected');refresh()}}});
+document.addEventListener('keydown',e=>{
+ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();CK?closeCk():openCk();return}
+ if(CK){if(e.key==='Escape')closeCk();else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();CK.i=Math.max(0,Math.min(CK.items.length-1,CK.i+(e.key==='ArrowDown'?1:-1)));renderCk();const b=$('.ckl .on');if(b)b.scrollIntoView({block:'nearest'})}else if(e.key==='Enter'){const it=CK.items[CK.i];if(it){closeCk();it.run()}}return}
+ if(e.key==='Escape')closeMenu()});
 
-/* ---------- start ---------- */
-async function poll(){
-  if(document.hidden||!ME||!ME.user||!S||OB||JOIN||sheetOpen()||menuOpen)return;
-  const ae=document.activeElement;if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;
-  await loadState();if(S)render()}
-(async function boot(){
-  render();
-  const m=/^#\/join\/([a-f0-9]{28})$/.exec(location.hash);if(m)JOIN={code:m[1]};
-  await loadMe();
-  if(JOIN){const pv=await api('/api/invite?code='+JOIN.code);if(pv._s===200)JOIN.info=pv;else JOIN.err=pv.error}
-  if(ME.user&&ME.workspaces.length)await loadState();
-  render();setInterval(poll,6000)})();
+/* ============ start ============ */
+setInterval(async()=>{if(document.hidden||!S||!ME||!ME.user||OB||JOIN||dwOpen()||CK||$('#mn .menu'))return;const ae=document.activeElement;if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;await loadState();if(S)render()},6000);
+(async()=>{render();route=parse();if(route.page==='join'){await loadMe();await onRoute();return}
+ await loadMe();if(route.linked){toast('Roblox account linked');history.replaceState(null,'','#/');route={page:'home'}}
+ if(ME.user&&ME.workspaces.length){await loadState();if(route.page==='setup'&&S&&S.me.owner)OB={step:'script'};await pageData()}render(true)})();
 </script>
 </body>
 </html>
