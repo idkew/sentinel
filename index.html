@@ -172,7 +172,7 @@ const RBX='<svg viewBox="0 0 24 24"><g transform="rotate(14 12 12)"><rect x="4" 
 const COLORS=['#635bff','#0ea5e9','#10b981','#84cc16','#f59e0b','#f97316','#ef4444','#ec4899','#a855f7','#64748b'];
 
 /* ============ state ============ */
-let ME=null,S=null,SETUP=null,OB=null,JOIN=null,PROF=null,LB=null,AVC={},AVQ=new Set(),route={page:'home'},lastPage='',sideOpen=false;
+let NEWCODE=null,ME=null,S=null,SETUP=null,OB=null,JOIN=null,PROF=null,LB=null,AVC={},AVQ=new Set(),route={page:'home'},lastPage='',sideOpen=false;
 const LBF={type:'',q:''},PT={tab:'logbook',f:''};
 const P=p=>!!S&&S.me.perms.includes(p);
 const rk=id=>(S&&S.ranks.find(r=>r.id===id))||{name:'No rank',color:'#a3acb9',pos:0};
@@ -268,9 +268,10 @@ function obView(){
  if(OB.step==='name')body=`<h1>Welcome, ${first}</h1><p class="lead">Let's connect your Roblox game. It takes about three minutes, and only you, the owner, can see these setup details.</p>
   <form data-f="ob-name"><label class="lab" for="obn">What's your game called?</label><input id="obn" class="inp" style="height:42px;font-size:15px" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off">
   <div class="hint">You can rename it later. Your team will see this name.</div><div class="row mt"><button class="btn pri l">Continue</button>${ME.workspaces.length?`<button type="button" class="btn ghost l" data-a="ob-exit">Cancel</button>`:''}</div></form>`;
- else if(OB.step==='script')body=`<h1>Add Sentinel to your game</h1><p class="lead">This script carries your game's private key. Treat it like a password.</p>
-  <div class="inst"><div><div><b>Download or copy the script</b><div class="row wrap" style="margin-top:10px"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
-  <div><div><b>Put it in ServerScriptService</b><div class="muted sm">In Roblox Studio's Explorer, hover <b>ServerScriptService</b>, click <b>+</b>, choose <b>Script</b> and paste.</div></div></div>
+ else if(OB.step==='script')body=`<h1>Add Sentinel to your game</h1><p class="lead">Every game gets its own one-time code. Treat it like a password.</p>
+  <div class="inst"><div><div><b>Copy your game code</b>${codeBox()}</div></div>
+  <div><div><b>Download or copy the script</b><div class="row wrap" style="margin-top:10px"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
+  <div><div><b>Put it in ServerScriptService</b><div class="muted sm">In Roblox Studio's Explorer, hover <b>ServerScriptService</b>, click <b>+</b>, choose <b>Script</b> and paste. Then replace <b>[INPUT CODE HERE]</b> at the top with your code.</div></div></div>
   <div><div><b>Allow HTTP requests</b><div class="muted sm">Home, then <b>Game Settings</b>, then <b>Security</b>. Turn on <b>Allow HTTP Requests</b> and save.</div></div></div></div>
   <div class="row mt"><button class="btn pri l" data-a="ob" data-v="place">Continue</button></div>`;
  else if(OB.step==='place')body=`<h1>Lock your key to your game</h1><p class="lead">Your Place ID is the number in your game's link, for example roblox.com/games/<b>1234567890</b>/My-Game. Locking stops anyone using a stolen key in another game.</p>
@@ -401,7 +402,7 @@ game(){const s=SETUP;if(!s)return '<div class="card"><div class="skel"></div></d
  return `<div class="grid g2"><div class="card"><div class="row"><span class="dot ${S.connected?'on':''}"></span><h3>${S.connected?'Connected':'Not connected right now'}</h3></div><dl class="kv2 mt"><dt>Servers online</dt><dd>${S.serverCount}</dd><dt>Last place seen</dt><dd class="mono">${s.lastPlace??'—'}</dd><dt>First connected</dt><dd>${s.connectedAt?date(s.connectedAt):'Never'}</dd></dl></div>
  <div class="card"><h3>Place lock</h3><p class="sm muted">Only accept your game's place, so a leaked key is useless elsewhere.</p><form data-f="place" class="mt"><div class="row"><input class="inp" name="placeId" inputmode="numeric" placeholder="Place ID" value="${esc(s.placeId||'')}"><button class="btn">Save</button></div><label class="chk"><input type="checkbox" name="lock" ${s.placeLock?'checked':''}><span class="sm">Reject every other place${s.lastPlace===0?' <span class="muted">(Studio tests use 0)</span>':''}</span></label></form></div></div>
  <div class="card mt"><h3>Game script</h3><p class="sm muted">Put it in a Script in <b>ServerScriptService</b> and turn on <b>Allow HTTP Requests</b>. Only you can see this.</p><div class="row wrap mt"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a><a class="btn ghost" href="#/setup">Open setup guide</a></div>
- <label class="lab mt">Game key</label><div class="keybox"><span id="gk">${'•'.repeat(36)}</span><button class="btn s" data-a="key-show">Reveal</button><button class="btn s" data-a="key-copy">${ic('copy')}</button></div><div class="row mt"><button class="btn red s" data-a="key-rotate">Roll key…</button><span class="xs muted">Rolling breaks the old key immediately.</span></div></div>`},
+ <label class="lab mt">Game code</label>${codeBox()}${NEWCODE?`<div class="row mt"><button class="btn red s" data-a="key-rotate">Replace code…</button><span class="xs muted">Replacing stops the old code immediately.</span></div>`:''}</div>`},
 automations(){const R={autosuspend:['Auto-suspend','Suspend someone after repeated warnings.',[['warns','warnings in a row'],['minutes','minute suspension']]],flaggedmute:['Auto-mute','Mute people who keep using flagged words.',[['count','flagged messages'],['minutes','minute mute']]],sessionpoints:['Session points','Reward everyone who attends a session.',[['points','points each']]],welcome:['Welcome message','Greet every player who joins.',[['text','Message',1]]]};
  return `<div class="card p0">${Object.entries(R).map(([id,[t,d,f]])=>{const r=S.rules[id];return `<div class="row" style="padding:18px 20px;border-bottom:1px solid var(--line);align-items:flex-start"><div class="sp"><b>${t}</b><div class="sm muted">${d}</div><div class="row wrap" style="margin-top:10px">${f.map(([k,l,tx])=>tx?`<input class="inp" data-a="rp" data-id="${id}" data-k="${k}" value="${esc(r[k])}" maxlength="120" style="max-width:420px">`:`<input class="inp" type="number" min="1" data-a="rp" data-id="${id}" data-k="${k}" value="${r[k]}" style="width:80px;height:30px"><span class="sm muted">${l}</span>`).join('')}</div></div><button class="tog ${r.enabled?'on':''}" role="switch" aria-checked="${r.enabled}" aria-label="${t}" data-a="rt" data-id="${id}"></button></div>`}).join('')}</div>
  <div class="grid g2 mt"><div class="card"><h3>Flagged words</h3><p class="sm muted">Highlighted in chat and reports. Separate with commas.</p><form data-f="words" class="mt"><textarea class="inp" name="w">${esc(S.flagWords.join(', '))}</textarea><div class="row mt"><span class="sp"></span><button class="btn">Save words</button></div></form></div>
@@ -482,6 +483,7 @@ function closeCk(){CK=null;renderCk()}
 async function lookup(q){toast('Looking up '+q+'…');const r=await api('/api/lookup?name='+encodeURIComponent(q));if(r._s===404)return toast('No player with that username','err');if(!bad(r)){PROF=r;go('player/'+r.userId)}}
 
 /* ============ actions ============ */
+const codeBox=()=>NEWCODE?`<div class="keybox" style="margin-top:8px"><span class="mono" style="user-select:all;word-break:break-all">${esc(NEWCODE)}</span><button class="btn s" data-a="key-copy">${ic('copy')}Copy</button></div><div class="xs muted" style="margin-top:6px">Shown once. Copy it now: after you leave this page it can't be shown again, only replaced.</div>`:`<div class="muted sm" style="margin-top:8px">Your code is hidden for security. If you lost it, make a new one (this stops the old one working).</div><div class="row mt"><button class="btn s" data-a="key-rotate">Generate a new code</button></div>`;
 async function copyScript(){try{const t=await (await fetch('/api/bridge')).text();await navigator.clipboard.writeText(t);toast('Script copied')}catch{toast('Could not copy. Use Download instead.','err')}}
 let obT=null;async function pollOb(){clearTimeout(obT);if(!OB||OB.step!=='connect'||OB.ok)return;const s=await api('/api/state');if(s.connected){OB.ok=1;SETUP=await api('/api/setup');render();return}obT=setTimeout(pollOb,3000)}
 async function obStep(st){OB.step=st;if(!SETUP||SETUP.error)SETUP=await api('/api/setup');render();if(st==='connect')pollOb()}
@@ -502,18 +504,17 @@ document.addEventListener('click',async e=>{
  else if(a==='wsmenu')menu(el,`<div class="lab2">Workspaces</div>${ME.workspaces.map(w=>`<button data-a="ws-sw" data-id="${w.id}"><span class="logo" style="width:22px;height:22px;font-size:11px;border-radius:6px">${esc(ini(w.name)[0])}</span><span class="sp">${esc(w.name)}<br><span class="xs muted">${w.owner?'Owner':esc(w.rank)}</span></span>${w.id===S.workspace.id?ic('check'):''}</button>`).join('')}<hr>${ME.workspaces.length<ME.maxPerUser?`<button data-a="ws-new">${ic('plus')}New workspace</button>`:''}`);
  else if(a==='memenu')menu(el,`<div class="lab2">${esc(ME.user.name)}</div>${ME.user.roblox?`<button disabled>${ic('check')}Roblox: @${esc(ME.user.roblox.name)}</button>`:`<button data-a="link">${ic('link')}Link Roblox account</button>`}<a href="#/settings/general">${ic('gear')}Account settings</a><hr><button data-a="signout">${ic('out')}Sign out</button>`);
  else if(a==='pmenu')menu(el,`<a href="/api/export?userId=${PROF.userId}">${ic('dl')}Export their data</a><button data-a="erase">${ic('x')}Erase their data…</button>`);
- else if(a==='ws-sw'){closeMenu();SETUP=null;const r=await api('/api/switch',{id:d.id});if(!bad(r)){await loadMe();location.hash='#/';await refresh();toast('Switched workspace')}}
+ else if(a==='ws-sw'){closeMenu();SETUP=null;NEWCODE=null;const r=await api('/api/switch',{id:d.id});if(!bad(r)){await loadMe();location.hash='#/';await refresh();toast('Switched workspace')}}
  else if(a==='ws-new'){closeMenu();OB={step:'name',creating:1};render()}
  else if(a==='ob-exit'){OB=null;render()}
  else if(a==='ob')obStep(d.v);
- else if(a==='ob-done'){clearTimeout(obT);OB=null;await loadMe();await loadState();location.hash='#/';render(true)}
+ else if(a==='ob-done'){clearTimeout(obT);OB=null;NEWCODE=null;await loadMe();await loadState();location.hash='#/';render(true)}
  else if(a==='signout'){closeMenu();await api('/logout',{});await loadMe();S=null;SETUP=null;OB=null;location.hash='';render()}
  else if(a==='link'){closeMenu();location.href='/auth/roblox?link=1'}
  else if(a==='unlink'){const r=await api('/api/me/unlink',{});if(!bad(r)){await loadMe();toast('Roblox account unlinked');refresh()}}
  else if(a==='copy-script')copyScript();
- else if(a==='key-show'){const k=$('#gk');k.textContent=k.textContent.startsWith('•')?SETUP.gameKey:'•'.repeat(36);el.textContent=k.textContent.startsWith('•')?'Reveal':'Hide'}
- else if(a==='key-copy'){try{await navigator.clipboard.writeText(SETUP.gameKey);toast('Key copied')}catch{toast('Could not copy','err')}}
- else if(a==='key-rotate'){if(await confirmBox('Roll your game key?','The current key stops working at once. You will need to paste the new script into your game.','Roll key')){const r=await api('/api/workspace',{op:'rotatekey'});if(!bad(r)){SETUP=await api('/api/setup');toast('New key ready. Update the script in your game.');render()}}}
+ else if(a==='key-copy'){try{await navigator.clipboard.writeText(NEWCODE);toast('Code copied')}catch{toast('Could not copy','err')}}
+  else if(a==='key-rotate'){if(await confirmBox('Make a new game code?','The current code stops working at once. You will need to paste the new one into the script in your game.','Make new code')){const r=await api('/api/workspace',{op:'rotatekey'});if(!bad(r)){NEWCODE=r.code;SETUP=await api('/api/setup');toast('New code ready. Copy it now.');render()}}}
  else if(a==='mod')moderate(pp());
  else if(a==='points'){const v=await drawer({center:1,title:'Points for '+d.n,ok:'Apply',html:`<label class="lab">Amount</label><input class="inp" type="number" name="amount" value="5" required><div class="hint">Use a minus to remove points.</div><label class="lab">Reason</label><input class="inp" name="reason" maxlength="200" placeholder="Helped a new player" required>`,check:v=>!+v.amount?'Enter an amount':!v.reason.trim()?'Add a reason':''});if(v){const r=await api('/api/action',{action:'points',userId:+d.uid,name:d.n,amount:+v.amount,reason:v.reason});if(!bad(r)){toast('Points updated');refresh()}}}
  else if(a==='lift'){const r=await api('/api/action',{action:d.k==='ban'?'unban':'unmute',userId:+d.uid,name:d.n,reason:'Lifted from the dashboard'});if(!bad(r)){toast(d.k==='ban'?'Unbanned':'Unmuted');refresh()}}
@@ -546,7 +547,7 @@ document.addEventListener('change',async e=>{const el=e.target.closest('[data-a]
  if(d.a==='setrank'){const r=await api('/api/team',{op:'setrank',uid:d.uid,rank:el.value});if(!bad(r)){toast('Rank updated')}refresh()}
  else if(d.a==='rp'){const r={...S.rules[d.id]};r[d.k]=el.type==='number'?+el.value:el.value;const x=await api('/api/rules',{id:d.id,enabled:r.enabled,params:r});if(!bad(x)){toast('Saved');await loadState()}}});
 document.addEventListener('submit',async e=>{const f=e.target.closest('[data-f]');if(!f)return;e.preventDefault();const k=f.dataset.f,v=Object.fromEntries(new FormData(f));
- if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;await loadMe();SETUP=null;await loadState();obStep('script')}
+ if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;NEWCODE=r.code||null;await loadMe();SETUP=null;await loadState();obStep('script')}
  else if(k==='ob-place'){if(v.placeId){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(bad(r))return}obStep('connect')}
  else if(k==='lookup'){lookup(v.q.trim())}
  else if(k==='lbq'){LBF.q=v.q;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
