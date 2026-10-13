@@ -273,6 +273,10 @@ const cookiesOf = req => Object.fromEntries((req.headers.cookie || '').split(';'
 const mkCookie = (name, val, { maxAge = 604800, sameSite = 'Strict' } = {}) => `${name}=${encodeURIComponent(val)}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}; Secure`;
 const clearCookie = name => `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Secure`;
 const sessionUid = req => { const d = unpack(cookiesOf(req).sid); return d && /^[gr]_\d{1,32}$/.test(d.u || '') ? d.u : null; };
+const ALNUM = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+const randSecret = n => { let o = ''; while (o.length < n) for (const b of crypto.randomBytes(n)) if (b < 232 && o.length < n) o += ALNUM[b % 58]; return o; };
+const codeHash = sec => crypto.createHmac('sha256', SIGN).update('code:' + sec).digest('base64url');
+const newCode = wid => { const sec = randSecret(28); return { code: `${wid}-${sec}`, hash: codeHash(sec) }; }; // shown to the owner once; only the hash is stored
 const gameKey = (wid, rot) => `${wid}.${rot}.${crypto.createHmac('sha256', SIGN).update(`gamekey:${wid}:${rot}`).digest('base64url').slice(0, 32)}`;
 const site = req => (env.SITE_URL || `${req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https'}://${req.headers['x-forwarded-host'] || req.headers.host}`).replace(/\/$/, '');
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
@@ -340,13 +344,14 @@ async function route(req, res, url, p) {
     if (p.startsWith('/auth/')) return await authRoute(req, res, url, p, ip);
 
     if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
-      const b = await body(req), k = String(b.key || ''), [wid, rot, sig] = k.split('.');
-      if (!/^[a-f0-9]{12}$/.test(wid || '') || !/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
+      const b = await body(req), k = String(b.key || '').trim(), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
+      if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
       const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 40, 60000) || limit('sync:' + wid, 400, 60000); if (w1) return tooMany(res, w1);
       setWid(wid);
       const ev = Array.isArray(b.events) ? b.events : [], chatty = ev.some(e => e && (e.type === 'chat' || e.type === 'modcall'));
       await need('core', 'play', 'live', 'cmds', ...(chatty ? ['chat'] : []), ...(ev.some(e => e && e.type === 'modcall') ? ['calls'] : []));
-      if (!D.meta || (D.meta.rot || 0) !== +rot) return send(res, 403, { error: 'bad key' });
+      if (!D.meta) return send(res, 403, { error: 'bad key' });
+      if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
       const place = Number.isInteger(b.placeId) ? b.placeId : 0;
       if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) return send(res, 403, { error: 'This game key is locked to a different place' });
       if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
@@ -397,10 +402,10 @@ async function route(req, res, url, p) {
       if (U.workspaces.length >= MAX_PER_USER) return send(res, 400, { error: `You can have up to ${MAX_PER_USER} workspaces.` });
       if (G.workspaces >= MAX_WORKSPACES) return send(res, 400, { error: 'This site is full right now. Please try again later.' });
       const wid = crypto.randomBytes(6).toString('hex'); setWid(wid); await need('core');
-      D.meta = { id: wid, name: nm, owner: uid, created: Date.now(), rot: 0 }; D.ranks = defaultRanks(); D.webhook = DEFAULT_WEBHOOK();
+      const nc = newCode(wid); D.meta = { id: wid, name: nm, owner: uid, created: Date.now(), rot: 0, codeHash: nc.hash }; D.ranks = defaultRanks(); D.webhook = DEFAULT_WEBHOOK();
       D.members[uid] = { name: U.name, rank: 'admin', joined: Date.now() }; audit(U.name, 'Created the workspace');
       G.workspaces++; U.workspaces.push(wid);
-      res.setHeader('Set-Cookie', mkCookie('ws', wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: wid });
+      res.setHeader('Set-Cookie', mkCookie('ws', wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: wid, code: nc.code });
     }
     if (req.method === 'POST' && p === '/api/join') {
       const w = limit('join:' + uid, 10, 3600000); if (w) return tooMany(res, w);
@@ -644,18 +649,18 @@ async function route(req, res, url, p) {
       return send(res, 400, { error: 'bad request' });
     }
     // ---- owner only: the game connection ----
-    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { gameKey: gameKey(CTX.wid, D.meta.rot || 0), origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null }); }
+    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null }); }
     if (p === '/api/bridge') {
       if (!u.isOwner) return ownerOnly(res);
       let lua; try { lua = fs.readFileSync(path.join(__dirname, '..', 'SentinelBridge.lua'), 'utf8'); } catch { return send(res, 500, { error: 'SentinelBridge.lua is missing from the deployment' }); }
-      lua = lua.replace(/^local URL = ".*"$/m, () => 'local URL = ' + JSON.stringify(site(req))).replace(/^local KEY = ".*"$/m, () => 'local KEY = ' + JSON.stringify(gameKey(CTX.wid, D.meta.rot || 0))).replace(/^local INTERVAL = \d+/m, 'local INTERVAL = 10');
+      lua = lua.replace(/^local URL = ".*"$/m, () => 'local URL = ' + JSON.stringify(site(req))).replace(/^local KEY = ".*"$/m, 'local KEY = "[INPUT CODE HERE]"').replace(/^local INTERVAL = \d+/m, 'local INTERVAL = 10');
       const h = { 'Content-Type': 'text/plain; charset=utf-8' }; if (url.searchParams.get('download')) h['Content-Disposition'] = 'attachment; filename="Sentinel.server.lua"';
       res.writeHead(200, h); return res.end(lua);
     }
     if (req.method === 'POST' && p === '/api/workspace') {
       if (!u.isOwner) return ownerOnly(res);
       if (B.op === 'rename') { const nm = cleanName(B.name); if (nm.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = nm; audit(u.user, 'Renamed the workspace'); return ok(res); }
-      if (B.op === 'rotatekey') { D.meta.rot = (D.meta.rot || 0) + 1; audit(u.user, 'Made a new game key'); return ok(res); }
+      if (B.op === 'rotatekey') { D.meta.rot = (D.meta.rot || 0) + 1; const nc = newCode(CTX.wid); D.meta.codeHash = nc.hash; audit(u.user, 'Made a new game code'); return send(res, 200, { ok: true, code: nc.code }); }
       if (B.op === 'place') {
         const pid = B.placeId === '' || B.placeId == null ? null : Number(B.placeId);
         if (pid !== null && (!Number.isInteger(pid) || pid < 1)) return send(res, 400, { error: "The Place ID is the number in your game's link." });
