@@ -1,10 +1,10 @@
-# Senitel
+# Sentinel
 
 **Proprietary Roblox Game Moderation Software**
 
 > **ALL RIGHTS RESERVED — UNAUTHORIZED USE IS NOT PERMITTED.**
 
-Senitel is a web-based moderation system designed for Roblox experiences. It aims to connect a website-based administrative dashboard with Roblox game integrations, allowing authorized personnel to manage moderation activities through a centralized interface.
+Sentinel is a web-based moderation system designed for Roblox experiences. It aims to connect a website-based administrative dashboard with Roblox game integrations, allowing authorized personnel to manage moderation activities through a centralized interface.
 
 This repository is maintained for development tracking, version history, documentation, and authorship attribution. **Public visibility does not grant permission to use, deploy, copy, modify, or distribute this software.**
 
@@ -12,12 +12,12 @@ This repository is maintained for development tracking, version history, documen
 
 ## Overview
 
-Senitel is designed around a website-to-game moderation architecture.
+Sentinel is designed around a website-to-game moderation architecture.
 
 Depending on the features implemented, the system may include:
 
 - **Web Dashboard:** A centralized interface for authorized moderators.
-- **Roblox Integration:** Luau scripts connecting supported Roblox experiences to Senitel.
+- **Roblox Integration:** Luau scripts connecting supported Roblox experiences to Sentinel.
 - **Backend Services:** Server-side logic for processing authorized requests.
 - **API Integration:** Communication between the dashboard, backend, and Roblox game.
 - **Database Integration:** Storage for supported moderation records and system data.
@@ -43,7 +43,7 @@ This repository may be used to:
 - Maintain a record of original work.
 - Reference the project's development progress.
 
-Senitel is not published as an open-source project.
+Sentinel is not published as an open-source project.
 
 Viewing this repository does not grant permission to install, execute, deploy, integrate, or otherwise use the software, except as permitted by applicable law.
 
@@ -51,12 +51,12 @@ Viewing this repository does not grant permission to install, execute, deploy, i
 
 **Copyright © 2026 Project Rights Holder. All Rights Reserved.**
 
-Senitel is proprietary software governed, to the extent applicable, by the laws of the State of Texas, United States.
+Sentinel is proprietary software governed, to the extent applicable, by the laws of the State of Texas, United States.
 
 No general permission is granted to:
 
-- Use or deploy Senitel in a Roblox experience.
-- Integrate Senitel into another project.
+- Use or deploy Sentinel in a Roblox experience.
+- Integrate Sentinel into another project.
 - Copy, reproduce, or redistribute its source code.
 - Modify the software or publish derivative works.
 - Sell, sublicense, or commercially exploit the software.
@@ -78,7 +78,7 @@ The rights holder reserves all rights they own or control in the original softwa
 
 ## Security and Responsible Use
 
-Senitel is intended to support authorized moderation of Roblox experiences.
+Sentinel is intended to support authorized moderation of Roblox experiences.
 
 Developers and operators should ensure that:
 
@@ -93,7 +93,7 @@ This section describes recommended safeguards and does not represent that every 
 
 ## Disclaimer
 
-Senitel is provided **"AS IS"**, to the maximum extent permitted by applicable law, without warranties of any kind.
+Sentinel is provided **"AS IS"**, to the maximum extent permitted by applicable law, without warranties of any kind.
 
 The rights holder does not guarantee that the software is secure, error-free, uninterrupted, or suitable for production use.
 
@@ -103,14 +103,14 @@ Nothing in this disclaimer excludes liability that cannot legally be excluded or
 
 ## Third-Party Services
 
-Senitel may interact with Roblox, GitHub, Supabase, hosting providers, databases, or other third-party services.
+Sentinel may interact with Roblox, GitHub, Supabase, hosting providers, databases, or other third-party services.
 
-Those services remain subject to their respective terms, policies, and licenses. Senitel does not claim affiliation with or endorsement by Roblox Corporation or any other third-party provider.
+Those services remain subject to their respective terms, policies, and licenses. Sentinel does not claim affiliation with or endorsement by Roblox Corporation or any other third-party provider.
 
 Third-party libraries and contributions remain subject to their respective rights and licensing terms.
 
 ---
 
-**Senitel — Proprietary Software. All Rights Reserved.**
+**Sentinel — Proprietary Software. All Rights Reserved.**
 
 Published for development tracking, documentation, and authorship attribution only.
