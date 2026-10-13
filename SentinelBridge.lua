@@ -1,5 +1,5 @@
 --[[
-	SentinelBridge - connects your Roblox game to the web panel (server.js). Does REAL moderation:
+	SentinelBridge - connects your Roblox game to the Sentinel website. Does REAL moderation:
 	  * Ban / suspend  -> Roblox's own ban system (Players:BanAsync), applied to the whole experience
 	  * Kick           -> Player:Kick()
 	  * Mute           -> TextChatService (muted players' messages are dropped)
@@ -9,12 +9,12 @@
 
 	SETUP
 	1. Put this in a *Script* in ServerScriptService.
-	2. Paste the game key that server.js printed into KEY below.
+	2. Download this file from the Sentinel website (Settings > Game). It already has your game's key and
+	   website address filled in below, so you do not need to edit anything.
 	3. Enable HTTP requests: Studio > Game Settings > Security > "Allow HTTP Requests"
 	   (or tick HttpEnabled on HttpService in the Explorer).
-	4. URL: the default works for Studio testing on your own computer. For a LIVE game you must host
-	   server.js online and use its https:// address here. Live Roblox servers cannot reach localhost.
-	5. TextChatService > ChatVersion should be "TextChatService" (the default for new places).
+	4. TextChatService > ChatVersion should be "TextChatService" (the default for new places).
+	   Keep your game key private. If it ever leaks, make a new one in Settings > Game and download again.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -168,11 +168,11 @@ local function sync()
 	local sent = table.clone(pending)
 	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
 		Url = URL .. "/game/sync", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
-		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, players = list, events = sent }),
+		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent }),
 	})
 	busy = false
 	if not ok or not res.Success then
-		warn("[Sentinel] Can't reach the panel (HttpEnabled on? server.js running? key correct?): " .. tostring(ok and res.StatusCode or res))
+		warn("[Sentinel] Can't reach the panel (Allow HTTP Requests on? Is the game key still valid?): " .. tostring(ok and res.StatusCode or res))
 		return
 	end
 	pending = table.move(pending, #sent + 1, #pending, 1, {}) -- drop only what was delivered
