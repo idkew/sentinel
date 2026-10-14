@@ -219,7 +219,7 @@ function addPoints(userId, name, amount, reason, by, byUid = null) {
   playOf(userId, name).points += amount;
   logEntry(userId, name, { type: 'Points', amount, reason: `${amount > 0 ? '+' : ''}${amount}: ${reason}`, by, byUid });
   feed(`Points ${amount > 0 ? '+' : ''}${amount} for ${name} (${reason})`, by);
-  cmd({ type: 'message', kind: amount > 0 ? 'ok' : undefined, userId, text: `${amount > 0 ? 'You earned' : 'You lost'} ${Math.abs(amount)} points: ${reason}` });
+  cmd({ type: 'message', kind: amount > 0 ? 'ok' : undefined, title: 'Points', body: `${amount > 0 ? 'You earned' : 'You lost'} ${Math.abs(amount)} points: ${reason}`, userId, text: `${amount > 0 ? 'You earned' : 'You lost'} ${Math.abs(amount)} points: ${reason}` });
 }
 function allPlayers() {
   const now = Date.now(), out = [];
@@ -237,7 +237,7 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
   else if (action === 'kick') { D.stats.kicks++; log('Kicked'); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
   else if (action === 'warn') {
-    log('Warned'); cmd({ type: 'message', userId, text: 'Warning: ' + reason }); notify('warns', `Warned ${name}`, reason, [['By', by]], 0xffc53d);
+    log('Warned'); cmd({ type: 'message', kind: 'warn', title: 'Warning', body: reason, userId, text: 'Warning: ' + reason }); notify('warns', `Warned ${name}`, reason, [['By', by]], 0xffc53d);
     let n = 0; // active warnings since the last suspension or ban
     for (const e of [...D.logs[userId]].reverse()) { if (e.status === 'reverted') continue; if (e.type === 'Suspended' || e.type === 'Banned') break; if (e.type === 'Warned') n++; }
     const r = rule('autosuspend');
@@ -265,14 +265,14 @@ function sync(b) {
         if (r.enabled && (R.flagCount[uid] = (R.flagCount[uid] || 0) + 1) >= r.count) { R.flagCount[uid] = 0; act({ action: 'mute', userId: uid, name, reason: 'Automatic: repeated flagged chat', minutes: r.minutes, by: 'Automation' }); }
       }
     } else if (e.type === 'attend' && D.session) {
-      D.session.attendees[uid] = name; cmd({ type: 'message', kind: 'ok', userId: uid, text: `You are marked present for ${D.session.type}.` });
+      D.session.attendees[uid] = name; cmd({ type: 'message', kind: 'ok', title: 'Session', body: `You are marked present for ${D.session.type}.`, userId: uid, text: `You are marked present for ${D.session.type}.` });
     } else if (e.type === 'modcall') {
       const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || 'No details given', server: id.slice(0, 8), status: 'open', by: null, note: '',
         chat: R.chat.filter(c => c.jobId === id).slice(-15).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
       D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
       feed(`Report #${call.id} from ${name}: ${call.text}`);
       notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)]], 0x635bff);
-      cmd({ type: 'message', kind: 'ok', userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
+      cmd({ type: 'message', kind: 'ok', title: 'Report sent', body: `Report #${call.id} sent. A moderator will respond soon.`, userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
     }
   }
   const total = allPlayers().length;
@@ -460,6 +460,7 @@ async function authRoute(req, res, url, p, ip) {
 const ACT_PERM = { warn: 'mod.warn', kick: 'mod.kick', mute: 'mod.mute', unmute: 'mod.mute', ban: 'mod.ban', unban: 'mod.unban', announce: 'announce', points: 'points.manage' };
 const TYPE_GROUP = { Warned: 'warn', Kicked: 'kick', Muted: 'mute', Unmuted: 'mute', Suspended: 'ban', Banned: 'ban', Unbanned: 'ban', Points: 'points', Note: 'note' };
 const ok = res => send(res, 200, { ok: true });
+const APPEAL_MAX = 2, APPEAL_WINDOW = 5 * 864e5; // each player may appeal twice every 5 days
 const APPEAL_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex"><title>Ban appeal</title><style>
 :root{--bg:#e9eefb;--card:rgba(255,255,255,.82);--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.14)}@media(prefers-color-scheme:dark){:root{--bg:#0d1020;--card:rgba(44,44,48,.8);--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.18)}}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px;background:radial-gradient(40% 45% at 15% 20%,#8ab8ff55,transparent 70%),radial-gradient(40% 45% at 85% 85%,#ffc2a155,transparent 70%),var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif}
@@ -468,10 +469,11 @@ h1{font-size:23px;letter-spacing:-.02em;margin:0 0 6px}p{color:var(--mu);margin:
 input,textarea{width:100%;border:0;border-radius:9px;padding:10px 12px;font:inherit;color:inherit;background:rgba(127,127,127,.12);box-shadow:inset 0 0 0 .5px var(--ln);outline:0}input:focus,textarea:focus{box-shadow:0 0 0 3px #0a7aff55}textarea{min-height:120px;resize:vertical}
 button{margin-top:20px;width:100%;height:42px;border:0;border-radius:10px;font:600 15px inherit;color:#fff;background:linear-gradient(180deg,#3d9bff,var(--ac));cursor:pointer}button[disabled]{opacity:.5}
 .m{margin-top:14px;font-size:14px;padding:10px 12px;border-radius:9px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}
-</style></head><body><div class="c" id="c"><h1>Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden><label for="u">Your Roblox username</label><input id="u" maxlength="40" required autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" minlength="20" required placeholder="Explain what happened and what you will do differently."></textarea><button id="b">Send appeal</button></form><div id="m"></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
+</style></head><body><div class="c" id="c"><h1>Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden novalidate><label for="u">Your Roblox username</label><input id="u" maxlength="40" autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" placeholder="Explain what happened and what you will do differently."></textarea><button id="b" disabled>Send appeal</button></form><div id="m"></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
 <script>const w=location.pathname.split('/')[2]||'',$=i=>document.getElementById(i);
 fetch('/api/appeal/info?w='+encodeURIComponent(w)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}$('s').textContent='Appeal a ban in '+j.name+'. Staff will review it and you will see the result when you try to join.';$('f').hidden=false}).catch(()=>$('s').textContent='Could not load this page.');
-$('f').onsubmit=async e=>{e.preventDefault();$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();if(r.ok){$('f').hidden=true;$('m').innerHTML='<div class="m o">Appeal sent. Staff will review it soon.</div>'}else{$('m').innerHTML='<div class="m e"></div>';$('m').firstChild.textContent=j.error||'Something went wrong.';$('b').disabled=false}}catch{$('m').innerHTML='<div class="m e">No connection. Try again.</div>';$('b').disabled=false}};</script></body></html>`;
+const gate=()=>{$('b').disabled=!($('u').value.trim()&&$('t').value.trim())};$('u').oninput=$('t').oninput=gate;
+$('f').onsubmit=async e=>{e.preventDefault();if($('b').disabled)return;$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();if(r.ok){$('f').hidden=true;$('m').innerHTML='<div class="m o">Appeal sent. Staff will review it soon.</div>'}else{$('m').innerHTML='<div class="m e"></div>';$('m').firstChild.textContent=j.error||'Something went wrong.';gate()}}catch{$('m').innerHTML='<div class="m e">No connection. Try again.</div>';gate()}};</script></body></html>`;
 
 
 async function route(req, res, url, p) {
@@ -489,14 +491,15 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'POST' && p === '/api/appeal') {
       const A = await body(req), wid = String(A.w || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This appeal link is not valid.' });
-      const w0 = limit('appeal:' + ip, 5, 3600000) || limit('appealw:' + wid, 60, 3600000); if (w0) return tooMany(res, w0);
+      const w0 = limit('appeal:' + ip, 5, 3600000) || limit('appeali:' + ip, 8, APPEAL_WINDOW) || limit('appealw:' + wid, 60, 3600000); if (w0) return tooMany(res, w0);
       const uname = cleanName(A.username, 40), text = cleanName(A.text, 1000); if (!/^\w{3,20}$/.test(uname)) return send(res, 400, { error: 'Enter your exact Roblox username.' });
-      if (text.length < 20) return send(res, 400, { error: 'Please write at least 20 characters so staff can understand.' });
+      if (!text) return send(res, 400, { error: 'Write a short note for staff first.' });
       setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
       const id = await findId(uname), ban = id && D.bans[id];
       if (!ban || !live(ban)) return send(res, 404, { error: 'We could not find an active ban for that username in this game.' });
       if (D.appeals.some(x => x.uid === id && x.status === 'open')) return send(res, 409, { error: 'You already have an appeal waiting for review.' });
-      const last = D.appeals.find(x => x.uid === id && x.status === 'denied'); if (last && Date.now() - last.reviewed < 7 * 864e5) return send(res, 429, { error: 'Your last appeal was denied. You can appeal again after 7 days.' });
+      const recent = D.appeals.filter(x => x.uid === id && Date.now() - x.t < APPEAL_WINDOW).sort((a, b) => b.t - a.t); // anti-spam: 2 appeals per player every 5 days
+      if (recent.length >= APPEAL_MAX) { const wait = recent[APPEAL_MAX - 1].t + APPEAL_WINDOW - Date.now(), d = Math.ceil(wait / 864e5), h = Math.ceil(wait / 36e5); return send(res, 429, { error: `You have used both appeals for now. You can send another in ${d > 1 ? d + ' days' : h > 1 ? h + ' hours' : 'about an hour'}.` }); }
       D.appeals.unshift({ id: crypto.randomBytes(4).toString('hex'), uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null }); D.appeals.length = Math.min(D.appeals.length, 200);
       feed(`Ban appeal from ${ban.name || uname}`); notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
       return ok(res);
@@ -732,10 +735,10 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/call') {
       if (!has(u, 'reports.handle')) return deny(res);
       const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
-      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; cmd({ type: 'message', kind: 'info', userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); }
+      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); }
       else if (B.op === 'resolve' && c.status !== 'resolved') {
         c.status = 'resolved'; c.by = c.by || u.user; c.note = cleanName(B.note, 200); c.resolved = Date.now();
-        cmd({ type: 'message', kind: 'ok', userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
+        cmd({ type: 'message', kind: 'ok', title: 'Report resolved', body: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}`, userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
       }
       return ok(res);
     }
@@ -845,7 +848,7 @@ async function route(req, res, url, p) {
       if (req.method === 'GET') return send(res, 200, { items: FB.filter(f => f.uid === uid).slice(0, 30).map(f => ({ id: f.id, t: f.t, type: f.type, text: f.text, reply: f.reply || null, repliedAt: f.repliedAt || null })) });
       const w0 = limit('fb:' + uid, 6, 3600000); if (w0) return tooMany(res, w0);
       const type = ['question', 'idea', 'bug', 'praise'].includes(B.type) ? B.type : 'idea', text = String(B.text || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f<>]/g, '').trim().slice(0, 2000);
-      if (text.length < 5) return send(res, 400, { error: 'Write a little more so we can help (at least 5 characters).' });
+      if (!text) return send(res, 400, { error: 'Write something first.' });
       FB.unshift({ id: rnd(6), t: Date.now(), type, text, uid, user: mem.name, rank: u.isOwner ? 'Owner' : (D.ranks[mem.rank] || {}).name || 'Member', ws: CTX.wid, wsName: D.meta.name, page: cleanName(B.page, 30) }); FB.length = Math.min(FB.length, 400);
       return ok(res);
     }
