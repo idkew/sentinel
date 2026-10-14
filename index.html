@@ -337,7 +337,7 @@ const rk=id=>(S&&S.ranks.find(r=>r.id===id))||{name:'No rank',color:'#a3acb9',po
 const rtag=id=>{const r=rk(id);return `<span class="rtag"><i style="background:${esc(r.color)}"></i>${esc(r.name)}</span>`};
 const below=pos=>S.me.owner||S.me.pos>pos;
 
-function toast(m,kind){const t=document.createElement('div');t.className='toast'+(kind?' '+kind:'');t.innerHTML=(kind==='err'?ic('info'):ic('check'))+esc(m);$('#toast').append(t);setTimeout(()=>{t.style.transition='.3s';t.style.opacity=0;setTimeout(()=>t.remove(),300)},3000)}
+function toast(m,kind){const t=document.createElement('div');t.className='toast'+(kind?' '+kind:'');t.innerHTML=(kind==='err'?ic('info'):ic('check'))+esc(m);$('#toast').append(t);setTimeout(()=>{t.style.transition='.3s';t.style.opacity=0;setTimeout(()=>t.remove(),300)},Math.max(3000,m.length*60))}
 let LASTERR='',LOADED=false;
 async function api(path,body){
  let r;try{const o=body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};o.signal=AbortSignal.timeout(20000);r=await fetch(path,o)}catch{toast('No connection. Check your internet.','err');return{error:'offline',_s:0}}
@@ -721,7 +721,7 @@ async function moderate(p){
  const body={userId:p.userId,name:p.name,reason:v.reason};
  if(v.rule)body.ruleId=v.rule;else{body.action=v.action==='perm'?'ban':v.action;body.minutes=v.action==='perm'?0:['mute','ban'].includes(v.action)?Math.round(+v.dur*+v.unit):0}
  const r=await api('/api/action',body);if(bad(r))return;
- const a=r.applied||{action:body.action};toast(({warn:'Warning sent',kick:'Kick sent',mute:'Muted',ban:a.minutes?'Suspended':'Banned'})[a.action]||'Done');refresh()}
+ const a=r.applied||{action:body.action};toast(({warn:'Warning sent',kick:'Kick sent',mute:'Muted',ban:a.minutes?'Suspended':'Banned'})[a.action]||'Done');if(r.warn)setTimeout(()=>toast(r.warn,'err'),350);refresh()}
 async function rankEditor(r){
  const groups={};S.perms.forEach(p=>(groups[p.group]||=[]).push(p));const mine=new Set(S.me.perms);const cur=r||{name:'',color:COLORS[2],perms:[],quota:0,limit:0};
  const v=await drawer({title:r?'Edit '+r.name:'New rank',sub:'Ranks decide what people can do. New ranks start at the bottom.',ok:r?'Save rank':'Create rank',
