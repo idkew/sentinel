@@ -57,7 +57,7 @@ const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, ruleboo
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
   flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {} });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 };
-let FB = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
+let OCQ = [], FB = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
@@ -87,7 +87,7 @@ const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // 
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; OCQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -171,6 +171,38 @@ const cmd = c => {
   if ((c.type === 'ban' || c.type === 'unban') && c.userId) { R.cmds = R.cmds.filter(x => !((x.type === 'ban' || x.type === 'unban') && x.userId === c.userId)); c.keep = 1; } // the newest decision for a player replaces older ones
   R.cmds.push({ id: R.nextId++, t: Date.now(), seen: {}, ...c });
 };
+
+// ---- Roblox Open Cloud: lifts bans without needing a game server to be running ----
+const RBX_API = env.OC_TEST_BASE || 'https://apis.roblox.com'; // OC_TEST_BASE is for tests only
+const ocKey = () => crypto.createHash('sha256').update('oc:' + APP_SECRET).digest();
+const ocEnc = t => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', ocKey(), iv), d = Buffer.concat([c.update(t, 'utf8'), c.final()]); return [iv, c.getAuthTag(), d].map(x => x.toString('base64url')).join('.'); };
+const ocDec = t => { try { const [iv, tag, d] = String(t).split('.').map(x => Buffer.from(x, 'base64url')), c = crypto.createDecipheriv('aes-256-gcm', ocKey(), iv); c.setAuthTag(tag); return Buffer.concat([c.update(d), c.final()]).toString('utf8'); } catch { return ''; } };
+const unbanCmd = userId => { cmd({ type: 'unban', userId }); if (D.meta && D.meta.oc) OCQ.push(+userId); };
+async function ocUniverse() {
+  const o = D.meta.oc; if (o.universe) return o.universe;
+  const place = D.meta.placeId || D.meta.lastPlace; if (!place) throw new Error('Sentinel does not know your game yet. Enter your Universe ID, or start the game once.');
+  const r = await sbf(`${RBX_API}/universes/v1/places/${encodeURIComponent(place)}/universe`); const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.universeId) throw new Error('Could not find the universe for place ' + place); o.uni = String(j.universeId); return o.uni;
+}
+async function ocPatch(uni, userId, key, mask) {
+  const r = await sbf(`${RBX_API}/cloud/v2/universes/${uni}/user-restrictions/${userId}${mask ? '?updateMask=gameJoinRestriction' : ''}`, { method: 'PATCH', headers: { 'x-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ gameJoinRestriction: { active: false } }) });
+  return { r, text: (await r.text().catch(() => '')).slice(0, 300) };
+}
+async function runOC() {
+  if (!OCQ.length || !D.meta || !D.meta.oc) { OCQ = []; return; }
+  const ids = [...new Set(OCQ)].slice(0, 5); OCQ = []; const o = D.meta.oc, key = ocDec(o.key);
+  for (const id of ids) {
+    let ok = false, msg = '';
+    try {
+      if (!key) throw new Error('The saved Roblox key could not be read. Save it again.');
+      const uni = o.universe || o.uni || await ocUniverse(); let x = await ocPatch(uni, id, key, true);
+      if (x.r.status === 400) x = await ocPatch(uni, id, key, false);
+      ok = x.r.ok; msg = ok ? 'Lifted' : `Roblox said ${x.r.status}${x.r.status === 401 || x.r.status === 403 ? ' (check the key, its permission, and that it covers this experience)' : x.r.status === 404 ? ' (that player has no Roblox ban here, or the Universe ID is wrong)' : ''}: ${x.text.replace(/\s+/g, ' ').slice(0, 140)}`;
+      if (x.r.status === 404 && /not.?found/i.test(x.text)) { ok = true; msg = 'No ban found on Roblox, so nothing to lift'; }
+    } catch (e) { msg = String(e.message || e).slice(0, 200); }
+    o.last = { t: Date.now(), userId: id, ok, msg }; if (!ok) audit('Sentinel', `Could not lift the Roblox ban on ${id}: ${msg}`);
+  }
+}
 const MOD_TYPES = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'];
 function logEntry(userId, name, e) {
   const list = (D.logs[userId] ||= []), x = { id: rnd(6), name, status: 'active', time: Date.now(), ...e };
@@ -200,7 +232,7 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   if (action === 'ban') {
     const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
     cmd({ type: 'ban', userId, reason, seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
-  } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); cmd({ type: 'unban', userId }); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
+  } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); unbanCmd(userId); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
   else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id }; }
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
   else if (action === 'kick') { D.stats.kicks++; log('Kicked'); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
@@ -248,7 +280,8 @@ function sync(b) {
   if (total > ((D.daily[dayKey(now)] || {}).p || 0)) daily().p = total;
   const hist = R.history; if (!hist.length || now - hist[hist.length - 1].t > 6e4) { hist.push({ t: now, n: total }); if (hist.length > 120) hist.shift(); }
   for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason }); }
-  R.cmds = R.cmds.filter(c => now - c.t < (c.keep ? KEEP_MS : 120000)); if (R.cmds.length > 300) R.cmds = R.cmds.slice(-300);
+  R.cmds = R.cmds.filter(c => now - c.t < (c.keep ? KEEP_MS : 120000) && !(c.type === 'ban' && c.seconds > 0 && now - c.t >= c.seconds * 1000)); if (R.cmds.length > 300) R.cmds = R.cmds.slice(-300);
+  if (!prev || now - prev.last > 90000) for (const c of R.cmds) if (c.keep) delete c.seen[id]; // a server that went quiet and came back (or a new Studio test, which always reports the same id) gets bans and unbans again
   const out = R.cmds.filter(c => !c.seen[id]); out.forEach(c => c.seen[id] = 1);
   return { commands: out.map(({ seen, t, keep, ...c }) => c.type === 'ban' && c.seconds > 0 ? { ...c, seconds: Math.max(1, Math.round(c.seconds - (now - t) / 1000)) } : c), muted: Object.values(D.mutes).filter(live).map(m => m.userId) };
 }
@@ -306,12 +339,12 @@ async function restoreSnapshot(wid, label, by) {
   const rows = await sbGet(`select=key,value&key=in.(${BK_ROWS.map(k => `bk:${label}:${wid}:${k}`).join(',')})`), snap = Object.fromEntries(rows.map(r => [r.key.split(':')[3], r.value]));
   if (!snap.core) return false;
   await snapshot(wid, 'pre' + Math.floor(Date.now() / 1000)); // a way back from this restore
-  setWid(wid); await need(...BK_ROWS); const keepHash = D.meta && D.meta.codeHash;
+  setWid(wid); await need(...BK_ROWS); const keepHash = D.meta && D.meta.codeHash, keepOc = D.meta && D.meta.oc;
   Object.assign(D, CORE_FRESH()); ROWS.core.set(snap.core); if (snap.logs) ROWS.logs.set(snap.logs); if (snap.play) ROWS.play.set(snap.play); if (snap.calls) ROWS.calls.set(snap.calls);
-  migrate(); if (D.meta) { delete D.meta.deleted; if (keepHash) D.meta.codeHash = keepHash; } audit(by, `Restored the workspace from the backup of ${label.startsWith('pre') ? 'a safety copy' : label}`); return true;
+  migrate(); if (D.meta) { delete D.meta.deleted; if (keepHash) D.meta.codeHash = keepHash; if (keepOc) D.meta.oc = keepOc; else delete D.meta.oc; } audit(by, `Restored the workspace from the backup of ${label.startsWith('pre') ? 'a safety copy' : label}`); return true;
 }
 function backupFile() {
-  const core = ROWS.core.get(); if (core.meta) { core.meta = { ...core.meta }; delete core.meta.codeHash; delete core.meta.deleted; }
+  const core = ROWS.core.get(); if (core.meta) { core.meta = { ...core.meta }; delete core.meta.codeHash; delete core.meta.oc; delete core.meta.deleted; }
   return { format: 'sentinel-backup', v: 1, exportedAt: new Date().toISOString(), workspace: { id: CTX.wid, name: D.meta.name }, rows: { core, logs: D.logs, play: D.play, calls: D.calls } };
 }
 function importBackup(data, uid, name) { // returns an error string, or '' when applied
@@ -319,8 +352,8 @@ function importBackup(data, uid, name) { // returns an error string, or '' when 
   const fresh = CORE_FRESH(), c = data.rows.core, core = {};
   for (const k of CORE_KEYS) { if (!(k in c)) { core[k] = fresh[k]; continue; } const a = c[k], f = fresh[k]; if (Array.isArray(f) !== Array.isArray(a) || (f !== null && typeof f === 'object' && (a === null || typeof a !== 'object')) || (f === null && a !== null && typeof a !== 'object')) return `The backup looks damaged (${k}).`; core[k] = a; }
   if (!core.meta || typeof core.meta !== 'object') return 'The backup looks damaged (meta).';
-  const keepHash = D.meta.codeHash, wid = CTX.wid; delete core.meta.deleted;
-  Object.assign(D, core); D.meta.id = wid; D.meta.name = name; D.meta.owner = uid; if (keepHash) D.meta.codeHash = keepHash; else delete D.meta.codeHash;
+  const keepHash = D.meta.codeHash, keepOc = D.meta.oc, wid = CTX.wid; delete core.meta.deleted; delete core.meta.oc;
+  Object.assign(D, core); D.meta.id = wid; D.meta.name = name; D.meta.owner = uid; if (keepHash) D.meta.codeHash = keepHash; else delete D.meta.codeHash; if (keepOc) D.meta.oc = keepOc;
   if (!D.members[uid]) D.members[uid] = { name: U ? U.name : 'Owner', rank: Object.keys(D.ranks)[0] || 'admin', joined: Date.now() };
   const l = data.rows.logs, pl = data.rows.play, ca = data.rows.calls;
   D.logs = l && typeof l === 'object' && !Array.isArray(l) ? l : {}; D.play = pl && typeof pl === 'object' && !Array.isArray(pl) ? pl : {}; D.calls = Array.isArray(ca) ? ca : [];
@@ -670,7 +703,7 @@ async function route(req, res, url, p) {
         if (!has(u, 'logbook.revert')) return deny(res);
         const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e || e.status === 'reverted') return send(res, 404, { error: 'Entry not found or already reverted' });
         e.status = 'reverted'; e.revertedBy = u.user; e.revertedAt = Date.now();
-        if ((e.type === 'Banned' || e.type === 'Suspended') && D.bans[id] && D.bans[id].entry === e.id) { delete D.bans[id]; cmd({ type: 'unban', userId: id }); }
+        if ((e.type === 'Banned' || e.type === 'Suspended') && D.bans[id] && D.bans[id].entry === e.id) { delete D.bans[id]; unbanCmd(id); }
         if (e.type === 'Muted' && D.mutes[id] && D.mutes[id].entry === e.id) delete D.mutes[id];
         if (e.type === 'Points' && e.amount) playOf(id, e.name).points -= e.amount;
         audit(u.user, `Reverted ${e.type.toLowerCase()} for ${e.name}`); return ok(res);
@@ -863,7 +896,7 @@ async function route(req, res, url, p) {
       return send(res, 400, { error: 'bad request' });
     }
     // ---- owner only: the game connection ----
-    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null }); }
+    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null, oc: D.meta.oc ? { universe: D.meta.oc.universe || '', last: D.meta.oc.last || null } : null }); }
     if (p === '/api/bridge') {
       if (!u.isOwner) return ownerOnly(res);
       let lua; try { lua = fs.readFileSync(path.join(__dirname, '..', 'SentinelBridge.lua'), 'utf8'); } catch { return send(res, 500, { error: 'SentinelBridge.lua is missing from the deployment' }); }
@@ -873,6 +906,14 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'POST' && p === '/api/workspace') {
       if (!u.isOwner) return ownerOnly(res);
+      if (B.op === 'ocsave') {
+        const key = String(B.key || '').trim(), uni = String(B.universe || '').replace(/\s/g, '');
+        if (uni && !/^\d{3,20}$/.test(uni)) return send(res, 400, { error: 'The Universe ID is only numbers.' });
+        if (!D.meta.oc && key.length < 20) return send(res, 400, { error: 'Paste your Roblox API key.' });
+        if (key && (key.length < 20 || key.length > 600 || /\s/.test(key))) return send(res, 400, { error: 'That does not look like a Roblox API key.' });
+        D.meta.oc = { ...(D.meta.oc || {}), ...(key ? { key: ocEnc(key) } : {}), universe: uni, last: null }; delete D.meta.oc.uni; audit(u.user, 'Saved the Roblox Open Cloud key'); return ok(res);
+      }
+      if (B.op === 'occlear') { delete D.meta.oc; audit(u.user, 'Removed the Roblox Open Cloud key'); return ok(res); }
       if (B.op === 'rename') { const nm = cleanName(B.name); if (nm.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = nm; audit(u.user, 'Renamed the workspace'); return ok(res); }
       if (B.op === 'rotatekey') { D.meta.rot = (D.meta.rot || 0) + 1; const nc = newCode(CTX.wid); D.meta.codeHash = nc.hash; audit(u.user, 'Made a new game code'); return send(res, 200, { ok: true, code: nc.code }); }
       if (B.op === 'place') {
@@ -930,6 +971,7 @@ async function handle(req, res) {
     resetState();
     const out = makeOut();
     await route(req, out, url, p);
+    if (!out.failed) await runOC().catch(() => {});
     if (out.failed || await commit()) { await sendHooks(); for (const f of out.after) await f().catch(() => {}); return flush(out, res); }
     await new Promise(r => setTimeout(r, 25 + Math.random() * 100)); // lost a race with another request: run again on fresh data
   }
