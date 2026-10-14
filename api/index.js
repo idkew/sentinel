@@ -180,6 +180,29 @@ const RBX_API = env.OC_TEST_BASE || 'https://apis.roblox.com'; // OC_TEST_BASE i
 const ocKey = () => crypto.createHash('sha256').update('oc:' + APP_SECRET).digest();
 const ocEnc = t => { const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', ocKey(), iv), d = Buffer.concat([c.update(t, 'utf8'), c.final()]); return [iv, c.getAuthTag(), d].map(x => x.toString('base64url')).join('.'); };
 const ocDec = t => { try { const [iv, tag, d] = String(t).split('.').map(x => Buffer.from(x, 'base64url')), c = crypto.createDecipheriv('aes-256-gcm', ocKey(), iv); c.setAuthTag(tag); return Buffer.concat([c.update(d), c.final()]).toString('utf8'); } catch { return ''; } };
+// ---- two-step verification (authenticator app, RFC 6238) ----
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const b32 = buf => { let bits = 0, v = 0, o = ''; for (const b of buf) { v = (v << 8) | b; bits += 8; while (bits >= 5) { o += B32[(v >>> (bits - 5)) & 31]; bits -= 5; } } if (bits > 0) o += B32[(v << (5 - bits)) & 31]; return o; };
+const hotp = (key, counter) => { const c = Buffer.alloc(8); c.writeBigUInt64BE(BigInt(counter)); const h = crypto.createHmac('sha1', key).update(c).digest(), o = h[19] & 15; return String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, '0'); };
+const totpCounter = () => Math.floor(Date.now() / 30000);
+const totpCheck = (key, code, last = 0) => { code = String(code || '').replace(/\s/g, ''); if (!/^\d{6}$/.test(code)) return 0; const now = totpCounter(); for (const d of [0, -1, 1]) { const c = now + d; if (c > last && same(code, hotp(key, c))) return c; } return 0; }; // a code can only be used once
+const newRecovery = () => { const raw = [...Array(8)].map(() => crypto.randomBytes(6).toString('hex')); return { codes: raw.map(c => c.slice(0, 6) + '-' + c.slice(6)), hashes: raw.map(c => codeHash('rec:' + c)) }; };
+const useRecovery = (m, input) => { const c = String(input || '').toLowerCase().replace(/[^a-f0-9]/g, ''); if (c.length !== 12) return false; const i = (m.rec || []).indexOf(codeHash('rec:' + c)); if (i < 0) return false; m.rec.splice(i, 1); return true; };
+function mfaTry(m, code) { // checks an authenticator code or a recovery code; five wrong tries lock it for 15 minutes (saved, so it holds across servers)
+  const now = Date.now(); if (m.lock && m.lock > now) return { code: 429, err: `Too many wrong codes. Try again in ${Math.max(1, Math.ceil((m.lock - now) / 60000))} minutes.` };
+  const c = totpCheck(Buffer.from(ocDec(m.s), 'hex'), code, m.last || 0);
+  if (c) { m.last = c; m.fails = 0; m.lock = 0; return { ok: true }; }
+  if (useRecovery(m, code)) { m.fails = 0; m.lock = 0; return { ok: true, recovery: true }; }
+  m.fails = (m.fails || 0) + 1; if (m.fails >= 5) { m.fails = 0; m.lock = now + 900000; }
+  return { code: 400, err: 'That code is not right. Check the 6 digits in your authenticator app, or use a recovery code.' };
+}
+const ADMINP = ['team.manage', 'ranks.manage', 'webhooks.manage', 'privacy.manage', 'automations.manage']; // powers that make a rank "administrator level"
+const isAdminLevel = u => !!u && (u.isOwner || ADMINP.some(x => u.perms.has(x)));
+const RBX_USERS = env.RBXUSERS_TEST_BASE || 'https://users.roblox.com'; // the override is for tests only
+async function rbxUser(name) { // the real Roblox account behind a username, or null
+  try { const r = await j(RBX_USERS + '/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [name], excludeBannedUsers: false }) }); const u = r.data && r.data[0]; if (u && u.id) return { id: String(u.id), name: cleanName(u.name || name, 40) }; } catch {}
+  return null;
+}
 const unbanCmd = userId => { cmd({ type: 'unban', userId }); if (D.meta && D.meta.oc) OCQ.push(+userId); };
 async function ocUniverse() {
   const o = D.meta.oc; if (o.universe) return o.universe;
@@ -375,16 +398,16 @@ async function cronRun() {
 }
 const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Sentinel admin</title><style>
 :root{--bg:#f5f5f7;--card:#fff;--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.1)}@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--card:#2a2a2d;--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.12)}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;padding:28px 18px}.w{max-width:960px;margin:0 auto}h1{font-size:24px;letter-spacing:-.02em;margin:0 0 4px}p{color:var(--mu);margin:0 0 18px}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;padding:28px 18px}.w{max-width:960px;margin:0 auto}h1{font-size:24px;letter-spacing:-.02em;margin:0 0 4px}p{color:var(--mu);margin:0 0 18px}
 .c{background:var(--card);border-radius:12px;box-shadow:0 0 0 .5px var(--ln);padding:16px 18px;margin-bottom:12px}.r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.sp{flex:1}.mu{color:var(--mu);font-size:13px}
 input{height:34px;border:0;border-radius:8px;padding:0 12px;background:rgba(127,127,127,.14);color:inherit;font:inherit;min-width:260px}button{height:30px;padding:0 12px;border:0;border-radius:8px;background:rgba(127,127,127,.18);color:inherit;font:inherit;font-weight:500;cursor:pointer}button.p{background:var(--ac);color:#fff}button.d{background:#ff3b30;color:#fff}
 .b{display:inline-block;font-size:12px;border-radius:99px;padding:1px 9px;background:rgba(127,127,127,.18)}.b.x{background:rgba(255,59,48,.16);color:#d70015}code{font-size:12px;background:rgba(127,127,127,.16);padding:1px 6px;border-radius:5px}</style></head><body><div class="w"><h1>Sentinel admin</h1><p>Recover workspaces that were deleted or tampered with.</p>
-<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div id="fb"></div><div id="o"></div></div>
+<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div class="c r" id="mf" hidden><b>Reset two-step</b><input id="mu" placeholder="User id, like r_123456" autocomplete="off"><button id="mr">Reset</button><span class="mu" id="mm"></span></div><div id="fb"></div><div id="o"></div></div>
 <script>const $=i=>document.getElementById(i);let T=sessionStorage.getItem('adm')||'';const e=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function call(b){const r=await fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':T},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error '+r.status);return j}
 async function loadFb(){const j=await call({op:'feedback'});$('fb').innerHTML=j.items.length?'<h2 style="font-size:17px;margin:18px 0 10px">Feedback and questions</h2>'+j.items.map(f=>'<div class="c"><div class="r"><span class="b">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="mu">'+e(f.rank)+' · '+e(f.wsName)+' · '+new Date(f.t).toLocaleString()+'</span></div><p style="color:inherit;margin:8px 0;white-space:pre-wrap">'+e(f.text)+'</p><div class="r"><input data-r="'+f.id+'" placeholder="Write a reply" value="'+e(f.reply||'')+'" style="flex:1"><button class="p" data-o="fr" data-i="'+f.id+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="d" data-o="fd" data-i="'+f.id+'">Delete</button></div></div>').join(''):''}
-async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
-$('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
+async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('mf').hidden=false;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
+$('mr').onclick=async()=>{try{const j=await call({op:'mfaReset',uid:$('mu').value.trim()});$('mm').textContent=j.had?'Two-step removed. They can sign in and set it up again.':'That user did not have two-step on.'}catch(x){$('mm').textContent=x.message}};$('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
 $('fb').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;try{if(b.dataset.o==='fr')await call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value});else if(confirm('Delete this message?'))await call({op:'feedbackDelete',id:b.dataset.i});loadFb()}catch(x){$('m').textContent=x.message}};
 $('o').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;const w=b.dataset.w,s=$('s'+w);try{
 if(b.dataset.o==='rd'){if(!confirm('Restore this workspace?'))return;await call({op:'restoreDeleted',wid:w});load()}
@@ -455,11 +478,15 @@ async function authRoute(req, res, url, p, ip) {
     const cur = sessionUid(req); if (cur !== oa.l) return page(res, 400, 'Sign-in changed', 'Please sign in again and retry linking.');
     setUid(cur); await need('user'); if (!U) return page(res, 400, 'Account not found', 'Please sign in again.');
     U.roblox = { id: req._oauth.sub, name: req._oauth.uname || req._oauth.name };
-    res.setHeader('Set-Cookie', clearCookie('oa')); res.writeHead(302, { Location: '/#linked' }); return res.end();
+    res.setHeader('Set-Cookie', clearCookie('oa')); res.writeHead(302, { Location: oa.i ? '/#/join/' + oa.i : '/#linked' }); return res.end();
   }
   const uid = name[0] + '_' + req._oauth.sub; setUid(uid); await need('user');
   if (!U) { if (!SIGNUPS_OPEN && !oa.i) return page(res, 403, 'Sign-ups are closed', 'This site is not accepting new accounts right now.'); U = { id: uid, provider: name, workspaces: [], created: Date.now() }; }
   U.name = req._oauth.name;
+  if (U.mfa && U.mfa.on) { // they have two-step on: the session only starts after the code is checked
+    res.setHeader('Set-Cookie', [mkCookie('mp', pack({ u: uid, e: Date.now() + 600000 }), { maxAge: 600 }), clearCookie('sid'), clearCookie('oa')]);
+    res.writeHead(302, { Location: '/' + (oa.i ? '#/join/' + oa.i : '') }); return res.end();
+  }
   res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: uid, e: Date.now() + 7 * 864e5 })), clearCookie('oa')]);
   res.writeHead(302, { Location: '/' + (oa.i ? '#/join/' + oa.i : '') }); return res.end();
 }
@@ -523,6 +550,10 @@ async function route(req, res, url, p) {
       if (!same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
       const A = await body(req), wid = String(A.wid || '');
       if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
+      if (A.op === 'mfaReset') {
+        const t = String(A.uid || '').trim(); if (!/^[gr]_\d{1,32}$/.test(t)) return send(res, 400, { error: 'A user id looks like r_123456 or g_123456.' });
+        setUid(t); await need('user'); if (!U) return send(res, 404, { error: 'No such user' }); const had = !!(U.mfa && U.mfa.on); delete U.mfa; delete U.mfaPending; return send(res, 200, { ok: true, had });
+      }
       if (A.op === 'feedback') { await need('fb'); return send(res, 200, { items: FB.slice(0, 200) }); }
       if (A.op === 'feedbackReply' || A.op === 'feedbackDelete') {
         await need('fb'); const i = FB.findIndex(f => f.id === String(A.id || '')); if (i < 0) return send(res, 404, { error: 'Not found' });
@@ -567,11 +598,18 @@ async function route(req, res, url, p) {
     if (!p.startsWith('/api/') && p !== '/logout') return send(res, 404, { error: 'not found' });
     const w0 = limit('ip:' + ip, 300, 60000); if (w0) return tooMany(res, w0);
     const ck = cookiesOf(req), uid = sessionUid(req);
-    if (req.method === 'POST' && p === '/logout') { res.setHeader('Set-Cookie', [clearCookie('sid'), clearCookie('ws')]); return ok(res); }
+    if (req.method === 'POST' && p === '/logout') { res.setHeader('Set-Cookie', [clearCookie('sid'), clearCookie('ws'), clearCookie('mp')]); return ok(res); }
 
+    if (req.method === 'POST' && p === '/api/mfa/login') {
+      const w = limit('mfal:' + ip, 30, 600000); if (w) return tooMany(res, w);
+      const mp = unpack(ck.mp); if (!mp || !/^[gr]_\d{1,32}$/.test(mp.u || '')) return send(res, 401, { error: 'That sign-in expired. Please sign in again.', code: 'signin' });
+      setUid(mp.u); await need('user'); if (!U || !U.mfa || !U.mfa.on) return send(res, 401, { error: 'That sign-in expired. Please sign in again.', code: 'signin' });
+      const t = mfaTry(U.mfa, (await body(req)).code); if (!t.ok) return send(res, t.code, { error: t.err });
+      res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: mp.u, e: Date.now() + 7 * 864e5 })), clearCookie('mp')]); return send(res, 200, { ok: true, recovery: !!t.recovery, left: U.mfa.rec.length });
+    }
     if (p === '/api/me') {
       const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER };
-      if (!uid) return send(res, 200, base);
+      if (!uid) { const mp = unpack(cookiesOf(req).mp); return send(res, 200, mp && /^[gr]_\d{1,32}$/.test(mp.u || '') ? { ...base, pending2fa: true } : base); }
       setUid(uid); await need('user'); if (!U) return send(res, 200, base);
       const ids = U.workspaces.filter(w => /^[a-f0-9]{12}$/.test(w)); let list = [], rows0 = [];
       if (ids.length) {
@@ -584,18 +622,40 @@ async function route(req, res, url, p) {
       const cur = list.find(x => x.id === ck.ws) ? ck.ws : (list[0] && list[0].id) || null;
       if (cur && cur !== ck.ws) res.setHeader('Set-Cookie', mkCookie('ws', cur, { maxAge: 31536000 }));
       const roblox = uid[0] === 'r' ? { id: uid.slice(2), name: U.name, viaLogin: true } : U.roblox || null;
-      return send(res, 200, { ...base, user: { id: uid, name: U.name, provider: U.provider, roblox }, workspaces: list, current: cur });
+      return send(res, 200, { ...base, user: { id: uid, name: U.name, provider: U.provider, roblox, mfa: !!(U.mfa && U.mfa.on) }, workspaces: list, current: cur });
     }
     if (p === '/api/invite') {
       const w = limit('invite:' + ip, 20, 60000); if (w) return tooMany(res, w);
       const code = url.searchParams.get('code') || ''; if (!/^[a-f0-9]{28}$/.test(code)) return send(res, 404, { error: 'This invite link is not valid.' });
       setWid(code.slice(0, 12)); await need('core'); const inv = D.meta && !D.meta.deleted && D.invites[code];
-      return inv && inv.exp > Date.now() ? send(res, 200, { workspace: D.meta.name, role: (D.ranks[inv.rank] || {}).name || 'Member' }) : send(res, 404, { error: 'This invite has expired or was already used.' });
+      return inv && inv.exp > Date.now() ? send(res, 200, { workspace: D.meta.name, role: (D.ranks[inv.rank] || {}).name || 'Member', lock: inv.lock ? { id: inv.lock.id, name: inv.lock.name } : null }) : send(res, 404, { error: 'This invite has expired or was already used.' });
     }
     if (!uid) return send(res, 401, { error: 'Please sign in', code: 'signin' });
     const w2 = limit('u:' + uid, 180, 60000); if (w2) return tooMany(res, w2);
     setUid(uid);
 
+    if (p === '/api/mfa' && req.method === 'GET') { await need('user'); const m = U && U.mfa; return send(res, 200, { on: !!(m && m.on), recLeft: m && m.on ? (m.rec || []).length : 0, since: (m && m.at) || null }); }
+    if (req.method === 'POST' && p.startsWith('/api/mfa/')) {
+      const w = limit('mfa:' + uid, 20, 600000); if (w) return tooMany(res, w);
+      await need('user'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' }); const Bm = await body(req), m = U.mfa;
+      if (p === '/api/mfa/setup') {
+        if (m && m.on) return send(res, 400, { error: 'Two-step verification is already on.' });
+        const key = crypto.randomBytes(20); U.mfaPending = { s: ocEnc(key.toString('hex')), t: Date.now() }; const secret = b32(key);
+        return send(res, 200, { secret, uri: `otpauth://totp/Sentinel:${encodeURIComponent(U.name)}?secret=${secret}&issuer=Sentinel&algorithm=SHA1&digits=6&period=30` });
+      }
+      if (p === '/api/mfa/enable') {
+        const pend = U.mfaPending; if (m && m.on) return send(res, 400, { error: 'Two-step verification is already on.' });
+        if (!pend || Date.now() - pend.t > 900000) return send(res, 400, { error: 'That setup took too long. Start again.' });
+        const c = totpCheck(Buffer.from(ocDec(pend.s), 'hex'), Bm.code, 0); if (!c) return send(res, 400, { error: 'That code is not right. Check the 6 digits in your authenticator app.' });
+        const rc = newRecovery(); U.mfa = { s: pend.s, on: true, rec: rc.hashes, at: Date.now(), last: c, fails: 0, lock: 0 }; delete U.mfaPending;
+        return send(res, 200, { ok: true, codes: rc.codes });
+      }
+      if (!m || !m.on) return send(res, 400, { error: 'Two-step verification is not on.' });
+      const t = mfaTry(m, Bm.code); if (!t.ok) return send(res, t.code, { error: t.err });
+      if (p === '/api/mfa/disable') { delete U.mfa; delete U.mfaPending; return ok(res); }
+      if (p === '/api/mfa/recovery') { const rc = newRecovery(); m.rec = rc.hashes; return send(res, 200, { ok: true, codes: rc.codes }); }
+      return send(res, 404, { error: 'not found' });
+    }
     if (req.method === 'POST' && p === '/api/me/unlink') { await need('user'); if (U) U.roblox = null; return ok(res); }
     if (req.method === 'POST' && p === '/api/workspaces') {
       const w = limit('create:' + uid, 5, 3600000) || limit('createip:' + ip, 10, 3600000); if (w) return tooMany(res, w);
@@ -616,6 +676,12 @@ async function route(req, res, url, p) {
       setWid(code.slice(0, 12)); await need('user', 'core'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' });
       if (D.meta && D.members[uid]) { res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid }); }
       const inv = D.meta && !D.meta.deleted && D.invites[code]; if (!inv || inv.exp < Date.now()) return send(res, 404, { error: 'This invite has expired or was already used.' });
+      const irank = D.ranks[inv.rank];
+      if (irank && irank.perms.some(x => ADMINP.includes(x)) && !inv.lock) return send(res, 403, { error: 'This invite is for a rank with admin powers but is not locked to a Roblox account, so it cannot be used. Ask for a new one.' });
+      if (inv.lock) { // only the Roblox account the invite was made for can use it
+        const mine = uid[0] === 'r' ? uid.slice(2) : (U.roblox && U.roblox.id) || '';
+        if (String(mine) !== String(inv.lock.id)) { audit(U.name, `Tried to use an invite locked to @${inv.lock.name}`); return send(res, 403, { error: `This invite is locked to the Roblox account @${inv.lock.name}. Sign in with that Roblox account, or link it in Settings, then open the link again.`, code: 'locked', lock: { id: inv.lock.id, name: inv.lock.name } }); }
+      }
       if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full.' });
       const rk = D.ranks[inv.rank] ? inv.rank : Object.entries(D.ranks).sort((a, b) => a[1].pos - b[1].pos)[0][0];
       D.members[uid] = { name: U.name, rank: rk, joined: Date.now() }; delete D.invites[code]; audit(U.name, `Joined as ${D.ranks[rk].name}`);
@@ -638,6 +704,10 @@ async function route(req, res, url, p) {
       const rid = uid[0] === 'r' ? uid.slice(2) : (U.roblox && U.roblox.id) || null; if ((mem.robloxId || null) !== rid) mem.robloxId = rid;
     }
     const u = who(uid);
+    if (D.meta.require2fa && isAdminLevel(u) && !(U && U.mfa && U.mfa.on)) { // this workspace requires two-step for administrators
+      if (p === '/api/state') return send(res, 200, { need2fa: true, me: { uid, name: mem.name, owner: u.isOwner, pos: 0, perms: [], rank: mem.rank }, workspace: { id: CTX.wid, name: D.meta.name } });
+      return send(res, 403, { error: 'This workspace requires two-step verification for your role. Turn it on in Settings, Security.', code: 'need2fa' });
+    }
     for (const [c, i] of Object.entries(D.invites)) if (i.exp < Date.now()) delete D.invites[c];
     const B = req.method === 'POST' ? await body(req) : {};
 
@@ -655,11 +725,11 @@ async function route(req, res, url, p) {
       return send(res, 200, {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now) })),
-        me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos },
-        workspace: { id: CTX.wid, name: D.meta.name, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
+        me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
+        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
-        invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by })) : [],
+        invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by, lock: i.lock ? i.lock.name : null })) : [],
         audit: has(u, 'audit.view') ? D.audit.slice(0, 150) : [], rulebook: D.rulebook,
         loa: { mine: D.loa.filter(x => x.uid === uid).slice(0, 20), all: has(u, 'loa.review') ? D.loa.slice(0, 80) : [] },
         webhook: has(u, 'webhooks.manage') ? { set: !!(D.webhook && D.webhook.url), hint: D.webhook && D.webhook.url ? D.webhook.url.slice(-6) : '', events: (D.webhook || DEFAULT_WEBHOOK()).events } : null,
@@ -800,8 +870,15 @@ async function route(req, res, url, p) {
         if (!above(u, r.pos)) return send(res, 403, { error: 'You can only invite people to ranks below your own.' });
         if (Object.keys(D.invites).length >= 20) return send(res, 400, { error: 'Too many open invites. Revoke some first.' });
         if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full (50 people).' });
-        const code = CTX.wid + crypto.randomBytes(8).toString('hex'); D.invites[code] = { rank: B.rank, exp: Date.now() + 7 * 864e5, by: u.user }; audit(u.user, `Created an invite for ${r.name}`);
-        return send(res, 200, { ok: true, code, link: `${site(req)}/#/join/${code}` });
+        const hrs = [1, 24, 72, 168].includes(+B.hours) ? +B.hours : 24, uname = cleanName(B.roblox, 40).replace(/^@/, '');
+        let lock = null;
+        if (uname) {
+          if (!/^[A-Za-z0-9_]{3,20}$/.test(uname)) return send(res, 400, { error: 'Roblox usernames are 3 to 20 letters, numbers or underscores.' });
+          lock = await rbxUser(uname); if (!lock) return send(res, 400, { error: `Could not find a Roblox account called ${uname}. Check the spelling.` });
+        }
+        if (r.perms.some(x => ADMINP.includes(x)) && !lock) return send(res, 400, { error: 'Invites for ranks with admin powers must be locked to one Roblox account. Enter their Roblox username.' });
+        const code = CTX.wid + crypto.randomBytes(8).toString('hex'); D.invites[code] = { rank: B.rank, exp: Date.now() + hrs * 36e5, by: u.user, ...(lock ? { lock } : {}) }; audit(u.user, `Created an invite for ${r.name}${lock ? ', locked to @' + lock.name : ', open to anyone with the link'}`);
+        return send(res, 200, { ok: true, code, link: `${site(req)}/#/join/${code}`, lock: lock ? lock.name : null });
       }
       if (B.op === 'revoke') { delete D.invites[String(B.code || '')]; audit(u.user, 'Revoked an invite'); return ok(res); }
       const t = String(B.uid || ''), m = D.members[t];
@@ -917,6 +994,10 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'POST' && p === '/api/workspace') {
       if (!u.isOwner) return ownerOnly(res);
+      if (B.op === 'require2fa') {
+        const on = !!B.on; if (on && !(U && U.mfa && U.mfa.on)) return send(res, 400, { error: 'Turn on two-step verification for your own account first, so you do not lock yourself out.' });
+        D.meta.require2fa = on; audit(u.user, on ? 'Required two-step verification for administrators' : 'Stopped requiring two-step verification'); return ok(res);
+      }
       if (B.op === 'ocsave') {
         const key = String(B.key || '').replace(/\s+/g, ''), uni = String(B.universe || '').replace(/\s/g, '');
         if (uni && !/^\d{3,20}$/.test(uni)) return send(res, 400, { error: 'The Universe ID is only numbers.' });
