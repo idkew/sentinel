@@ -22,6 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
+local SCRIPT_VERSION = 2 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -269,7 +270,7 @@ local function sync()
 	local sent = table.clone(pending)
 	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
 		Url = URL .. "/game/sync", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
-		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent }),
+		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION }),
 	})
 	busy = false
 	if not ok or not res.Success then
@@ -294,11 +295,13 @@ Players.PlayerRemoving:Connect(function(p)
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
 
-KEY = string.gsub(KEY, "%s", "")
+local rawKey = KEY
+KEY = string.gsub(KEY, "[%[%]%s\"']", "") -- brackets, quotes and spaces never belong in a game code
 if KEY == "" or string.find(KEY, "INPUT", 1, true) then
-	warn("[Sentinel] No game code set. Open the Sentinel website, copy your game code and paste it over [INPUT CODE HERE] at the top of this script.")
+	warn("[Sentinel] No game code set. Open the Sentinel website, copy your game code and paste it over INPUT CODE HERE at the top of this script. Remove the [ ] brackets too, but keep the quotes.")
 	return
 end
+if KEY ~= rawKey then print("[Sentinel] Removed extra [ ] or spaces from your game code. You can delete them from the script too.") end
 task.spawn(setupChat)
 task.spawn(function()
 	while true do
