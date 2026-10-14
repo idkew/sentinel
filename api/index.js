@@ -80,7 +80,11 @@ const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
 const save = () => {};
 const pruneCalls = () => { const cut = Date.now() - cfg.callRetentionDays * 864e5; D.calls = D.calls.filter(c => c.t > cut); };
-const MUTE_SCRIPT = 4; // the first script version that really stops muted players chatting
+const MUTE_SCRIPT = 6; // the first script version that really stops muted players chatting
+function unbanWarn() { // Roblox only lifts a ban from a running game server (or the Open Cloud key), and a banned player cannot join to start one
+  if (D.meta && D.meta.oc) return null; if (Object.values(R.servers).some(s => Date.now() - s.last < LIVE_MS)) return null;
+  return 'Lifted in Sentinel, but nobody is in your game, so Roblox keeps the ban until a game server runs. Ask someone else to join, add a Roblox API key in Settings, Game (best), or lift it in Creator Hub under Moderation.';
+}
 function muteWarn() { // why a mute might not stop chat right now (checked at the moment a mute is made), or null
   const live = Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS); if (!live.length) return null; // nobody in game: it applies when a server connects
   const old = live.find(s => s.sv < MUTE_SCRIPT); if (old) return `Muted, but your game script is out of date (version ${old.sv}), so it will not stop the player chatting. Update the script in Settings, Game.`;
@@ -746,7 +750,7 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   const ev = cleanLinks(B.evidence, 5), pnote = cleanName(B.note, 500);
   const ctx = B.ctx === false || !['warn', 'kick', 'mute', 'ban'].includes(action) ? [] : R.chat.filter(m => m.userId === B.userId && Date.now() - m.t < 36e5).slice(-15).map(m => ({ t: m.t, text: m.text }));
   act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
-  const mw = action === 'mute' ? muteWarn() : null;
+  const mw = action === 'mute' ? muteWarn() : action === 'unban' ? unbanWarn() : null;
   return [200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) }];
     }
 const ACT_PERM = { warn: 'mod.warn', kick: 'mod.kick', mute: 'mod.mute', unmute: 'mod.mute', ban: 'mod.ban', unban: 'mod.unban', announce: 'announce', points: 'points.manage' };
@@ -1232,7 +1236,7 @@ async function route(req, res, url, p) {
         if ((e.type === 'Banned' || e.type === 'Suspended') && D.bans[id] && D.bans[id].entry === e.id) { delete D.bans[id]; unbanCmd(id); }
         if (e.type === 'Muted' && D.mutes[id] && D.mutes[id].entry === e.id) delete D.mutes[id];
         if (e.type === 'Points' && e.amount) playOf(id, e.name).points -= e.amount;
-        audit(u.user, `Reverted ${e.type.toLowerCase()} for ${e.name}`); return ok(res);
+        audit(u.user, `Reverted ${e.type.toLowerCase()} for ${e.name}`); const uw = (e.type === 'Banned' || e.type === 'Suspended') ? unbanWarn() : null; return send(res, 200, { ok: true, ...(uw ? { warn: uw } : {}) });
       }
       return send(res, 400, { error: 'bad request' });
     }
