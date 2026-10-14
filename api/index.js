@@ -30,6 +30,22 @@ function limit(key, max, windowMs) { // returns 0 if allowed, otherwise the seco
   if (buckets.size > 5000) for (const [k, v] of buckets) if (now > v.reset) buckets.delete(k);
   return ++b.n <= max ? 0 : Math.ceil((b.reset - now) / 1000);
 }
+async function slimit(key, max, windowMs) { // a limit that holds across every Vercel server (kept in the database); seconds to wait, or 0
+  const win = Math.floor(Date.now() / windowMs), exp = (win + 1) * windowMs, k = `rl:${Math.floor(exp / 60000)}:${crypto.createHash('sha256').update(key).digest('base64url').slice(0, 22)}`;
+  for (let i = 0; i < 3; i++) {
+    let rows; try { rows = await sbGet(`select=value,version&key=in.(${k})`); } catch { return 0; } // never lock people out because of a database hiccup
+    const cur = rows[0], n = (cur && cur.value ? cur.value.n || 0 : 0) + 1;
+    if (n > max) return Math.max(1, Math.ceil((exp - Date.now()) / 1000));
+    try { const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: k, expect: cur ? cur.version : 0, value: { n } }] }) }); if (r.ok && (await r.json()) === true) return 0; } catch { return 0; }
+  }
+  return 0;
+}
+const ALERTED = new Map();
+async function opsAlert(title, detail) { // tell the site admin in Discord when something breaks (ALERT_WEBHOOK), at most once per 10 minutes per problem
+  const url = env.OPS_TEST_URL || env.ALERT_WEBHOOK || ''; if (!env.OPS_TEST_URL && !/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/.test(url)) return;
+  const sig = title + String(detail).slice(0, 80), last = ALERTED.get(sig) || 0; if (Date.now() - last < 6e5) return; ALERTED.set(sig, Date.now());
+  await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'Sentinel alerts', allowed_mentions: { parse: [] }, embeds: [{ title: String(title).slice(0, 200), description: String(detail).slice(0, 1500), color: 0xe5484d, timestamp: new Date().toISOString() }] }), signal: AbortSignal.timeout(2500) }).catch(() => {});
+}
 const ipOf = req => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '?').split(',')[0].trim();
 
 // ---- permissions: every rank gets a set of these. The workspace owner always has all of them ----
@@ -38,10 +54,11 @@ const PERMS = [
   ['mod.ban', 'Suspend players (timed bans)', 'Moderation', 1], ['mod.permban', 'Ban players permanently', 'Moderation', 1], ['mod.unban', 'Unban players', 'Moderation', 1],
   ['logbook.note', 'Add private notes to players', 'Moderation'], ['logbook.revert', 'Revert logbook entries', 'Moderation', 1],
   ['reports.handle', 'Claim and resolve reports', 'Reports'], ['appeals.review', 'Review ban appeals', 'Reports'], ['chat.view', 'Read live chat', 'Reports'],
-  ['announce', 'Announce to every server', 'Game'], ['sessions.host', 'Host sessions', 'Activity'], ['points.manage', 'Give and remove points', 'Activity'],
+  ['announce', 'Announce to every server', 'Game'], ['sessions.host', 'Host sessions', 'Activity'], ['shifts.manage', 'Create shifts and see attendance', 'Activity'], ['points.manage', 'Give and remove points', 'Activity'],
   ['loa.review', 'Approve or deny leave requests', 'Team'], ['team.manage', 'Invite, remove and re-rank members below them', 'Team', 1], ['ranks.manage', 'Create and edit ranks below their own', 'Team', 1],
   ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
   ['webhooks.manage', 'Manage Discord notifications', 'Settings', 1], ['privacy.manage', 'Export and erase player data', 'Settings', 1],
+  ['forms.review', 'Review form responses and applications', 'Team'], ['forms.manage', 'Create and edit forms', 'Settings'],
 ];
 const ALLP = PERMS.map(p => p[0]);
 const defaultRanks = () => ({
@@ -49,16 +66,16 @@ const defaultRanks = () => ({
   mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
   helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'sessions.host'], quota: 60, limit: 15 },
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
+const DEFAULT_WEBHOOK = () => ({ url: '', events: { forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
 const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
 
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {} });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, discord: null, discordCodes: {} });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 };
-let OCQ = [], FB = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
-const CTX = { uid: null, wid: null };
+let OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
+const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
 const save = () => {};
@@ -73,7 +90,7 @@ function muteWarn() { // why a mute might not stop chat right now (checked at th
   return null;
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -85,18 +102,20 @@ const ROWS = {
   user: { get: () => U, set: v => { U = v; } },
   ...Object.fromEntries([...Array(16).keys()].map(i => ['h' + i, { get: () => (D.hist[i] ||= {}), set: v => { D.hist[i] = v || {}; } }])), // per-player playtime history, split in 16 rows so each save stays small
   glob: { get: () => G, set: v => { G = v; } },
-  fb: { get: () => FB, set: v => { FB = Array.isArray(v) ? v : []; } }, // feedback and questions from every workspace, answered from the admin page
+  fb: { get: () => FB, set: v => { FB = Array.isArray(v) ? v : []; } },
+  dguild: { get: () => DG, set: v => { DG = v && typeof v === 'object' ? v : {}; } }, // which workspace a Discord server is linked to
+  forms: { get: () => ({ responses: FR }), set: v => { FR = (v && Array.isArray(v.responses)) ? v.responses : []; } }, // form responses (applications, reports), newest first // feedback and questions from every workspace, answered from the admin page
 };
-const phys = k => k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
+const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
-  '/api/action': ['logs', 'play', 'cmds', 'live'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls'], '/api/backup/import': ['logs', 'play', 'calls'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
+  '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
   '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; OCQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -134,6 +153,12 @@ function migrate() { // bring older workspaces up to date
   if (D.webhook && D.webhook.events) for (const k of ['appeals', 'watch']) if (!(k in D.webhook.events)) D.webhook.events[k] = true;
   if (!D.meta.v4) { D.meta.v4 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('mod.unban') && !r.perms.includes('appeals.review')) r.perms.push('appeals.review'); }
   D.rulebook ||= []; D.loa ||= []; if (!D.daily || Array.isArray(D.daily)) D.daily = {};
+  D.discordCodes ||= {};
+  D.signals ||= {}; if (D.webhook && D.webhook.events && !('signals' in D.webhook.events)) D.webhook.events.signals = true;
+  D.shifts ||= []; if (D.webhook && D.webhook.events && !('shifts' in D.webhook.events)) D.webhook.events.shifts = true;
+  if (!D.meta.v6) { D.meta.v6 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage') && !r.perms.includes('shifts.manage')) r.perms.push('shifts.manage'); }
+  D.forms ||= []; D.formsNew ||= 0; if (D.webhook && D.webhook.events && !('forms' in D.webhook.events)) D.webhook.events.forms = true;
+  if (!D.meta.v5) { D.meta.v5 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage')) for (const x of ['forms.manage', 'forms.review']) if (!r.perms.includes(x)) r.perms.push(x); }
 }
 
 // ---- who is asking, and what may they do? ----
@@ -208,6 +233,34 @@ function mfaTry(m, code) { // checks an authenticator code or a recovery code; f
 const ADMINP = ['team.manage', 'ranks.manage', 'webhooks.manage', 'privacy.manage', 'automations.manage']; // powers that make a rank "administrator level"
 const isAdminLevel = u => !!u && (u.isOwner || ADMINP.some(x => u.perms.has(x)));
 const RBX_USERS = env.RBXUSERS_TEST_BASE || 'https://users.roblox.com'; // the override is for tests only
+// ---- Roblox group rank sync (one way: the group decides Sentinel ranks; Sentinel never changes the group) ----
+const RBX_GROUPS = env.RBXGROUPS_TEST_BASE || 'https://groups.roblox.com'; // the override is for tests only
+const gget = async u => { const r = await fetch(RBX_GROUPS + u, { signal: AbortSignal.timeout(5000) }); if (!r.ok) throw new Error(`Roblox groups said ${r.status}`); return r.json(); };
+async function groupInfo(id) { const [g, r] = await Promise.all([gget(`/v1/groups/${id}`), gget(`/v1/groups/${id}/roles`)]); return { id: String(id), name: cleanName(g.name, 60), roles: (r.roles || []).filter(x => x.rank > 0).map(x => ({ id: String(x.id), name: cleanName(x.name, 40), rank: x.rank })).sort((a, b) => b.rank - a.rank) }; }
+async function groupRoleOf(gid, robloxId) { const j = await gget(`/v2/users/${robloxId}/groups/roles`); const e = (j.data || []).find(x => x.group && String(x.group.id) === String(gid)); return e ? String(e.role.id) : null; }
+async function groupSync(req, by = 'Group sync') { // returns a short summary; never throws
+  const G0 = D.meta.group; if (!G0 || !G0.id) return null;
+  const roleIds = Object.entries(G0.map || {}).filter(([, rk]) => rk && D.ranks[rk]).map(([rid]) => rid);
+  try {
+    if (!req._grp) { const who = {}; for (const rid of roleIds) { let cur = '', n = 0; do { const j = await gget(`/v1/groups/${G0.id}/roles/${rid}/users?limit=100&sortOrder=Asc${cur ? '&cursor=' + encodeURIComponent(cur) : ''}`); for (const u of j.data || []) who[String(u.userId)] = rid; cur = j.nextPageCursor || ''; } while (cur && ++n < 10); } req._grp = who; }
+    const who = req._grp, changes = [], removals = [], unlinked = [];
+    for (const [mid, m] of Object.entries(D.members)) {
+      if (mid === D.meta.owner) continue;
+      const rid = m.robloxId || (mid[0] === 'r' ? mid.slice(2) : null); if (!rid) { unlinked.push(m.name); continue; }
+      const role = who[String(rid)], rk = role && G0.map[role];
+      if (rk && D.ranks[rk]) { if (m.rank !== rk) changes.push([mid, rk]); else if (!m.group) m.group = role; }
+      else if (m.group && G0.removeLeft) removals.push(mid);
+      else if (m.group) delete m.group;
+    }
+    const managed = Object.values(D.members).filter(m => m.group).length;
+    const brake = removals.length > 2 && removals.length > managed / 2; // Roblox returning an empty list should never wipe a team
+    for (const [mid, rk] of changes) { const m = D.members[mid], role = who[String(m.robloxId || mid.slice(2))]; audit(by, `${m.name} is now ${D.ranks[rk].name} (Roblox group role)`); m.rank = rk; m.group = role; }
+    if (!brake) for (const mid of removals) { audit(by, `Removed ${D.members[mid].name} (no longer holds a mapped role in the Roblox group)`); delete D.members[mid]; }
+    G0.last = { t: Date.now(), ok: true, changed: changes.length, removed: brake ? 0 : removals.length, unlinked: unlinked.slice(0, 20), brake: brake ? removals.length : 0, staff: Object.keys(who).length };
+    if (brake) audit(by, `Did not remove ${removals.length} members: that is more than half the group-managed team at once, so Sentinel waited. Check the group, then press Sync now.`);
+    return G0.last;
+  } catch (e) { G0.last = { t: Date.now(), ok: false, error: String(e.message || e).slice(0, 160) }; return G0.last; }
+}
 async function rbxUser(name) { // the real Roblox account behind a username, or null
   try { const r = await j(RBX_USERS + '/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [name], excludeBannedUsers: false }) }); const u = r.data && r.data[0]; if (u && u.id) return { id: String(u.id), name: cleanName(u.name || name, 40) }; } catch {}
   return null;
@@ -239,6 +292,135 @@ async function runOC() {
   }
 }
 const MOD_TYPES = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'];
+// ---- Discord bot (HTTP interactions: no always-on bot process) ----
+const DISCORD = { app: env.DISCORD_APP_ID || '', pub: (env.DISCORD_PUBLIC_KEY || '').trim(), token: env.DISCORD_BOT_TOKEN || '', api: env.DISCORD_TEST_BASE || 'https://discord.com/api/v10' };
+const discordOn = () => !!(DISCORD.app && DISCORD.pub && DISCORD.token);
+let DPUB = null;
+const dKey = () => DPUB ||= crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(DISCORD.pub, 'hex')]), format: 'der', type: 'spki' });
+function dVerify(req) {
+  try {
+    const sig = String(req.headers['x-signature-ed25519'] || ''), ts = String(req.headers['x-signature-timestamp'] || '');
+    if (!/^[a-f0-9]{128}$/.test(sig) || !/^\d{8,12}$/.test(ts) || req._raw == null || !/^[a-f0-9]{64}$/.test(DISCORD.pub)) return false;
+    if (Math.abs(Date.now() / 1000 - +ts) > 300) return false; // stale: could be a replay
+    return crypto.verify(null, Buffer.from(ts + req._raw), dKey(), Buffer.from(sig, 'hex'));
+  } catch { return false; }
+}
+const dEmbed = (title, desc, fields = [], color = 0x5e5ce6) => ({ title: String(title).slice(0, 250), description: String(desc || '').slice(0, 3000), color, fields: fields.filter(f => f[1]).map(([n, v]) => ({ name: n, value: String(v).slice(0, 1000), inline: true })), footer: { text: D.meta ? D.meta.name + ' · Sentinel' : 'Sentinel' }, timestamp: new Date().toISOString() });
+const dBtn = (label, id, style = 2) => ({ type: 2, style, label, custom_id: id });
+function botPost(body) { if (!discordOn() || !D.discord || !D.discord.channel) return false; BOTQ.push({ ch: D.discord.channel, body }); return true; }
+async function sendBot() { await Promise.all(BOTQ.splice(0).map(m => fetch(`${DISCORD.api}/channels/${m.ch}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bot ' + DISCORD.token }, body: JSON.stringify({ allowed_mentions: { parse: [] }, ...m.body }), signal: AbortSignal.timeout(3000) }).catch(() => {}))); }
+async function findPlayer(name) { // quick lookup for the bot: people Sentinel has seen first, then Roblox (Discord wants an answer within 3 seconds)
+  const n = name.toLowerCase(), on = allPlayers().find(p => p.name.toLowerCase() === n); if (on) return { id: on.userId, name: on.name };
+  const k = Object.entries(D.play).find(([, x]) => (x.name || '').toLowerCase() === n); if (k) return { id: +k[0], name: k[1].name };
+  try { const r = await fetch(RBX_USERS + '/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [name], excludeBannedUsers: false }), signal: AbortSignal.timeout(1800) }); const j2 = await r.json(); const x = j2.data && j2.data[0]; if (x) return { id: x.id, name: x.name }; } catch {}
+  return null;
+}
+const DISCORD_COMMANDS = (() => { const pl = { type: 3, name: 'player', description: 'Their Roblox username', required: true }, rs = req => ({ type: 3, name: 'reason', description: 'What happened', required: req, max_length: 300 });
+  return [
+    { name: 'sentinel', description: 'Set up Sentinel in this server', dm_permission: false, options: [
+      { type: 1, name: 'link', description: 'Link this server to your Sentinel workspace', options: [{ type: 3, name: 'code', description: 'The code from Sentinel, Settings, Discord', required: true }] },
+      { type: 1, name: 'me', description: 'Link your Discord account to your Sentinel account', options: [{ type: 3, name: 'code', description: 'Your code from Sentinel, Settings, Discord', required: true }] },
+      { type: 1, name: 'channel', description: 'Post appeals, applications and unban approvals here, with buttons' },
+      { type: 1, name: 'unlink', description: 'Disconnect this server from Sentinel' }] },
+    { name: 'warn', description: 'Warn a player in game', dm_permission: false, options: [pl, rs(true)] },
+    { name: 'kick', description: 'Kick a player from the game', dm_permission: false, options: [pl, rs(true)] },
+    { name: 'mute', description: 'Mute a player in game chat', dm_permission: false, options: [pl, { type: 4, name: 'minutes', description: 'How long', required: true, min_value: 1, max_value: 525600 }, rs(true)] },
+    { name: 'ban', description: 'Ban a player (leave days empty for permanent)', dm_permission: false, options: [pl, rs(true), { type: 4, name: 'days', description: 'Leave empty for a permanent ban', min_value: 1, max_value: 3650 }] },
+    { name: 'unban', description: 'Lift a ban', dm_permission: false, options: [pl, rs(false)] },
+    { name: 'lookup', description: "See a player's status and recent records", dm_permission: false, options: [pl] },
+  ]; })();
+function lookupEmbed(t, base) {
+  const on = allPlayers().find(p => p.userId === t.id), ban = D.bans[t.id], mute = D.mutes[t.id], pl = D.play[t.id], recs = (D.logs[t.id] || []).filter(e => MOD_TYPES.includes(e.type) && e.status !== 'reverted').slice(-5).reverse();
+  return dEmbed(t.name, `[Open in Sentinel](${base}/#/player/${t.id})`, [['Status', on ? `In game (server ${on.server})` : 'Not in game'], ['Ban', ban && live(ban) ? `${ban.expires ? 'Suspended until <t:' + Math.floor(ban.expires / 1000) + ':f>' : 'Permanent'}: ${ban.reason}` : 'None'], ['Mute', mute && live(mute) ? `Until <t:${Math.floor(mute.expires / 1000)}:t>` : 'None'],
+    ['Time played', pl ? fmtMin(Math.round((pl.total || 0) / 60)) : '0 min'], ['Recent records', recs.length ? recs.map(e => `${e.type}: ${e.reason}`).join('\n') : 'Nothing on record']], ban && live(ban) ? 0xe5484d : 0x5e5ce6);
+}
+// ---- "worth a look" signals: hints that a new player might be a banned player's alt. Never acted on automatically. ----
+const nrm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function lev(a, b) { if (Math.abs(a.length - b.length) > 2) return 9; let prev = [...Array(b.length + 1).keys()]; for (let i = 1; i <= a.length; i++) { const cur = [i]; for (let k = 1; k <= b.length; k++) cur[k] = Math.min(prev[k] + 1, cur[k - 1] + 1, prev[k - 1] + (a[i - 1] === b[k - 1] ? 0 : 1)); prev = cur; } return prev[b.length]; }
+function nameLike(a, b) {
+  a = nrm(a); b = nrm(b); if (a.length < 5 || b.length < 5) return false; if (a === b) return true;
+  const sa = a.replace(/\d+$/, ''), sb = b.replace(/\d+$/, ''); if (sa.length >= 5 && sa === sb) return true;
+  return lev(a, b) <= (Math.min(a.length, b.length) >= 8 ? 2 : 1);
+}
+async function signalCheck(req, fresh, joined) {
+  if (D.settings.signals === false || !joined.length) return;
+  const now = Date.now(), staff = new Set(Object.entries(D.members).map(([mid, m]) => String(m.robloxId || (mid[0] === 'r' ? mid.slice(2) : '')))), bans = Object.values(D.bans).filter(live);
+  const cand = [...new Set(joined)].filter(id => !staff.has(String(id)) && !(D.bans[id] && live(D.bans[id])) && !(D.signals[id] && now - D.signals[id].t < 864e5)).slice(0, 20);
+  req._ages ||= {}; let fetched = 0;
+  for (const id of cand) {
+    const name = (D.play[id] || {}).name || String(id), reasons = [];
+    const sim = bans.find(bn => bn.userId !== id && nameLike(name, bn.name)); if (sim) reasons.push({ k: 'name', text: `Name looks like ${sim.name}, who is banned` });
+    if (fresh.has(id)) {
+      const rb = bans.filter(bn => bn.time && now - bn.time < 36e5 && bn.userId !== id).sort((a, b) => b.time - a.time)[0];
+      if (rb) reasons.push({ k: 'ban', text: `First joined ${Math.max(1, Math.round((now - rb.time) / 60000))} min after ${rb.name} was banned` });
+      if (id in req._ages || fetched < 3) {
+        if (!(id in req._ages)) { fetched++; try { const x = await j(RBX_USERS + '/v1/users/' + id); req._ages[id] = x && x.created ? Date.parse(x.created) : null; } catch { req._ages[id] = null; } }
+        const c = req._ages[id]; if (c) { const d = Math.floor((now - c) / 864e5); if (d < 7) reasons.push({ k: 'age', text: `Roblox account is ${d < 1 ? 'less than a day' : d + (d === 1 ? ' day' : ' days')} old` }); }
+      }
+    }
+    const kinds = new Set(reasons.map(r => r.k));
+    if (kinds.has('name') || kinds.size >= 2) { D.signals[id] = { t: now, name, reasons, status: 'open' }; feed(`Worth a look: ${name}`); notify('signals', `Worth a look: ${name}`, reasons.map(r => '• ' + r.text).join('\n') + '\nThese are hints, not proof. Check before acting.', [], 0xf5a524); }
+  }
+  const keys = Object.keys(D.signals).sort((a, b) => D.signals[b].t - D.signals[a].t); for (const [i, k] of keys.entries()) if (i >= 100 || now - D.signals[k].t > 14 * 864e5) delete D.signals[k];
+}
+// ---- shifts ----
+const shEnd = x => x.start + x.mins * 60000;
+function inGameSecs(rid, a, b) { // seconds a Roblox user spent in game between a and b, from their saved sessions
+  const h = (D.hist[rid % SH] || {})[rid]; if (!h) return 0; let t = 0;
+  const add = (s, e) => { const o = Math.min(e, b) - Math.max(s, a); if (o > 0) t += o; };
+  for (const [st, secs] of h.j || []) add(st, st + secs * 1000);
+  if (h.cur) add(h.cur.t, h.cur.t + h.cur.s * 1000);
+  return Math.round(t / 1000);
+}
+const ridOf = mid => { const m = D.members[mid]; return m ? m.robloxId || (mid[0] === 'r' ? mid.slice(2) : null) : null; };
+function shiftView(x, uid) {
+  const now = Date.now(), end = shEnd(x), state = now < x.start ? 'upcoming' : now < end ? 'now' : 'done';
+  const people = x.signups.map(s => { const rid = ridOf(s.uid); let att = null;
+    if (state !== 'upcoming') { if (x.att && s.uid in x.att) att = x.att[s.uid]; else if (rid) att = Math.round(inGameSecs(+rid, x.start, Math.min(end, now)) / 60); }
+    return { uid: s.uid, name: (D.members[s.uid] || {}).name || s.name, linked: !!rid, robloxId: rid, mins: att }; });
+  return { ...x, att: undefined, end, state, people, mine: x.signups.some(s => s.uid === uid), full: x.signups.length >= x.slots };
+}
+// ---- forms ----
+const FTYPES = ['short', 'long', 'choice', 'number', 'roblox', 'yesno'];
+function cleanForm(f, u) { // returns the cleaned form, or an error string
+  f = f && typeof f === 'object' ? f : {};
+  const title = cleanName(f.title, 80); if (!title) return 'Give the form a title.';
+  const fields = (Array.isArray(f.fields) ? f.fields : []).slice(0, 25).map(x => {
+    const type = FTYPES.includes(x && x.type) ? x.type : 'short';
+    return { id: /^[a-f0-9]{6}$/.test(x && x.id) ? x.id : crypto.randomBytes(3).toString('hex'), label: cleanName(x && x.label, 120), type, required: !!(x && x.required),
+      ...(type === 'choice' ? { options: [...new Set((Array.isArray(x.options) ? x.options : String(x.options || '').split(',')).map(o => cleanName(o, 60)).filter(Boolean))].slice(0, 15) } : {}) };
+  }).filter(x => x.label);
+  if (!fields.length) return 'Add at least one question.';
+  if (fields.some(x => x.type === 'choice' && x.options.length < 2)) return 'Choice questions need at least two options, separated by commas.';
+  const kind = ['application', 'report', 'custom'].includes(f.kind) ? f.kind : 'custom', audience = f.audience === 'staff' ? 'staff' : 'public';
+  let rank = null;
+  if (kind === 'application' && f.rank) {
+    const r = D.ranks[f.rank]; if (!r) return 'That rank no longer exists.'; if (!above(u, r.pos)) return 'You can only offer ranks below your own.';
+    if (!fields.some(x => x.type === 'roblox')) return 'Add a "Roblox username" question, so the invite can be locked to the applicant.';
+    rank = f.rank;
+  }
+  return { title, desc: String(f.desc || '').replace(/[\u0000-\u0009\u000b-\u001f<>]/g, '').slice(0, 600).trim(), kind, audience, open: f.open !== false, rank, fields };
+}
+async function readAnswers(form, ans) {
+  const out = []; let whoR = null; ans = ans && typeof ans === 'object' ? ans : {};
+  for (const f of form.fields) {
+    let v = ans[f.id] == null ? '' : String(ans[f.id]);
+    v = f.type === 'long' ? v.replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f<>]/g, '').slice(0, 2000).trim() : cleanName(v, f.type === 'short' ? 300 : 100);
+    if (f.required && !v) return { err: `Please answer: ${f.label}` };
+    if (v && f.type === 'number' && !/^-?\d{1,9}(\.\d{1,3})?$/.test(v)) return { err: `${f.label}: please enter a number.` };
+    if (v && f.type === 'choice' && !f.options.includes(v)) return { err: `${f.label}: please pick one of the options.` };
+    if (v && f.type === 'yesno' && v !== 'Yes' && v !== 'No') return { err: `${f.label}: please answer Yes or No.` };
+    if (v && f.type === 'roblox') {
+      const nm = v.replace(/^@/, ''); if (!/^\w{3,20}$/.test(nm)) return { err: `${f.label}: that is not a Roblox username.` };
+      const ru = await rbxUser(nm); if (!ru) return { err: `${f.label}: we could not find a Roblox account called ${nm}.` }; v = ru.name; if (!whoR) whoR = ru;
+    }
+    out.push({ id: f.id, label: f.label, type: f.type, value: v });
+  }
+  return { answers: out, who: whoR };
+}
+const needSecond = (u, ban) => !!(D.settings.twoPerson && ban && !ban.expires && !u.isOwner); // lifting a permanent ban takes two staff (the owner can always do it alone)
+const DEFAULT_REPLIES = ['Thanks for being honest. We have lifted your ban. Please follow the rules from now on.', 'We reviewed what happened and the ban stays. You can appeal again later.', 'Bans for exploiting are not lifted on appeal.', 'Please tell us more about what happened next time you appeal.'];
+const cleanLinks = (arr, max) => (Array.isArray(arr) ? arr : []).map(x => String(x || '').trim()).filter(x => /^https?:\/\/[^\s<>"'`]{3,300}$/i.test(x)).slice(0, max);
 function logEntry(userId, name, e) {
   const list = (D.logs[userId] ||= []), x = { id: rnd(6), name, status: 'active', time: Date.now(), ...e };
   list.push(x); if (list.length > 500) list.splice(0, list.length - 500);
@@ -261,9 +443,9 @@ function allPlayers() {
   for (const [j, s] of Object.entries(R.servers)) { if (now - s.last > LIVE_MS) continue; for (const p of s.players) out.push({ ...p, server: j.slice(0, 8) }); }
   return out;
 }
-function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null }) {
+function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null, extra = null }) {
   const expires = minutes > 0 ? Date.now() + minutes * 60000 : null;
-  const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId }); feed(`${type}: ${name} (${reason})`, by); return e; };
+  const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId, ...(extra || {}) }); feed(`${type}: ${name} (${reason})`, by); return e; };
   if (action === 'ban') {
     const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
     cmd({ type: 'ban', userId, reason, seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
@@ -353,14 +535,14 @@ async function profile(id) {
   const ban = D.bans[id], mute = D.mutes[id], ws = weekStart(Date.now());
   return { userId: id, name: rb ? rb.name : online ? online.name : local ? local.name : 'User ' + id, displayName: rb ? rb.displayName : online ? online.displayName : '', created: rb ? rb.created : null,
     avatar: (await avatars([id]))[id] || null, online: !!online, server: online ? online.server : null,
-    banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, logbook: (D.logs[id] || []).slice().reverse(),
+    banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, signal: D.signals[id] || null, logbook: (D.logs[id] || []).slice().reverse(),
     play: local ? { total: Math.round(local.total), week: local.weekStart === ws ? Math.round(local.week) : 0, points: local.points } : null,
     reports: D.calls.filter(c => c.from.userId === id).slice(0, 20).map(c => ({ id: c.id, t: c.t, text: c.text, status: c.status })),
     chat: R.chat.filter(m => m.userId === id).slice(-60).reverse(), ...auditExtras(id, online), sessions: D.sessions.filter(s => s.attendees.some(a => a.userId === id)).length };
 }
 
 // ---- backups: daily snapshots, owner downloads, a 30-day recycle bin and a site-admin console ----
-const BK_ROWS = ['core', 'logs', 'play', 'calls'], BK_KEEP_DAYS = 7, TRASH_MS = 30 * 864e5, ADMIN_TOKEN = env.ADMIN_TOKEN || '', CRON_SECRET = env.CRON_SECRET || '';
+const BK_ROWS = ['core', 'logs', 'play', 'calls', 'forms'], BK_KEEP_DAYS = 7, TRASH_MS = 30 * 864e5, ADMIN_TOKEN = env.ADMIN_TOKEN || '', CRON_SECRET = env.CRON_SECRET || '';
 const sbGet = async q => { const r = await sbf(`${SB_URL}/rest/v1/panel_kv?${q}`, { headers: sbHeaders() }); if (!r.ok) throw new Error('Supabase read failed: HTTP ' + r.status); return r.json(); };
 const sbUpsert = async rows => { if (!rows.length) return; const r = await sbf(`${SB_URL}/rest/v1/panel_kv?on_conflict=key`, { method: 'POST', headers: { ...sbHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows) }); if (!r.ok) throw new Error('Supabase write failed: HTTP ' + r.status); };
 const sbDel = q => sbf(`${SB_URL}/rest/v1/panel_kv?${q}`, { method: 'DELETE', headers: { ...sbHeaders(), Prefer: 'return=minimal' } });
@@ -379,12 +561,12 @@ async function restoreSnapshot(wid, label, by) {
   if (!snap.core) return false;
   await snapshot(wid, 'pre' + Math.floor(Date.now() / 1000)); // a way back from this restore
   setWid(wid); await need(...BK_ROWS); const keepHash = D.meta && D.meta.codeHash, keepOc = D.meta && D.meta.oc;
-  Object.assign(D, CORE_FRESH()); ROWS.core.set(snap.core); if (snap.logs) ROWS.logs.set(snap.logs); if (snap.play) ROWS.play.set(snap.play); if (snap.calls) ROWS.calls.set(snap.calls);
+  Object.assign(D, CORE_FRESH()); ROWS.core.set(snap.core); if (snap.logs) ROWS.logs.set(snap.logs); if (snap.play) ROWS.play.set(snap.play); if (snap.calls) ROWS.calls.set(snap.calls); if (snap.forms) ROWS.forms.set(snap.forms);
   migrate(); if (D.meta) { delete D.meta.deleted; if (keepHash) D.meta.codeHash = keepHash; if (keepOc) D.meta.oc = keepOc; else delete D.meta.oc; } audit(by, `Restored the workspace from the backup of ${label.startsWith('pre') ? 'a safety copy' : label}`); return true;
 }
 function backupFile() {
   const core = ROWS.core.get(); if (core.meta) { core.meta = { ...core.meta }; delete core.meta.codeHash; delete core.meta.oc; delete core.meta.deleted; }
-  return { format: 'sentinel-backup', v: 1, exportedAt: new Date().toISOString(), workspace: { id: CTX.wid, name: D.meta.name }, rows: { core, logs: D.logs, play: D.play, calls: D.calls } };
+  return { format: 'sentinel-backup', v: 1, exportedAt: new Date().toISOString(), workspace: { id: CTX.wid, name: D.meta.name }, rows: { core, logs: D.logs, play: D.play, calls: D.calls, forms: { responses: FR.map(({ tok, ...x }) => x) } } };
 }
 function importBackup(data, uid, name) { // returns an error string, or '' when applied
   if (!data || data.format !== 'sentinel-backup' || data.v !== 1 || !data.rows || !data.rows.core || typeof data.rows.core !== 'object' || !data.rows.core.meta) return 'That is not a Sentinel backup file.';
@@ -395,7 +577,7 @@ function importBackup(data, uid, name) { // returns an error string, or '' when 
   Object.assign(D, core); D.meta.id = wid; D.meta.name = name; D.meta.owner = uid; if (keepHash) D.meta.codeHash = keepHash; else delete D.meta.codeHash; if (keepOc) D.meta.oc = keepOc;
   if (!D.members[uid]) D.members[uid] = { name: U ? U.name : 'Owner', rank: Object.keys(D.ranks)[0] || 'admin', joined: Date.now() };
   const l = data.rows.logs, pl = data.rows.play, ca = data.rows.calls;
-  D.logs = l && typeof l === 'object' && !Array.isArray(l) ? l : {}; D.play = pl && typeof pl === 'object' && !Array.isArray(pl) ? pl : {}; D.calls = Array.isArray(ca) ? ca : [];
+  D.logs = l && typeof l === 'object' && !Array.isArray(l) ? l : {}; D.play = pl && typeof pl === 'object' && !Array.isArray(pl) ? pl : {}; D.calls = Array.isArray(ca) ? ca : []; const fr = data.rows.forms; FR = fr && Array.isArray(fr.responses) ? fr.responses.slice(0, 500) : [];
   migrate(); return '';
 }
 async function cronRun() {
@@ -411,12 +593,12 @@ const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><
 .c{background:var(--card);border-radius:12px;box-shadow:0 0 0 .5px var(--ln);padding:16px 18px;margin-bottom:12px}.r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.sp{flex:1}.mu{color:var(--mu);font-size:13px}
 input{height:34px;border:0;border-radius:8px;padding:0 12px;background:rgba(127,127,127,.14);color:inherit;font:inherit;min-width:260px}button{height:30px;padding:0 12px;border:0;border-radius:8px;background:rgba(127,127,127,.18);color:inherit;font:inherit;font-weight:500;cursor:pointer}button.p{background:var(--ac);color:#fff}button.d{background:#ff3b30;color:#fff}
 .b{display:inline-block;font-size:12px;border-radius:99px;padding:1px 9px;background:rgba(127,127,127,.18)}.b.x{background:rgba(255,59,48,.16);color:#d70015}code{font-size:12px;background:rgba(127,127,127,.16);padding:1px 6px;border-radius:5px}</style></head><body><div class="w"><h1>Sentinel admin</h1><p>Recover workspaces that were deleted or tampered with.</p>
-<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div class="c r" id="mf" hidden><b>Reset two-step</b><input id="mu" placeholder="User id, like r_123456" autocomplete="off"><button id="mr">Reset</button><span class="mu" id="mm"></span></div><div id="fb"></div><div id="o"></div></div>
+<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div class="c r" id="ex" hidden><b>Off-site copy</b><span class="mu sp">Download every workspace and account in one file. Keep it somewhere outside Supabase, like your own computer.</span><button id="eb">Download everything</button><span class="mu" id="em"></span></div><div class="c r" id="dc" hidden><b>Discord bot</b><span class="mu sp">Register the slash commands after setting the Discord variables. Run it again whenever Sentinel adds commands.</span><button id="dr">Register commands</button><span class="mu" id="dm"></span></div><div class="c r" id="mf" hidden><b>Reset two-step</b><input id="mu" placeholder="User id, like r_123456" autocomplete="off"><button id="mr">Reset</button><span class="mu" id="mm"></span></div><div id="fb"></div><div id="o"></div></div>
 <script>const $=i=>document.getElementById(i);let T=sessionStorage.getItem('adm')||'';const e=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function call(b){const r=await fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':T},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error '+r.status);return j}
 async function loadFb(){const j=await call({op:'feedback'});$('fb').innerHTML=j.items.length?'<h2 style="font-size:17px;margin:18px 0 10px">Feedback and questions</h2>'+j.items.map(f=>'<div class="c"><div class="r"><span class="b">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="mu">'+e(f.rank)+' · '+e(f.wsName)+' · '+new Date(f.t).toLocaleString()+'</span></div><p style="color:inherit;margin:8px 0;white-space:pre-wrap">'+e(f.text)+'</p><div class="r"><input data-r="'+f.id+'" placeholder="Write a reply" value="'+e(f.reply||'')+'" style="flex:1"><button class="p" data-o="fr" data-i="'+f.id+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="d" data-o="fd" data-i="'+f.id+'">Delete</button></div></div>').join(''):''}
-async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('mf').hidden=false;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
-$('mr').onclick=async()=>{try{const j=await call({op:'mfaReset',uid:$('mu').value.trim()});$('mm').textContent=j.had?'Two-step removed. They can sign in and set it up again.':'That user did not have two-step on.'}catch(x){$('mm').textContent=x.message}};$('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
+async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('mf').hidden=false;$('dc').hidden=false;$('ex').hidden=false;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
+$('eb').onclick=async()=>{try{const j=await call({op:'exportAll'}),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j)],{type:'application/json'}));a.download='sentinel-site-'+new Date().toISOString().slice(0,10)+'.json';a.click();$('em').textContent=j.rows.length+' rows saved.'}catch(x){$('em').textContent=x.message}};$('dr').onclick=async()=>{try{const j=await call({op:'discordRegister'});$('dm').textContent='Registered '+j.count+' commands. They can take a minute to appear.'}catch(x){$('dm').textContent=x.message}};$('mr').onclick=async()=>{try{const j=await call({op:'mfaReset',uid:$('mu').value.trim()});$('mm').textContent=j.had?'Two-step removed. They can sign in and set it up again.':'That user did not have two-step on.'}catch(x){$('mm').textContent=x.message}};$('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
 $('fb').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;try{if(b.dataset.o==='fr')await call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value});else if(confirm('Delete this message?'))await call({op:'feedbackDelete',id:b.dataset.i});loadFb()}catch(x){$('m').textContent=x.message}};
 $('o').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;const w=b.dataset.w,s=$('s'+w);try{
 if(b.dataset.o==='rd'){if(!confirm('Restore this workspace?'))return;await call({op:'restoreDeleted',wid:w});load()}
@@ -463,7 +645,7 @@ mark{background:#fdf2dc;border-radius:4px;padding:0 4px}.draft{background:#fdf2d
 </style></head><body><main><nav>${links}</nav><h1>${LEGAL[name]}</h1><p class="muted">Last updated ${updated}</p>${cfg.legalReviewed ? '' : '<div class="draft"><b>Draft.</b> These documents have not been reviewed by a lawyer. Set LEGAL_REVIEWED to true in your Vercel environment variables once they have, and this notice will disappear.</div>'}${body}</main></body></html>`;
 }
 async function authRoute(req, res, url, p, ip) {
-  const w = limit('auth:' + ip, 20, 60000); if (w) return page(res, 429, 'Too many attempts', `Please wait ${w} seconds and try again.`);
+  const w = limit('auth:' + ip, 20, 60000) || (/\/callback$/.test(p) ? 0 : await slimit('auth:' + ip, 40, 600000)); if (w) return page(res, 429, 'Too many attempts', `Please wait ${w} seconds and try again.`);
   const m = /^\/auth\/(google|roblox)(\/callback)?$/.exec(p); if (!m || req.method !== 'GET') return page(res, 404, 'Not found', 'That page does not exist.');
   const name = m[1], P = PROV[name]; if (!P.id || !P.secret) return page(res, 404, 'Not available', `Sign in with ${name === 'google' ? 'Google' : 'Roblox'} is not set up here.`);
   const redirect = site(req) + '/auth/' + name + '/callback';
@@ -500,6 +682,73 @@ async function authRoute(req, res, url, p, ip) {
   res.writeHead(302, { Location: '/' + (oa.i ? '#/join/' + oa.i : '') }); return res.end();
 }
 
+function reviewForm(u, uid, B, base) { // accept, decline or mark a form response reviewed (website and Discord); returns [status, body]
+if (!has(u, 'forms.review')) return [403, { error: 'Your rank does not allow that.' }];
+  const x = FR.find(y => y.id === B.rid); if (!x) return [404, { error: 'That response no longer exists.' }];
+  if (x.status !== 'new') return [409, { error: 'That response was already reviewed.' }];
+  const dec = ['accept', 'decline', 'reviewed'].includes(B.decision) ? B.decision : null; if (!dec) return [400, { error: 'bad request' }];
+  let link = null;
+  if (dec === 'accept') {
+    const F = D.forms.find(f => f.id === x.form), rk = F && F.kind === 'application' && F.rank && D.ranks[F.rank];
+    if (rk) {
+      if (!x.who) return [400, { error: 'This response has no Roblox username, so an invite cannot be locked to the applicant.' }];
+      if (!above(u, rk.pos)) return [403, { error: `You can only accept applicants into ranks below your own. Ask someone above ${rk.name}.` }];
+      if (Object.keys(D.invites).length >= 20) return [400, { error: 'Too many open invites. Revoke some first.' }];
+      const code = CTX.wid + crypto.randomBytes(8).toString('hex'); D.invites[code] = { rank: F.rank, exp: Date.now() + 7 * 864e5, by: u.user, lock: { id: String(x.who.id), name: x.who.name } }; x.invite = code; link = `${base}/#/join/${code}`;
+    }
+  }
+  x.status = { accept: 'accepted', decline: 'declined', reviewed: 'reviewed' }[dec]; x.reviewer = u.user; x.reviewed = Date.now(); x.note = cleanName(B.note, 300) || null; x.reply = cleanName(B.reply, 600) || null;
+  D.formsNew = Math.max(0, (D.formsNew || 0) - 1); audit(u.user, `${x.status[0].toUpperCase() + x.status.slice(1)} a ${x.formTitle} response${x.who ? ' from ' + x.who.name : ''}${link ? ' and created a locked invite' : ''}`);
+  return [200, { ok: true, link }];
+      }
+function reviewAppeal(u, uid, B) { // accept or deny a ban appeal (website and Discord); returns [status, body]
+if (!has(u, 'appeals.review')) return [403, { error: 'Your rank does not allow that.' }];
+  const a = D.appeals.find(x => x.id === B.id && x.status === 'open'); if (!a) return [404, { error: 'That appeal was already reviewed.' }];
+  const note = cleanName(B.note, 300), reply = cleanName(B.reply, 600);
+  if (B.decision === 'accept') {
+    if (!has(u, 'mod.unban')) return [403, { error: 'Your rank does not allow that.' }];
+    const ban = D.bans[a.uid];
+    if (needSecond(u, ban)) {
+      a.approvals ||= [];
+      if (a.approvals.some(x => x.uid === uid)) return [409, { error: 'You already approved this appeal. A different staff member needs to approve it too.' }];
+      if (!a.approvals.length) { a.approvals.push({ uid, by: u.user, t: Date.now(), note, reply }); audit(u.user, `Approved the appeal from ${a.name} (waiting for a second approval)`); if (!botPost({ embeds: [dEmbed(`Appeal needs a second approval: ${a.name}`, a.text, [['First approval', u.user], ['Banned for', a.banReason]], 0xf5a524)], components: [{ type: 1, components: [dBtn('Give final approval', `ap:${a.id}:a`, 3), dBtn('Deny', `ap:${a.id}:d`, 4)] }] })) notify('appeals', `Appeal needs a second approval: ${a.name}`, a.text, [['First approval', u.user]], 0xf5a524); return [200, { ok: true, pending: true, msg: 'Approved. This is a permanent ban, so one more staff member must approve before they are unbanned.' }]; }
+    }
+    const first = (a.approvals || [])[0];
+    act({ action: 'unban', userId: a.uid, name: a.name, reason: 'Appeal accepted' + (first ? ` (approved by ${first.by} and ${u.user})` : '') + (note ? ': ' + note : ''), by: u.user, byUid: uid }); a.status = 'accepted';
+    a.reply = reply || (first && first.reply) || null;
+  }
+  else if (B.decision === 'deny') { a.status = 'denied'; a.reply = reply || null; delete a.approvals; } else return [400, { error: 'bad request' }];
+  a.by = u.user; a.note = note; a.reviewed = Date.now(); audit(u.user, `${a.status === 'accepted' ? 'Accepted' : 'Denied'} the appeal from ${a.name}`); return [200, { ok: true }];
+    }
+function doAction(u, uid, B) { // one moderation action, shared by the website and the Discord bot; returns [status, body]
+      const reason0 = cleanName(B.reason, 300); let action = B.action, minutes = clampInt(B.minutes, 0, 525600), ruleId = null, reason = reason0 || 'No reason given';
+  if (B.ruleId) {
+    const r = D.rulebook.find(x => x.id === B.ruleId); if (!r) return [404, { error: 'That rule no longer exists' }];
+    const n = (D.logs[B.userId] || []).filter(e => e.ruleId === r.id && e.status !== 'reverted').length, st = r.steps[Math.min(n, r.steps.length - 1)];
+    action = st.type; minutes = st.minutes || 0; ruleId = r.id; reason = `${r.title} (offense ${n + 1})${reason0 ? ': ' + reason0 : ''}`;
+  }
+  if (!ACT_PERM[action]) return [400, { error: 'bad action' }];
+  if (!has(u, action === 'ban' && !(minutes > 0) ? 'mod.permban' : ACT_PERM[action])) return [403, { error: 'Your rank does not allow that.' }];
+  if (action === 'announce') { cmd({ type: 'announce', text: reason }); feed('Announcement: ' + reason, u.user); return [200, { ok: true }]; }
+  if (!Number.isInteger(B.userId) || B.userId < 1) return [400, { error: 'bad userId' }];
+  const nm = cleanName(B.name, 40) || String(B.userId);
+  if (['warn', 'kick', 'mute', 'ban'].includes(action) && u.limit > 0) { // per-rank anti-abuse limit, counted from the logbook
+    const since = Date.now() - 36e5; let c = 0; for (const list of Object.values(D.logs)) for (const e of list) if (e.byUid === uid && e.time > since && MOD_TYPES.includes(e.type)) c++;
+    if (c >= u.limit) return [429, { error: `Your rank allows ${u.limit} moderation actions per hour. Ask a higher rank for help.` }];
+  }
+  if (action === 'points') { const amt = clampInt(B.amount, -100000, 100000); if (!amt) return [400, { error: 'Enter a points amount' }]; addPoints(B.userId, nm, amt, reason, u.user, uid); return [200, { ok: true }]; }
+  if (action === 'unban' && needSecond(u, D.bans[B.userId])) {
+    const ban = D.bans[B.userId], rq = ban.unreq;
+    if (!rq || Date.now() - rq.t > 7 * 864e5) { ban.unreq = { uid, by: u.user, t: Date.now(), reason }; audit(u.user, `Asked to unban ${nm} (a second staff member must approve)`); if (!botPost({ embeds: [dEmbed(`Unban needs a second approval: ${nm}`, reason, [['Asked by', u.user], ['Banned for', ban.reason]], 0xf5a524)], components: [{ type: 1, components: [dBtn('Approve unban', `ub:${B.userId}`, 3)] }] })) notify('bans', `Unban needs a second approval: ${nm}`, reason, [['Asked by', u.user]], 0xf5a524); return [200, { ok: true, pending: true, msg: 'Saved. This is a permanent ban, so a second staff member must also approve the unban.' }]; }
+    if (rq.uid === uid) return [409, { error: 'You already asked to lift this ban. A different staff member needs to approve it.' }];
+    reason = `${rq.reason} (approved by ${rq.by} and ${u.user})`;
+  }
+  const ev = cleanLinks(B.evidence, 5), pnote = cleanName(B.note, 500);
+  const ctx = B.ctx === false || !['warn', 'kick', 'mute', 'ban'].includes(action) ? [] : R.chat.filter(m => m.userId === B.userId && Date.now() - m.t < 36e5).slice(-15).map(m => ({ t: m.t, text: m.text }));
+  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
+  const mw = action === 'mute' ? muteWarn() : null;
+  return [200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) }];
+    }
 const ACT_PERM = { warn: 'mod.warn', kick: 'mod.kick', mute: 'mod.mute', unmute: 'mod.mute', ban: 'mod.ban', unban: 'mod.unban', announce: 'announce', points: 'points.manage' };
 const TYPE_GROUP = { Warned: 'warn', Kicked: 'kick', Muted: 'mute', Unmuted: 'mute', Suspended: 'ban', Banned: 'ban', Unbanned: 'ban', Points: 'points', Note: 'note' };
 const ok = res => send(res, 200, { ok: true });
@@ -511,13 +760,65 @@ const APPEAL_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 h1{font-size:23px;letter-spacing:-.02em;margin:0 0 6px}p{color:var(--mu);margin:0 0 20px}label{display:block;font-weight:600;font-size:13px;margin:14px 0 6px}
 input,textarea{width:100%;border:0;border-radius:9px;padding:10px 12px;font:inherit;color:inherit;background:rgba(127,127,127,.12);box-shadow:inset 0 0 0 .5px var(--ln);outline:0}input:focus,textarea:focus{box-shadow:0 0 0 3px #0a7aff55}textarea{min-height:120px;resize:vertical}
 button{margin-top:20px;width:100%;height:42px;border:0;border-radius:10px;font:600 15px inherit;color:#fff;background:linear-gradient(180deg,#3d9bff,var(--ac));cursor:pointer}button[disabled]{opacity:.5}
-.m{margin-top:14px;font-size:14px;padding:10px 12px;border-radius:9px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}
-</style></head><body><div class="c" id="c"><h1>Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden novalidate><label for="u">Your Roblox username</label><input id="u" maxlength="40" autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" placeholder="Explain what happened and what you will do differently."></textarea><button id="b" disabled>Send appeal</button></form><div id="m"></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
-<script>const w=location.pathname.split('/')[2]||'',$=i=>document.getElementById(i);
-fetch('/api/appeal/info?w='+encodeURIComponent(w)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}$('s').textContent='Appeal a ban in '+j.name+'. Staff will review it and you will see the result when you try to join.';$('f').hidden=false}).catch(()=>$('s').textContent='Could not load this page.');
+.m{margin-top:14px;font-size:14px;padding:10px 12px;border-radius:9px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}.n{background:rgba(10,122,255,.12);color:var(--ac)}.rp{margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(127,127,127,.12);font-size:14px;white-space:pre-wrap}.rp b{display:block;font-size:12px;color:var(--mu);margin-bottom:4px}.lk{display:block;margin-top:8px;padding:10px 12px;border-radius:9px;background:rgba(127,127,127,.12);font:13px/1.4 ui-monospace,Menlo,monospace;word-break:break-all;color:var(--ink);text-decoration:none}
+</style></head><body><div class="c" id="c"><h1 id="h">Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden novalidate><label for="u">Your Roblox username</label><input id="u" maxlength="40" autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" placeholder="Explain what happened and what you will do differently."></textarea><button id="b" disabled>Send appeal</button></form><div id="m"></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
+<script>const w=location.pathname.split('/')[2]||'',rq=new URLSearchParams(location.search).get('r')||'',$=i=>document.getElementById(i);
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+function showStatus(j){$('f').hidden=true;$('h').textContent='Your appeal';$('s').textContent='Appeal in '+j.game+', sent '+new Date(j.t).toLocaleDateString()+'.';$('m').innerHTML='';
+ const st={open:j.waiting2?'Waiting for a final review':'Waiting for review',accepted:'Accepted. You have been unbanned.',denied:'Denied'}[j.status]||j.status;
+ $('m').appendChild(el('div','m '+(j.status==='accepted'?'o':j.status==='denied'?'e':'n'),st));
+ if(j.reply){const r=el('div','rp');r.appendChild(el('b','','Message from staff'));r.appendChild(el('div','',j.reply));$('m').appendChild(r)}}
+if(rq){fetch('/api/appeal/status?w='+encodeURIComponent(w)+'&r='+encodeURIComponent(rq)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}showStatus(j)}).catch(()=>$('s').textContent='Could not load this page.')}
+else fetch('/api/appeal/info?w='+encodeURIComponent(w)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}$('s').textContent='Appeal a ban in '+j.name+'. After sending, you get a private link to check the result.';$('f').hidden=false}).catch(()=>$('s').textContent='Could not load this page.');
 const gate=()=>{$('b').disabled=!($('u').value.trim()&&$('t').value.trim())};$('u').oninput=$('t').oninput=gate;
-$('f').onsubmit=async e=>{e.preventDefault();if($('b').disabled)return;$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();if(r.ok){$('f').hidden=true;$('m').innerHTML='<div class="m o">Appeal sent. Staff will review it soon.</div>'}else{$('m').innerHTML='<div class="m e"></div>';$('m').firstChild.textContent=j.error||'Something went wrong.';gate()}}catch{$('m').innerHTML='<div class="m e">No connection. Try again.</div>';gate()}};</script></body></html>`;
+$('f').onsubmit=async e=>{e.preventDefault();if($('b').disabled)return;$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();
+ if(r.ok){$('f').hidden=true;$('m').appendChild(el('div','m o','Appeal sent. Staff will review it soon.'));if(j.check){const b=el('div','rp');b.appendChild(el('b','','Save this link to check the result and read any reply from staff'));const a=el('a','lk',j.check);a.href=j.check;b.appendChild(a);$('m').appendChild(b)}}
+ else{$('m').appendChild(el('div','m e',j.error||'Something went wrong.'));gate()}}catch{$('m').innerHTML='';$('m').appendChild(el('div','m e','No connection. Try again.'));gate()}};</script></body></html>`;
 
+const FORM_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex"><title>Form</title><style>
+:root{--bg:#e9eefb;--card:rgba(255,255,255,.84);--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.14)}@media(prefers-color-scheme:dark){:root{--bg:#0d1020;--card:rgba(44,44,48,.82);--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.18)}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px 16px;background:radial-gradient(40% 45% at 15% 20%,#8ab8ff55,transparent 70%),radial-gradient(40% 45% at 85% 85%,#c9a1ff44,transparent 70%),var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif}
+.c{width:100%;max-width:560px;background:var(--card);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border-radius:22px;padding:34px 30px;box-shadow:0 0 0 .5px var(--ln),0 24px 64px rgba(20,24,40,.2)}
+.g{font-size:12px;font-weight:650;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px}h1{font-size:25px;letter-spacing:-.02em;margin:0 0 6px}#s{color:var(--mu);margin:0 0 6px;white-space:pre-wrap}
+label{display:block;font-weight:600;font-size:14px;margin:20px 0 7px}label i{color:#ff453a;font-style:normal;margin-left:3px}
+input,textarea,select{width:100%;border:0;border-radius:10px;padding:11px 12px;font:inherit;color:inherit;background:rgba(127,127,127,.12);box-shadow:inset 0 0 0 .5px var(--ln);outline:0}input:focus,textarea:focus,select:focus{box-shadow:0 0 0 3px #0a7aff55}textarea{min-height:110px;resize:vertical}
+button{margin-top:26px;width:100%;height:44px;border:0;border-radius:11px;font:600 15px inherit;color:#fff;background:linear-gradient(180deg,#3d9bff,var(--ac));cursor:pointer}button[disabled]{opacity:.5}
+.m{margin-top:16px;font-size:14px;padding:11px 13px;border-radius:10px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.n{background:rgba(10,122,255,.12);color:var(--ac)}
+.rp{margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(127,127,127,.12);font-size:14px;white-space:pre-wrap}.rp b{display:block;font-size:12px;color:var(--mu);margin-bottom:4px}
+.lk{display:block;margin-top:8px;padding:10px 12px;border-radius:9px;background:rgba(127,127,127,.12);font:13px/1.4 ui-monospace,Menlo,monospace;word-break:break-all;color:var(--ink);text-decoration:none}.go{display:block;margin-top:12px;text-align:center;padding:12px;border-radius:11px;background:linear-gradient(180deg,#3d9bff,var(--ac));color:#fff;font-weight:600;text-decoration:none}
+.x{font-size:12px;color:var(--mu);margin-top:20px;text-align:center}.hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+</style></head><body><div class="c"><div class="g" id="g"></div><h1 id="h">Loading…</h1><p id="s"></p><form id="f" hidden novalidate><div id="q"></div><input class="hp" id="hp" tabindex="-1" autocomplete="off" aria-hidden="true"><button id="b">Send</button></form><div id="m"></div><div class="x">Answers go to this game's staff team through Sentinel.</div></div>
+<script>const pr=location.pathname.split('/'),w=pr[2]||'',fid=pr[3]||'',rq=new URLSearchParams(location.search).get('r')||'',$=i=>document.getElementById(i);let F=null;
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const msg=(c,t)=>{$('m').innerHTML='';$('m').appendChild(el('div','m '+c,t))};
+function status(j){$('f').hidden=true;$('g').textContent=j.game;$('h').textContent=j.title;$('s').textContent='Sent '+new Date(j.t).toLocaleDateString()+'.';
+ msg(j.status==='accepted'?'o':j.status==='declined'?'e':'n',{new:'Waiting for review',accepted:'Accepted',declined:'Not accepted this time',reviewed:'Reviewed by staff'}[j.status]||j.status);
+ if(j.reply){const r=el('div','rp');r.appendChild(el('b','','Message from staff'));r.appendChild(el('div','',j.reply));$('m').appendChild(r)}
+ if(j.invite){const r=el('div','rp');r.appendChild(el('b','','You are invited to the staff team'));r.appendChild(el('div','','Open this link and sign in with the Roblox account @'+j.inviteFor+'. It only works for that account and expires in 7 days.'));const a=el('a','go','Join the team');a.href=j.invite;r.appendChild(a);$('m').appendChild(r)}
+ else if(j.inviteUsed){$('m').appendChild(el('div','rp','Your invite has been used. Welcome aboard.'))}}
+function build(j){F=j;document.title=j.title;$('g').textContent=j.game;$('h').textContent=j.title;$('s').textContent=j.desc||'';const q=$('q');
+ for(const f of j.fields){const l=el('label','',f.label);l.htmlFor='q_'+f.id;if(f.required)l.appendChild(el('i','','*'));q.appendChild(l);let i;
+  if(f.type==='long')i=el('textarea');else if(f.type==='choice'||f.type==='yesno'){i=el('select');i.appendChild(el('option','','Choose…')).value='';for(const o of f.type==='yesno'?['Yes','No']:f.options)i.appendChild(el('option','',o)).value=o}
+  else{i=el('input');i.maxLength=f.type==='short'?300:100;if(f.type==='number')i.inputMode='decimal';if(f.type==='roblox'){i.placeholder='Roblox username';i.autocomplete='off';i.spellcheck=false}}
+  i.id='q_'+f.id;i.dataset.id=f.id;q.appendChild(i)}
+ $('f').hidden=false}
+if(rq)fetch('/api/form/status?w='+encodeURIComponent(w)+'&f='+encodeURIComponent(fid)+'&r='+encodeURIComponent(rq)).then(r=>r.json()).then(j=>{if(j.error){$('h').textContent='Not found';$('s').textContent=j.error;return}status(j)}).catch(()=>{$('h').textContent='Could not load';$('s').textContent='Check your connection and try again.'});
+else fetch('/api/form/info?w='+encodeURIComponent(w)+'&f='+encodeURIComponent(fid)).then(r=>r.json()).then(j=>{if(j.error){$('h').textContent='Form closed';$('s').textContent=j.error;return}build(j)}).catch(()=>{$('h').textContent='Could not load';$('s').textContent='Check your connection and try again.'});
+$('f').onsubmit=async e=>{e.preventDefault();const ans={};for(const i of $('q').querySelectorAll('[data-id]'))ans[i.dataset.id]=i.value.trim();
+ const miss=F.fields.find(f=>f.required&&!ans[f.id]);if(miss){msg('e','Please answer: '+miss.label);const x=$('q_'+miss.id);if(x)x.focus();return}
+ $('b').disabled=true;try{const r=await fetch('/api/form/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,f:fid,answers:ans,website:$('hp').value})}),j=await r.json();
+  if(r.ok){$('f').hidden=true;msg('o','Sent. Staff will review it soon.');if(j.check){const b=el('div','rp');b.appendChild(el('b','','Save this link to check the result'+(F.kind==='application'?' and get your invite if you are accepted':'')));const a=el('a','lk',j.check);a.href=j.check;b.appendChild(a);$('m').appendChild(b)}}
+  else{msg('e',j.error||'Something went wrong.');$('b').disabled=false}}catch{msg('e','No connection. Try again.');$('b').disabled=false}};</script></body></html>`;
+const STATUS_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Sentinel status</title><style>
+:root{--bg:#f5f5f7;--card:#fff;--ink:#1d1d1f;--mu:#6e6e73;--ln:rgba(0,0,0,.1)}@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--card:#2a2a2d;--ink:#f5f5f7;--mu:#98989f;--ln:rgba(255,255,255,.12)}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;padding:48px 16px}.w{max-width:560px;margin:0 auto}h1{font-size:26px;letter-spacing:-.02em;margin:0 0 4px}p{color:var(--mu);margin:0 0 22px}
+.big{display:flex;align-items:center;gap:12px;padding:18px 20px;border-radius:16px;background:var(--card);box-shadow:0 0 0 .5px var(--ln);font-weight:600;font-size:17px;margin-bottom:14px}.d{width:12px;height:12px;border-radius:50%;background:#98989f;flex:none}.d.g{background:#30d158}.d.r{background:#ff453a}.d.y{background:#ff9f0a}
+.c{background:var(--card);border-radius:16px;box-shadow:0 0 0 .5px var(--ln)}.row{display:flex;align-items:center;gap:12px;padding:14px 20px;border-top:.5px solid var(--ln)}.row:first-child{border-top:0}.row span{flex:1}.row small{color:var(--mu)}.x{font-size:12px;color:var(--mu);text-align:center;margin-top:18px}a{color:#0a7aff}</style></head>
+<body><div class="w"><h1>Sentinel status</h1><p>Live health of this Sentinel site. Checked every 30 seconds.</p><div class="big"><span class="d" id="bd"></span><span id="bt">Checking…</span></div><div class="c" id="rows"></div><div class="x">For uptime monitors: <a href="/api/status">/api/status</a> returns JSON, with HTTP 503 when the database is down.</div></div>
+<script>const $=i=>document.getElementById(i);const row=(ok,t,s)=>'<div class="row"><span class="d '+(ok===null?'':ok?'g':'r')+'"></span><span>'+t+'</span><small>'+s+'</small></div>';
+async function go(){try{const j=await (await fetch('/api/status',{cache:'no-store'})).json();$('bd').className='d '+(j.ok?'g':'r');$('bt').textContent=j.ok?'All systems working':'Something is wrong. We are on it.';
+ $('rows').innerHTML=row(true,'Website','Responding')+row(j.database.ok,'Database',j.database.ok?j.database.ms+' ms':'Not reachable')+row(j.backups.ok,'Nightly backups',j.backups.lastRun?'Last run '+new Date(j.backups.lastRun).toLocaleString():'Not run yet')+row(j.discordBot?true:null,'Discord bot',j.discordBot?'Set up':'Not set up on this site')+row(j.signIn.length?true:false,'Sign-in',j.signIn.map(x=>x[0].toUpperCase()+x.slice(1)).join(' and ')||'Not set up')}
+ catch{$('bd').className='d r';$('bt').textContent='The website is not responding.';$('rows').innerHTML=''}}go();setInterval(go,30000);</script></body></html>`;
 
 async function route(req, res, url, p) {
   try {
@@ -525,6 +826,37 @@ async function route(req, res, url, p) {
     if (req.method === 'GET' && p === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(fs.readFileSync(path.join(__dirname, '..', 'index.html'))); }
     if (req.method === 'GET' && p.startsWith('/legal/')) { const n = p.slice(7); if (!LEGAL[n]) return send(res, 404, { error: 'not found' }); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(legalPage(n)); }
     if (req.method === 'GET' && /^\/appeal\/[a-f0-9]{12}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(APPEAL_PAGE); }
+    if (req.method === 'GET' && /^\/f\/[a-f0-9]{12}\/[a-f0-9]{6}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(FORM_PAGE); }
+    if (p === '/api/form/info' || p === '/api/form/status' || (p === '/api/form/submit' && req.method === 'POST')) {
+      const A = req.method === 'POST' ? await body(req) : Object.fromEntries(url.searchParams), wid = String(A.w || ''), fid = String(A.f || '');
+      const w0 = p === '/api/form/submit' ? (limit('form:' + ip, 6, 3600000) || limit('formw:' + wid, 150, 3600000) || await slimit('form:' + ip, 10, 3600000)) : limit('formi:' + ip, 60, 60000); if (w0) return tooMany(res, w0);
+      if (!/^[a-f0-9]{12}$/.test(wid) || !/^[a-f0-9]{6}$/.test(fid)) return send(res, 404, { error: 'This form link is not valid.' });
+      setWid(wid); await need('core', ...(p === '/api/form/info' ? [] : ['forms'])); const F = D.meta && !D.meta.deleted && (D.forms || []).find(x => x.id === fid);
+      if (p === '/api/form/status') {
+        const m = /^([a-f0-9]{8})\.([\w-]{12})$/.exec(String(A.r || '')), x = m && FR.find(y => y.id === m[1] && y.form === fid);
+        if (!x || !x.tok || !same(x.tok, m[2])) return send(res, 404, { error: 'We could not find that response. It may be too old.' });
+        const inv = x.invite && D.invites[x.invite] && D.invites[x.invite].exp > Date.now() ? `${site(req)}/#/join/${x.invite}` : null;
+        return send(res, 200, { status: x.status, reply: x.reply || null, title: x.formTitle, game: D.meta.name, t: x.t, invite: inv, inviteFor: inv && x.who ? x.who.name : null, inviteUsed: !!(x.invite && !D.invites[x.invite] && x.status === 'accepted') });
+      }
+      if (!F || F.audience !== 'public' || !F.open) return send(res, 404, { error: 'This form is closed or no longer exists.' });
+      if (p === '/api/form/info') return send(res, 200, { title: F.title, desc: F.desc, kind: F.kind, game: D.meta.name, fields: F.fields.map(({ id, label, type, required, options }) => ({ id, label, type, required, options })) });
+      if (A.website) return send(res, 200, { ok: true }); // a bot filled the hidden field
+      const r = await readAnswers(F, A.answers); if (r.err) return send(res, 400, { error: r.err });
+      if (r.who && FR.some(x => x.form === fid && x.status === 'new' && x.who && x.who.id === r.who.id)) return send(res, 409, { error: 'You already sent this form. Please wait for staff to review it.' });
+      const id = crypto.randomBytes(4).toString('hex'), tok = rnd(9);
+      FR.unshift({ id, tok, form: fid, formTitle: F.title, kind: F.kind, t: Date.now(), answers: r.answers, who: r.who, status: 'new' }); if (FR.length > 500) FR.length = 500;
+      D.formsNew = (D.formsNew || 0) + 1; feed(`New ${F.title} response${r.who ? ' from ' + r.who.name : ''}`);
+      if (!botPost({ embeds: [dEmbed(`New response: ${F.title}`, r.answers.slice(0, 6).map(a => `**${a.label}**\n${(a.value || '—').slice(0, 300)}`).join('\n\n'), [['From', r.who ? r.who.name : null]], 0x0a7aff)], components: [{ type: 1, components: F.kind === 'custom' ? [dBtn('Mark reviewed', `fr:${id}:r`, 1)] : [dBtn(F.kind === 'application' && F.rank ? 'Accept and invite' : 'Accept', `fr:${id}:a`, 3), dBtn('Decline', `fr:${id}:d`, 4)] }] })) notify('forms', `New response: ${F.title}`, r.who ? `From ${r.who.name}` : 'Someone sent the form', [], 0x0a7aff);
+      return send(res, 200, { ok: true, check: `${site(req)}/f/${wid}/${fid}?r=${id}.${tok}` });
+    }
+    if (req.method === 'GET' && p === '/api/appeal/status') {
+      const wid = String(url.searchParams.get('w') || ''), m = /^([a-f0-9]{8})\.([\w-]{12})$/.exec(String(url.searchParams.get('r') || ''));
+      const w0 = limit('appst:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
+      if (!/^[a-f0-9]{12}$/.test(wid) || !m) return send(res, 404, { error: 'This link is not valid.' });
+      setWid(wid); await need('core'); const a = D.meta && !D.meta.deleted && D.appeals.find(x => x.id === m[1]);
+      if (!a || !a.tok || !same(a.tok, m[2])) return send(res, 404, { error: 'We could not find that appeal. It may be too old.' });
+      return send(res, 200, { status: a.status, reply: a.reply || null, t: a.t, reviewed: a.reviewed || null, game: D.meta.name, waiting2: !!(a.approvals && a.approvals.length && a.status === 'open') });
+    }
     if (req.method === 'GET' && p === '/api/appeal/info') {
       const wid = String(url.searchParams.get('w') || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This appeal link is not valid.' });
       const w0 = limit('appinfo:' + ip, 60, 60000); if (w0) return tooMany(res, w0);
@@ -534,7 +866,7 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'POST' && p === '/api/appeal') {
       const A = await body(req), wid = String(A.w || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This appeal link is not valid.' });
-      const w0 = limit('appeal:' + ip, 5, 3600000) || limit('appeali:' + ip, 8, APPEAL_WINDOW) || limit('appealw:' + wid, 60, 3600000); if (w0) return tooMany(res, w0);
+      const w0 = limit('appeal:' + ip, 5, 3600000) || limit('appeali:' + ip, 8, APPEAL_WINDOW) || limit('appealw:' + wid, 60, 3600000) || await slimit('appeal:' + ip, 8, 864e5); if (w0) return tooMany(res, w0);
       const uname = cleanName(A.username, 40), text = cleanName(A.text, 1000); if (!/^\w{3,20}$/.test(uname)) return send(res, 400, { error: 'Enter your exact Roblox username.' });
       if (!text) return send(res, 400, { error: 'Write a short note for staff first.' });
       setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
@@ -543,14 +875,27 @@ async function route(req, res, url, p) {
       if (D.appeals.some(x => x.uid === id && x.status === 'open')) return send(res, 409, { error: 'You already have an appeal waiting for review.' });
       const recent = D.appeals.filter(x => x.uid === id && Date.now() - x.t < APPEAL_WINDOW).sort((a, b) => b.t - a.t); // anti-spam: 2 appeals per player every 5 days
       if (recent.length >= APPEAL_MAX) { const wait = recent[APPEAL_MAX - 1].t + APPEAL_WINDOW - Date.now(), d = Math.ceil(wait / 864e5), h = Math.ceil(wait / 36e5); return send(res, 429, { error: `You have used both appeals for now. You can send another in ${d > 1 ? d + ' days' : h > 1 ? h + ' hours' : 'about an hour'}.` }); }
-      D.appeals.unshift({ id: crypto.randomBytes(4).toString('hex'), uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null }); D.appeals.length = Math.min(D.appeals.length, 200);
-      feed(`Ban appeal from ${ban.name || uname}`); notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
-      return ok(res);
+      const aid = crypto.randomBytes(4).toString('hex'), tok = rnd(9);
+      D.appeals.unshift({ id: aid, tok, uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null, entry: ban.entry || null }); D.appeals.length = Math.min(D.appeals.length, 200);
+      feed(`Ban appeal from ${ban.name || uname}`);
+      if (!botPost({ embeds: [dEmbed(`Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason], ['Banned by', ban.by]], 0x0a7aff)], components: [{ type: 1, components: [dBtn('Accept and unban', `ap:${aid}:a`, 3), dBtn('Deny', `ap:${aid}:d`, 4)] }] })) notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
+      return send(res, 200, { ok: true, check: `${site(req)}/appeal/${wid}?r=${aid}.${tok}` });
     }
     if (p === '/api/cron' && (req.method === 'GET' || req.method === 'POST')) {
       const w0 = limit('cron:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
       const auth = String(req.headers.authorization || '').replace(/^Bearer /, ''); if (!(CRON_SECRET.length >= 16 && same(auth, CRON_SECRET)) && !(ADMIN_TOKEN.length >= 16 && same(auth, ADMIN_TOKEN))) return send(res, 403, { error: 'Not allowed' });
-      return send(res, 200, await cronRun());
+      let r0; try { r0 = await cronRun(); } catch (e) { await opsAlert('Nightly job failed', String((e && e.message) || e).slice(0, 400)); throw e; }
+      try { const rl = await sbGet('select=key&key=like.rl:*'), cut = Math.floor(Date.now() / 60000), old = rl.map(x => x.key).filter(k2 => +k2.split(':')[1] < cut); for (let i = 0; i < old.length; i += 80) await sbDel(`key=in.(${old.slice(i, i + 80).join(',')})`); r0.limiterRowsCleared = old.length; } catch {}
+      await need('glob'); G.lastCron = { t: Date.now(), ok: !r0.partial, snapshotted: r0.snapshotted };
+      if (r0.partial) await opsAlert('Nightly backup did not finish', `Backed up ${r0.snapshotted} workspaces before running out of time. The rest will be picked up tomorrow.`);
+      return send(res, 200, r0);
+    }
+    if (req.method === 'GET' && (p === '/status' || p === '/api/status')) {
+      const w0 = limit('status:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
+      const t0 = Date.now(); let dbOk = true; try { await need('glob'); } catch { dbOk = false; }
+      const st = { ok: dbOk, time: new Date().toISOString(), database: { ok: dbOk, ms: Date.now() - t0 }, backups: { lastRun: dbOk && G.lastCron ? new Date(G.lastCron.t).toISOString() : null, ok: dbOk && G.lastCron ? G.lastCron.ok && Date.now() - G.lastCron.t < 36 * 36e5 : null }, discordBot: discordOn(), signIn: providers() };
+      if (p === '/api/status') { res.writeHead(dbOk ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(st)); }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(STATUS_PAGE);
     }
     if (req.method === 'GET' && p === '/admin') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(ADMIN_PAGE); }
     if (req.method === 'POST' && p === '/admin/api') {
@@ -559,6 +904,16 @@ async function route(req, res, url, p) {
       if (!same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
       const A = await body(req), wid = String(A.wid || '');
       if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
+      if (A.op === 'exportAll') {
+        const rows = (await sbGet('select=key,value,version&key=like.*&order=key')).filter(r => !/^(bk|rl):/.test(r.key)), out = JSON.stringify({ format: 'sentinel-site-export', v: 1, exportedAt: new Date().toISOString(), rows });
+        if (out.length > 4e6) return send(res, 413, { error: 'Your site is too big to download here. Use the Supabase CLI (supabase db dump) instead.' });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(out);
+      }
+      if (A.op === 'discordRegister') {
+        if (!discordOn()) return send(res, 400, { error: 'Set DISCORD_APP_ID, DISCORD_PUBLIC_KEY and DISCORD_BOT_TOKEN in Vercel first, then redeploy.' });
+        const r = await fetch(`${DISCORD.api}/applications/${DISCORD.app}/commands`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bot ' + DISCORD.token }, body: JSON.stringify(DISCORD_COMMANDS), signal: AbortSignal.timeout(8000) });
+        const t = await r.text(); return r.ok ? send(res, 200, { ok: true, count: DISCORD_COMMANDS.length }) : send(res, 400, { error: `Discord said ${r.status}: ${t.slice(0, 200)}` });
+      }
       if (A.op === 'mfaReset') {
         const t = String(A.uid || '').trim(); if (!/^[gr]_\d{1,32}$/.test(t)) return send(res, 400, { error: 'A user id looks like r_123456 or g_123456.' });
         setUid(t); await need('user'); if (!U) return send(res, 404, { error: 'No such user' }); const had = !!(U.mfa && U.mfa.on); delete U.mfa; delete U.mfaPending; return send(res, 200, { ok: true, had });
@@ -584,6 +939,69 @@ async function route(req, res, url, p) {
     }
     if (p.startsWith('/auth/')) return await authRoute(req, res, url, p, ip);
 
+    if (req.method === 'POST' && p === '/api/discord') {
+      if (!DISCORD.pub) return send(res, 404, { error: 'Discord is not set up on this site.' });
+      if (!dVerify(req)) return send(res, 401, { error: 'invalid request signature' });
+      const I = await body(req);
+      if (I.type === 1) return send(res, 200, { type: 1 }); // Discord checking the endpoint
+      const reply = (content, extra = {}) => send(res, 200, { type: 4, data: { content: String(content).slice(0, 1900), flags: 64, allowed_mentions: { parse: [] }, ...extra } });
+      const gid = String(I.guild_id || ''), du = I.member && I.member.user;
+      if (!/^\d{5,25}$/.test(gid) || !du) return reply('Use Sentinel commands inside your Discord server.');
+      const did = String(du.id), perms = BigInt(String(I.member.permissions || '0').replace(/\D/g, '') || '0'), manage = (perms & 0x20n) === 0x20n || (perms & 0x8n) === 0x8n;
+      const wl = limit('dsc:' + did, 30, 60000); if (wl) return reply(`Slow down a little. Try again in ${wl} seconds.`);
+      const D0 = I.data || {}, sub = I.type === 2 && D0.name === 'sentinel' ? (D0.options || [])[0] || {} : null, val = (o, n) => (((o && o.options) || []).find(x => x.name === n) || {}).value;
+      if (sub && sub.name === 'link') {
+        if (!manage) return reply('You need the Manage Server permission to link this server.');
+        const m = /^([a-f0-9]{12})-([A-Za-z0-9]{8})$/.exec(String(val(sub, 'code') || '').trim()); if (!m) return reply('That code does not look right. Copy it from Sentinel, Settings, Discord.');
+        setWid(m[1]); CTX.guild = gid; await need('core', 'dguild');
+        const c = D.meta && !D.meta.deleted && D.discordCodes[m[2]]; if (!c || c.kind !== 'guild' || c.exp < Date.now()) return reply('That code has expired or was already used. Make a new one in Sentinel.');
+        if (DG.wid && DG.wid !== CTX.wid) return reply('This server is already linked to another Sentinel workspace. Unlink it there first.');
+        const same0 = D.discord && D.discord.guild === gid;
+        if (D.discord && !same0 && /^\d{5,25}$/.test(D.discord.guild)) return reply('This workspace is linked to a different Discord server. Unlink it in Sentinel first.');
+        delete D.discordCodes[m[2]];
+        D.discord = { guild: gid, at: Date.now(), by: c.by, channel: same0 ? D.discord.channel : null, users: same0 ? D.discord.users : {} }; DG = { wid: CTX.wid };
+        audit(c.by, 'Linked a Discord server'); return reply(`Linked to **${D.meta.name}**.\nNext: run \`/sentinel channel\` in your staff channel, and ask each staff member to run \`/sentinel me\` with the code from their Sentinel settings.`);
+      }
+      CTX.guild = gid; await need('dguild'); if (!DG.wid) return reply('This server is not linked to Sentinel yet. The owner can link it from Sentinel, Settings, Discord.');
+      setWid(DG.wid); await need('core', 'logs', 'play', 'cmds', 'live', 'chat', 'forms');
+      if (!D.meta || D.meta.deleted || !D.discord || D.discord.guild !== gid) return reply('This server is no longer linked. Link it again from Sentinel.');
+      if (sub && sub.name === 'me') {
+        const code = String(val(sub, 'code') || '').trim().toUpperCase(), c = D.discordCodes[code];
+        if (!c || c.kind !== 'user' || c.exp < Date.now() || !D.members[c.uid]) return reply('That code has expired or was already used. Make a new one in Sentinel, Settings, Discord.');
+        for (const [k2, v2] of Object.entries(D.discord.users)) if (v2 === c.uid) delete D.discord.users[k2];
+        D.discord.users[did] = c.uid; delete D.discordCodes[code]; audit(D.members[c.uid].name, 'Linked their Discord account'); return reply(`Done. Your Discord account is linked to **${D.members[c.uid].name}** in Sentinel. Commands now use your Sentinel rank.`);
+      }
+      if (sub && (sub.name === 'channel' || sub.name === 'unlink')) {
+        if (!manage) return reply('You need the Manage Server permission for that.');
+        if (sub.name === 'channel') { const ch = String(I.channel_id || (I.channel && I.channel.id) || ''); if (!/^\d{5,25}$/.test(ch)) return reply('Run this inside a text channel.'); D.discord.channel = ch; audit('Discord', 'Set the Discord alerts channel'); return reply('Sentinel will post ban appeals, applications and unban approvals in this channel, with buttons. Make sure the bot can send messages here.'); }
+        delete D.discord; DG = {}; audit('Discord', 'Unlinked the Discord server'); return reply('This server is no longer linked to Sentinel.');
+      }
+      const muid = D.discord.users[did], mem = muid && D.members[muid];
+      if (!mem) return reply('Link your Discord account first: in Sentinel open Settings, Discord, copy your code, then run `/sentinel me code:YOURCODE` here.');
+      const u = who(muid);
+      if (D.meta.require2fa && isAdminLevel(u)) { setUid(muid); await need('user'); if (!(U && U.mfa && U.mfa.on)) return reply('This workspace requires two-step verification for your role. Turn it on in Sentinel, Settings, Security first.'); }
+      if (I.type === 2) {
+        const cn = D0.name; if (!['warn', 'kick', 'mute', 'ban', 'unban', 'lookup'].includes(cn)) return reply('Unknown command.');
+        const pname = cleanName(val(D0, 'player'), 40).replace(/^@/, ''); if (!/^\w{3,20}$/.test(pname)) return reply('Type their exact Roblox username.');
+        const t = await findPlayer(pname); if (!t) return reply(`Could not find a Roblox player called ${pname}.`);
+        if (cn === 'lookup') return reply('', { embeds: [lookupEmbed(t, site(req))] });
+        const B2 = { action: cn, userId: t.id, name: t.name, reason: cleanName(val(D0, 'reason'), 300) };
+        if (cn === 'mute') B2.minutes = clampInt(val(D0, 'minutes'), 1, 525600);
+        if (cn === 'ban') B2.minutes = val(D0, 'days') ? clampInt(val(D0, 'days'), 1, 3650) * 1440 : 0;
+        const [c, r] = doAction(u, muid, B2); if (c !== 200) return reply(r.error || 'That did not work.');
+        return reply(r.pending ? r.msg : `${{ warn: 'Warned', kick: 'Kicked', mute: 'Muted', ban: B2.minutes ? 'Suspended' : 'Banned', unban: 'Unbanned' }[cn]} **${t.name}**${['mute', 'ban'].includes(cn) && B2.minutes ? ' for ' + fmtMin(B2.minutes) : ''}. Reason: ${B2.reason || 'No reason given'}${r.warn ? '\n⚠️ ' + r.warn : ''}`);
+      }
+      if (I.type === 3) {
+        const [k, a, b2] = String(D0.custom_id || '').split(':'); let c, r, label;
+        if (k === 'ap') { [c, r] = reviewAppeal(u, muid, { id: a, decision: b2 === 'a' ? 'accept' : 'deny' }); label = r.pending ? `Approved by ${u.user}. One more staff member needs to approve.` : `${b2 === 'a' ? 'Accepted' : 'Denied'} by ${u.user}`; }
+        else if (k === 'ub' && /^\d+$/.test(a)) { [c, r] = doAction(u, muid, { action: 'unban', userId: +a, name: (D.bans[+a] || {}).name || a, reason: 'Approved from Discord' }); label = r.pending ? `Requested by ${u.user}. Waiting for a second approval.` : `Unbanned by ${u.user}`; }
+        else if (k === 'fr') { [c, r] = reviewForm(u, muid, { rid: a, decision: { a: 'accept', d: 'decline', r: 'reviewed' }[b2] }, site(req)); label = `${{ a: 'Accepted', d: 'Declined', r: 'Marked reviewed' }[b2] || 'Reviewed'} by ${u.user}${r && r.link ? `\nInvite, locked to the applicant: ${r.link}` : ''}`; }
+        else return reply('That button no longer works.');
+        if (c !== 200) return reply(r.error || 'That did not work.');
+        return send(res, 200, { type: 7, data: { content: label, embeds: (I.message && I.message.embeds) || [], components: r.pending ? (I.message && I.message.components) || [] : [], allowed_mentions: { parse: [] } } });
+      }
+      return reply('That is not supported.');
+    }
     if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
       const b = await body(req), k = String(b.key || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
       if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
@@ -600,7 +1018,10 @@ async function route(req, res, url, p) {
       const sv = Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1; if (sv > (D.meta.scriptV || 0)) D.meta.scriptV = sv; // the highest version seen, so old servers that are still shutting down don't matter
       if (!D.meta.connectedAt) D.meta.connectedAt = Date.now();
       if (chatty && rule('flaggedmute').enabled) await need('logs');
-      return send(res, 200, sync(b));
+      if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
+      const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
+      const out = sync(b); await signalCheck(req, fresh, joined);
+      return send(res, 200, out);
     }
 
     // ---- the website ----
@@ -610,7 +1031,7 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/logout') { res.setHeader('Set-Cookie', [clearCookie('sid'), clearCookie('ws'), clearCookie('mp')]); return ok(res); }
 
     if (req.method === 'POST' && p === '/api/mfa/login') {
-      const w = limit('mfal:' + ip, 30, 600000); if (w) return tooMany(res, w);
+      const w = limit('mfal:' + ip, 30, 600000) || await slimit('mfal:' + ip, 40, 600000); if (w) return tooMany(res, w);
       const mp = unpack(ck.mp); if (!mp || !/^[gr]_\d{1,32}$/.test(mp.u || '')) return send(res, 401, { error: 'That sign-in expired. Please sign in again.', code: 'signin' });
       setUid(mp.u); await need('user'); if (!U || !U.mfa || !U.mfa.on) return send(res, 401, { error: 'That sign-in expired. Please sign in again.', code: 'signin' });
       const t = mfaTry(U.mfa, (await body(req)).code); if (!t.ok) return send(res, t.code, { error: t.err });
@@ -632,6 +1053,12 @@ async function route(req, res, url, p) {
       if (cur && cur !== ck.ws) res.setHeader('Set-Cookie', mkCookie('ws', cur, { maxAge: 31536000 }));
       const roblox = uid[0] === 'r' ? { id: uid.slice(2), name: U.name, viaLogin: true } : U.roblox || null;
       return send(res, 200, { ...base, user: { id: uid, name: U.name, provider: U.provider, roblox, mfa: !!(U.mfa && U.mfa.on) }, workspaces: list, current: cur });
+    }
+    if (p === '/api/gjoin/info') {
+      const w = limit('gjinfo:' + ip, 30, 60000); if (w) return tooMany(res, w);
+      const wid = String(url.searchParams.get('w') || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This join link is not valid.' });
+      setWid(wid); await need('core'); const G0 = D.meta && !D.meta.deleted && D.meta.group;
+      return G0 && G0.autoJoin ? send(res, 200, { workspace: D.meta.name, group: G0.name }) : send(res, 404, { error: 'This workspace does not let group members join with a link.' });
     }
     if (p === '/api/invite') {
       const w = limit('invite:' + ip, 20, 60000); if (w) return tooMany(res, w);
@@ -680,7 +1107,7 @@ async function route(req, res, url, p) {
       res.setHeader('Set-Cookie', mkCookie('ws', wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: wid, code: nc.code });
     }
     if (req.method === 'POST' && p === '/api/join') {
-      const w = limit('join:' + uid, 10, 3600000); if (w) return tooMany(res, w);
+      const w = limit('join:' + uid, 10, 3600000) || await slimit('join:' + uid, 15, 3600000); if (w) return tooMany(res, w);
       const code = String((await body(req)).code || ''); if (!/^[a-f0-9]{28}$/.test(code)) return send(res, 400, { error: 'This invite link is not valid.' });
       setWid(code.slice(0, 12)); await need('user', 'core'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' });
       if (D.meta && D.members[uid]) { res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid }); }
@@ -694,6 +1121,20 @@ async function route(req, res, url, p) {
       if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full.' });
       const rk = D.ranks[inv.rank] ? inv.rank : Object.entries(D.ranks).sort((a, b) => a[1].pos - b[1].pos)[0][0];
       D.members[uid] = { name: U.name, rank: rk, joined: Date.now() }; delete D.invites[code]; audit(U.name, `Joined as ${D.ranks[rk].name}`);
+      if (!U.workspaces.includes(CTX.wid)) U.workspaces.push(CTX.wid);
+      res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid });
+    }
+    if (req.method === 'POST' && p === '/api/gjoin') {
+      const w = limit('gjoin:' + uid, 10, 3600000) || await slimit('gjoin:' + uid, 15, 3600000); if (w) return tooMany(res, w);
+      const wid = String((await body(req)).w || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This join link is not valid.' });
+      setWid(wid); await need('user', 'core'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' });
+      const G0 = D.meta && !D.meta.deleted && D.meta.group; if (!G0 || !G0.autoJoin) return send(res, 404, { error: 'This workspace does not let group members join with a link.' });
+      if (D.members[uid]) { res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid, already: true }); }
+      const rid = uid[0] === 'r' ? uid.slice(2) : (U.roblox && U.roblox.id) || ''; if (!rid) return send(res, 403, { error: 'Sign in with Roblox, or link your Roblox account, so Sentinel can check your group role.', code: 'needroblox' });
+      let role; try { role = await groupRoleOf(G0.id, rid); } catch { return send(res, 502, { error: 'Roblox did not answer. Try again in a minute.' }); }
+      const rk = role && G0.map[role]; if (!rk || !D.ranks[rk]) return send(res, 403, { error: `Your role in ${G0.name} does not give access to this workspace. Ask the owner for an invite.` });
+      if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full.' });
+      D.members[uid] = { name: U.name, rank: rk, joined: Date.now(), group: role, robloxId: rid }; audit(U.name, `Joined as ${D.ranks[rk].name} through the Roblox group`);
       if (!U.workspaces.includes(CTX.wid)) U.workspaces.push(CTX.wid);
       res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid });
     }
@@ -721,6 +1162,7 @@ async function route(req, res, url, p) {
     const B = req.method === 'POST' ? await body(req) : {};
 
     if (p === '/api/state') {
+      if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 6 * 36e5) await groupSync(req);
       const now = Date.now(), players = allPlayers(), bans = Object.values(D.bans).filter(live), mutes = Object.values(D.mutes).filter(live), ws = weekStart(now);
       const days = [...Array(14)].map((_, i) => dayKey(now - (13 - i) * 864e5)), ser = f => days.map(d => (D.daily[d] || {})[f] || 0);
       const onLeave = id => D.loa.some(x => x.uid === id && x.status === 'approved' && x.start <= now && x.end >= now);
@@ -728,14 +1170,14 @@ async function route(req, res, url, p) {
       if (gm.length) { const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,roblox:value->roblox&key=in.(${gm.map(id => 'u:' + id).join(',')})`, { headers: sbHeaders() });
         if (r.ok) for (const row of await r.json()) { const m = D.members[row.key.slice(2)], rid = (row.roblox && row.roblox.id) || null; if (m && (m.robloxId || null) !== rid) m.robloxId = rid; } }
       const team = Object.entries(D.members).map(([id, m]) => { const rid = m.robloxId || (id[0] === 'r' ? id.slice(2) : null), pl = rid ? D.play[rid] : null;
-        return { uid: id, name: m.name, rank: m.rank, owner: id === D.meta.owner, via: id[0] === 'g' ? 'Google' : 'Roblox', joined: m.joined, linked: !!rid, robloxId: rid,
+        return { uid: id, name: m.name, rank: m.rank, group: !!m.group, owner: id === D.meta.owner, via: id[0] === 'g' ? 'Google' : 'Roblox', joined: m.joined, linked: !!rid, robloxId: rid,
           week: pl && pl.weekStart === ws ? Math.round(pl.week) : 0, onLeave: onLeave(id), online: !!rid && players.some(x => String(x.userId) === String(rid)) }; })
         .sort((a, b) => memberPos(b.uid) - memberPos(a.uid) || a.name.localeCompare(b.name));
       return send(res, 200, {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now) })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
-        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
+        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
         invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by, lock: i.lock ? i.lock.name : null })) : [],
@@ -747,7 +1189,7 @@ async function route(req, res, url, p) {
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
-        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60) : [], watch: D.watch,
+        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, watch: D.watch,
         staffWeek: Object.entries(D.audit.filter(a => a.t > now - 7 * 864e5 && a.user && a.user !== 'Automation').reduce((m, a) => (m[a.user] = (m[a.user] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([user, n]) => ({ user, n })),
         rules: Object.fromEntries(Object.keys(DEFAULT_RULES).map(k => [k, rule(k)])), stats: { ...D.stats, activeBans: bans.length, activeMutes: mutes.length } });
     }
@@ -766,33 +1208,26 @@ async function route(req, res, url, p) {
       if (q) all = all.filter(e => `${e.name} ${e.reason} ${e.by}`.toLowerCase().includes(q));
       all.sort((a, b) => b.time - a.time); return send(res, 200, { entries: all.slice(0, 200), total: all.length });
     }
-    if (req.method === 'POST' && p === '/api/action') {
-      const reason0 = cleanName(B.reason, 300); let action = B.action, minutes = clampInt(B.minutes, 0, 525600), ruleId = null, reason = reason0 || 'No reason given';
-      if (B.ruleId) {
-        const r = D.rulebook.find(x => x.id === B.ruleId); if (!r) return send(res, 404, { error: 'That rule no longer exists' });
-        const n = (D.logs[B.userId] || []).filter(e => e.ruleId === r.id && e.status !== 'reverted').length, st = r.steps[Math.min(n, r.steps.length - 1)];
-        action = st.type; minutes = st.minutes || 0; ruleId = r.id; reason = `${r.title} (offense ${n + 1})${reason0 ? ': ' + reason0 : ''}`;
-      }
-      if (!ACT_PERM[action]) return send(res, 400, { error: 'bad action' });
-      if (!has(u, action === 'ban' && !(minutes > 0) ? 'mod.permban' : ACT_PERM[action])) return deny(res);
-      if (action === 'announce') { cmd({ type: 'announce', text: reason }); feed('Announcement: ' + reason, u.user); return ok(res); }
-      if (!Number.isInteger(B.userId) || B.userId < 1) return send(res, 400, { error: 'bad userId' });
-      const nm = cleanName(B.name, 40) || String(B.userId);
-      if (['warn', 'kick', 'mute', 'ban'].includes(action) && u.limit > 0) { // per-rank anti-abuse limit, counted from the logbook
-        const since = Date.now() - 36e5; let c = 0; for (const list of Object.values(D.logs)) for (const e of list) if (e.byUid === uid && e.time > since && MOD_TYPES.includes(e.type)) c++;
-        if (c >= u.limit) return send(res, 429, { error: `Your rank allows ${u.limit} moderation actions per hour. Ask a higher rank for help.` });
-      }
-      if (action === 'points') { const amt = clampInt(B.amount, -100000, 100000); if (!amt) return send(res, 400, { error: 'Enter a points amount' }); addPoints(B.userId, nm, amt, reason, u.user, uid); return ok(res); }
-      act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId });
-      const mw = action === 'mute' ? muteWarn() : null;
-      return send(res, 200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) });
+    if (req.method === 'POST' && p === '/api/action') { const [c, o] = doAction(u, uid, B); return send(res, c, o); }
+    if (req.method === 'GET' && p === '/api/entry') {
+      const id = +url.searchParams.get('userId'), e = (D.logs[id] || []).find(x => x.id === url.searchParams.get('id'));
+      return e ? send(res, 200, { entry: { ...e, userId: id } }) : send(res, 404, { error: 'That entry no longer exists.' });
     }
     if (req.method === 'POST' && p === '/api/entry') {
       const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       if (B.op === 'note') { if (!has(u, 'logbook.note')) return deny(res); const t = cleanName(B.text, 500); if (!t) return send(res, 400, { error: 'Write a note first' }); logEntry(id, cleanName(B.name, 40) || 'User ' + id, { type: 'Note', reason: t, by: u.user, byUid: uid }); return ok(res); }
+      if (B.op === 'evidence') {
+        if (!has(u, 'logbook.note')) return deny(res);
+        const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e) return send(res, 404, { error: 'That entry no longer exists.' });
+        const links = cleanLinks([B.url], 1), t = cleanName(B.note, 500); if (!links.length && !t) return send(res, 400, { error: B.url ? 'Links must start with https:// or http://' : 'Add a link or a note.' });
+        if (links.length) { e.ev = [...(e.ev || []), ...links].slice(0, 10); }
+        if (t) e.note = ((e.note ? e.note + '\n' : '') + `${u.user}: ${t}`).slice(-1500);
+        audit(u.user, `Added evidence to a ${e.type.toLowerCase()} for ${e.name}`); return ok(res);
+      }
       if (B.op === 'revert') {
         if (!has(u, 'logbook.revert')) return deny(res);
         const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e || e.status === 'reverted') return send(res, 404, { error: 'Entry not found or already reverted' });
+        if (e.type === 'Banned' && D.bans[id] && D.bans[id].entry === e.id && needSecond(u, D.bans[id])) return send(res, 409, { error: 'Lifting a permanent ban needs two staff members. Use Unban instead, and a second person can approve it.' });
         e.status = 'reverted'; e.revertedBy = u.user; e.revertedAt = Date.now();
         if ((e.type === 'Banned' || e.type === 'Suspended') && D.bans[id] && D.bans[id].entry === e.id) { delete D.bans[id]; unbanCmd(id); }
         if (e.type === 'Muted' && D.mutes[id] && D.mutes[id].entry === e.id) delete D.mutes[id];
@@ -896,6 +1331,7 @@ async function route(req, res, url, p) {
       if (t === D.meta.owner) return send(res, 400, { error: 'The owner cannot be changed.' });
       if (!above(u, memberPos(t))) return send(res, 403, { error: 'You can only manage members below your rank.' });
       if (B.op === 'remove') { audit(u.user, `Removed ${m.name}`); delete D.members[t]; return ok(res); }
+      if (B.op === 'setrank' && m.group && D.meta.group && D.meta.group.id) return send(res, 409, { error: `${m.name}'s rank comes from your Roblox group. Change their role in the group instead.` });
       if (B.op === 'setrank') { const r = D.ranks[B.rank]; if (!r || !above(u, r.pos)) return send(res, 403, { error: 'You can only give ranks below your own.' }); m.rank = B.rank; audit(u.user, `Set ${m.name} to ${r.name}`); return ok(res); }
       return send(res, 400, { error: 'bad request' });
     }
@@ -941,7 +1377,7 @@ async function route(req, res, url, p) {
     }
     if (p === '/api/feedback') {
       if (req.method === 'GET') return send(res, 200, { items: FB.filter(f => f.uid === uid).slice(0, 30).map(f => ({ id: f.id, t: f.t, type: f.type, text: f.text, reply: f.reply || null, repliedAt: f.repliedAt || null })) });
-      const w0 = limit('fb:' + uid, 6, 3600000); if (w0) return tooMany(res, w0);
+      const w0 = limit('fb:' + uid, 6, 3600000) || await slimit('fb:' + uid, 10, 3600000); if (w0) return tooMany(res, w0);
       const type = ['question', 'idea', 'bug', 'praise'].includes(B.type) ? B.type : 'idea', text = String(B.text || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f<>]/g, '').trim().slice(0, 2000);
       if (!text) return send(res, 400, { error: 'Write something first.' });
       FB.unshift({ id: rnd(6), t: Date.now(), type, text, uid, user: mem.name, rank: u.isOwner ? 'Owner' : (D.ranks[mem.rank] || {}).name || 'Member', ws: CTX.wid, wsName: D.meta.name, page: cleanName(B.page, 30) }); FB.length = Math.min(FB.length, 400);
@@ -968,14 +1404,76 @@ async function route(req, res, url, p) {
       await snapshot(CTX.wid, 'pre' + Math.floor(Date.now() / 1000)).catch(() => {});
       const err = importBackup(B.data, uid, D.meta.name); if (err) return send(res, 400, { error: err }); audit(u.user, 'Restored the workspace from a backup file'); return ok(res);
     }
+    if (p === '/api/shifts' && req.method === 'GET') {
+      const now = Date.now(), list = D.shifts.filter(x => shEnd(x) > now - 30 * 864e5).sort((a, b) => a.start - b.start);
+      const need2 = [...new Set(list.filter(x => x.start < now).flatMap(x => x.signups.map(s => ridOf(s.uid)).filter(Boolean).map(r => shOf(+r))))]; if (need2.length) await need(...need2);
+      for (const x of list) if (shEnd(x) < now - 5 * 60000 && !x.att) { x.att = {}; for (const sg of x.signups) { const rid = ridOf(sg.uid); x.att[sg.uid] = rid ? Math.round(inGameSecs(+rid, x.start, shEnd(x)) / 60) : null; } } // freeze attendance once a shift is over
+      return send(res, 200, { shifts: list.map(x => shiftView(x, uid)) });
+    }
+    if (req.method === 'POST' && p === '/api/signals') {
+      if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.signals = !!B.on; audit(u.user, B.on ? 'Turned on alt-account hints' : 'Turned off alt-account hints'); return ok(res); }
+      if (!has(u, 'mod.kick')) return deny(res);
+      const x = D.signals[B.userId]; if (!x) return send(res, 404, { error: 'Nothing to dismiss.' });
+      x.status = 'dismissed'; x.by = u.user; audit(u.user, `Dismissed the alt-account hint for ${x.name}`); return ok(res);
+    }
+    if (req.method === 'POST' && p === '/api/shifts') {
+      const x = D.shifts.find(y => y.id === B.id), now = Date.now();
+      if (B.op === 'create') {
+        if (!has(u, 'shifts.manage')) return deny(res);
+        const title = cleanName(B.title, 60) || 'Moderation shift', start = Number(B.start), mins = clampInt(B.mins, 15, 720), slots = clampInt(B.slots, 1, 50), notes = cleanName(B.notes, 200), rep = clampInt(B.repeat, 0, 8);
+        if (!Number.isFinite(start) || start < now - 36e5 || start > now + 120 * 864e5) return send(res, 400, { error: 'Pick a start time in the next few months.' });
+        D.shifts = D.shifts.filter(y => shEnd(y) > now - 30 * 864e5);
+        if (D.shifts.length + rep + 1 > 200) return send(res, 400, { error: 'Too many shifts planned. Delete some first.' });
+        const ids = []; for (let i = 0; i <= rep; i++) { const id = crypto.randomBytes(4).toString('hex'); ids.push(id); D.shifts.push({ id, title, start: start + i * 7 * 864e5, mins, slots, notes, by: u.user, signups: [] }); }
+        audit(u.user, `Planned ${rep ? rep + 1 + ' weekly shifts' : 'a shift'}: ${title}`);
+        notify('shifts', `New shift${rep ? 's' : ''}: ${title}`, `<t:${Math.floor(start / 1000)}:F> for ${fmtMin(mins)}${rep ? `, every week for ${rep + 1} weeks` : ''}. ${slots} spot${slots === 1 ? '' : 's'}. Sign up in Sentinel.${notes ? '\n' + notes : ''}`, [['Planned by', u.user]], 0x5e5ce6);
+        return send(res, 200, { ok: true, ids });
+      }
+      if (!x) return send(res, 404, { error: 'That shift no longer exists.' });
+      if (B.op === 'delete') { if (!has(u, 'shifts.manage')) return deny(res); D.shifts = D.shifts.filter(y => y !== x); audit(u.user, `Deleted the shift ${x.title}`); return ok(res); }
+      if (B.op === 'remove') { if (!has(u, 'shifts.manage')) return deny(res); x.signups = x.signups.filter(sg => sg.uid !== B.uid); return ok(res); }
+      if (B.op === 'claim') {
+        if (shEnd(x) < now) return send(res, 400, { error: 'That shift is over.' });
+        if (x.signups.some(sg => sg.uid === uid)) return ok(res);
+        if (x.signups.length >= x.slots) return send(res, 409, { error: 'That shift is full.' });
+        x.signups.push({ uid, name: u.user, t: now }); return ok(res);
+      }
+      if (B.op === 'leave') { if (x.start < now) return send(res, 400, { error: 'The shift already started. Ask a lead to take you off.' }); x.signups = x.signups.filter(sg => sg.uid !== uid); return ok(res); }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (p === '/api/forms' && req.method === 'GET') {
+      const canR = has(u, 'forms.review');
+      return send(res, 200, { forms: D.forms.map(f => ({ ...f, count: FR.filter(x => x.form === f.id).length, fresh: FR.filter(x => x.form === f.id && x.status === 'new').length })), responses: canR ? FR.slice(0, 300).map(({ tok, ...x }) => x) : [], mine: FR.filter(x => x.byUid === uid).slice(0, 30).map(({ tok, ...x }) => x), base: `${site(req)}/f/${CTX.wid}/` });
+    }
+    if (req.method === 'POST' && p === '/api/forms') {
+      if (B.op === 'save' || B.op === 'delete' || B.op === 'toggle') {
+        if (!has(u, 'forms.manage')) return deny(res);
+        const ex = D.forms.find(f => f.id === B.id);
+        if (B.op === 'delete') { if (!ex) return send(res, 404, { error: 'That form no longer exists.' }); D.forms = D.forms.filter(f => f !== ex); audit(u.user, `Deleted the form ${ex.title}`); return ok(res); }
+        if (B.op === 'toggle') { if (!ex) return send(res, 404, { error: 'That form no longer exists.' }); ex.open = !!B.open; audit(u.user, `${ex.open ? 'Opened' : 'Closed'} the form ${ex.title}`); return ok(res); }
+        const c = cleanForm(B.form, u); if (typeof c === 'string') return send(res, 400, { error: c });
+        if (ex) { Object.assign(ex, c, { updated: Date.now(), by: u.user }); audit(u.user, `Edited the form ${c.title}`); return send(res, 200, { ok: true, id: ex.id }); }
+        if (D.forms.length >= 20) return send(res, 400, { error: 'You can have up to 20 forms. Delete one first.' });
+        const id = crypto.randomBytes(3).toString('hex'); D.forms.push({ id, ...c, created: Date.now(), by: u.user }); audit(u.user, `Created the form ${c.title}`); return send(res, 200, { ok: true, id });
+      }
+      if (B.op === 'submit') { // staff-only forms, filled in from inside Sentinel
+        const F = D.forms.find(f => f.id === B.id && f.audience === 'staff' && f.open); if (!F) return send(res, 404, { error: 'This form is closed or no longer exists.' });
+        const w1 = limit('formsub:' + uid, 20, 3600000); if (w1) return tooMany(res, w1);
+        const r = await readAnswers(F, B.answers); if (r.err) return send(res, 400, { error: r.err });
+        FR.unshift({ id: crypto.randomBytes(4).toString('hex'), form: F.id, formTitle: F.title, kind: F.kind, t: Date.now(), answers: r.answers, who: r.who, by: u.user, byUid: uid, status: 'new' }); if (FR.length > 500) FR.length = 500;
+        D.formsNew = (D.formsNew || 0) + 1; notify('forms', `New response: ${F.title}`, `From ${u.user}`, [], 0x0a7aff); return ok(res);
+      }
+      if (B.op === 'review') { const [c, o] = reviewForm(u, uid, B, site(req)); return send(res, c, o); }
+      return send(res, 400, { error: 'bad request' });
+    }
     if (req.method === 'POST' && p === '/api/appeals') {
       if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.appeals = !!B.on; audit(u.user, B.on ? 'Opened ban appeals' : 'Closed ban appeals'); return ok(res); }
-      if (!has(u, 'appeals.review')) return deny(res);
-      const a = D.appeals.find(x => x.id === B.id && x.status === 'open'); if (!a) return send(res, 404, { error: 'That appeal was already reviewed.' });
-      const note = cleanName(B.note, 300);
-      if (B.decision === 'accept') { if (!has(u, 'mod.unban')) return deny(res); act({ action: 'unban', userId: a.uid, name: a.name, reason: 'Appeal accepted' + (note ? ': ' + note : ''), by: u.user, byUid: uid }); a.status = 'accepted'; }
-      else if (B.decision === 'deny') a.status = 'denied'; else return send(res, 400, { error: 'bad request' });
-      a.by = u.user; a.note = note; a.reviewed = Date.now(); audit(u.user, `${a.status === 'accepted' ? 'Accepted' : 'Denied'} the appeal from ${a.name}`); return ok(res);
+      if (B.op === 'twoperson') { if (!has(u, 'automations.manage')) return deny(res); D.settings.twoPerson = !!B.on; audit(u.user, B.on ? 'Lifting permanent bans now needs two staff' : 'Lifting permanent bans no longer needs two staff'); return ok(res); }
+      if (B.op === 'replies') {
+        if (!has(u, 'automations.manage')) return deny(res);
+        const list = (Array.isArray(B.replies) ? B.replies : []).map(x => cleanName(x, 300)).filter(Boolean).slice(0, 12); D.settings.replies = list; audit(u.user, 'Edited the appeal quick replies'); return ok(res);
+      }
+      const [c, o] = reviewAppeal(u, uid, B); return send(res, c, o);
     }
     if (req.method === 'POST' && p === '/api/watch') {
       if (!has(u, 'logbook.note')) return deny(res); const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
@@ -1001,6 +1499,44 @@ async function route(req, res, url, p) {
       lua = lua.replace(/^local URL = ".*"$/m, () => 'local URL = ' + JSON.stringify(site(req))).replace(/^local KEY = ".*"$/m, 'local KEY = "[INPUT CODE HERE]"').replace(/^local INTERVAL = \d+/m, 'local INTERVAL = 10');
       const h = { 'Content-Type': 'text/plain; charset=utf-8' }; if (url.searchParams.get('download')) h['Content-Disposition'] = 'attachment; filename="Sentinel.server.lua"';
       res.writeHead(200, h); return res.end(lua);
+    }
+    if (p === '/api/discord/setup' && req.method === 'GET') {
+      const L = D.discord && D.discord.guild ? D.discord : null;
+      return send(res, 200, { configured: discordOn(), invite: DISCORD.app ? `https://discord.com/oauth2/authorize?client_id=${DISCORD.app}&scope=bot%20applications.commands&permissions=18432` : null, linked: L ? { guild: L.guild, channel: L.channel, at: L.at, users: Object.keys(L.users || {}).length } : null, me: !!(L && Object.values(L.users || {}).includes(uid)), owner: u.isOwner });
+    }
+    if (req.method === 'POST' && p === '/api/discord/code') {
+      const now = Date.now(); for (const [k, v] of Object.entries(D.discordCodes)) if (v.exp < now) delete D.discordCodes[k];
+      if (Object.keys(D.discordCodes).length > 60) return send(res, 429, { error: 'Too many codes right now. Try again in a few minutes.' });
+      if (B.kind === 'guild') { if (!u.isOwner) return ownerOnly(res); const k = randSecret(8); D.discordCodes[k] = { kind: 'guild', by: u.user, exp: now + 15 * 60000 }; return send(res, 200, { code: `${CTX.wid}-${k}`, exp: now + 15 * 60000 }); }
+      if (!D.discord || !D.discord.guild) return send(res, 400, { error: 'Your owner has not linked a Discord server yet.' });
+      let k; do { k = randSecret(6).toUpperCase(); } while (D.discordCodes[k]);
+      for (const [k2, v] of Object.entries(D.discordCodes)) if (v.uid === uid) delete D.discordCodes[k2];
+      D.discordCodes[k] = { kind: 'user', uid, exp: now + 15 * 60000 }; return send(res, 200, { code: k, exp: now + 15 * 60000 });
+    }
+    if (req.method === 'POST' && p === '/api/discord/unlink') {
+      if (!D.discord || !D.discord.guild) return ok(res);
+      if (B.me) { for (const [k, v] of Object.entries(D.discord.users || {})) if (v === uid) delete D.discord.users[k]; return ok(res); }
+      if (!u.isOwner) return ownerOnly(res);
+      CTX.guild = D.discord.guild; await need('dguild'); if (DG.wid === CTX.wid) DG = {}; delete D.discord; audit(u.user, 'Unlinked the Discord server'); return ok(res);
+    }
+    if (p === '/api/group' && req.method === 'GET') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { group: D.meta.group || null, ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, name: r.name, pos: r.pos, admin: r.perms.some(x => ADMINP.includes(x)) })).sort((a, b) => b.pos - a.pos), joinLink: `${site(req)}/#/g/${CTX.wid}` }); }
+    if (req.method === 'POST' && p === '/api/group') {
+      if (!u.isOwner) return ownerOnly(res);
+      if (B.op === 'connect') {
+        const m = /(\d{1,15})/.exec(String(B.group || '')); if (!m) return send(res, 400, { error: 'Paste your Roblox group link or its ID number.' });
+        let gi; try { gi = await groupInfo(m[1]); } catch { return send(res, 400, { error: 'Could not find that Roblox group. Check the link or ID.' }); }
+        D.meta.group = { ...gi, map: {}, removeLeft: true, autoJoin: false, at: Date.now(), last: null }; audit(u.user, `Connected the Roblox group ${gi.name}`); return send(res, 200, { ok: true, group: D.meta.group });
+      }
+      const G0 = D.meta.group; if (!G0) return send(res, 400, { error: 'Connect a Roblox group first.' });
+      if (B.op === 'roles') { try { const gi = await groupInfo(G0.id); G0.name = gi.name; G0.roles = gi.roles; } catch { return send(res, 502, { error: 'Roblox did not answer. Try again in a minute.' }); } return ok(res); }
+      if (B.op === 'save') {
+        const map = {}; for (const r of G0.roles) { const rk = String((B.map || {})[r.id] || ''); if (rk && D.ranks[rk]) map[r.id] = rk; }
+        G0.map = map; G0.removeLeft = !!B.removeLeft; G0.autoJoin = !!B.autoJoin; G0.last = null;
+        audit(u.user, `Updated Roblox group rank mapping (${Object.keys(map).length} role${Object.keys(map).length === 1 ? '' : 's'} mapped)`); return ok(res);
+      }
+      if (B.op === 'sync') { const r = await groupSync(req, u.user + ' (sync)'); return send(res, 200, { ok: true, result: r }); }
+      if (B.op === 'disconnect') { for (const m of Object.values(D.members)) delete m.group; audit(u.user, `Disconnected the Roblox group ${G0.name}`); delete D.meta.group; return ok(res); }
+      return send(res, 400, { error: 'bad request' });
     }
     if (req.method === 'POST' && p === '/api/workspace') {
       if (!u.isOwner) return ownerOnly(res);
@@ -1054,7 +1590,7 @@ async function route(req, res, url, p) {
       audit(u.user, `Erased stored data for user ${id}`); return ok(res);
     }
     send(res, 404, { error: 'not found' });
-  } catch (e) { res.failed = true; send(res, 500, { error: String(e) }); }
+  } catch (e) { res.failed = true; send(res, 500, { error: String(e) }); await opsAlert('Sentinel server error', `${req.method} ${String(req.url || '').split('?')[0].slice(0, 80)}\n${String((e && e.message) || e).slice(0, 400)}`); }
 }
 
 // ---- one request: read body, run, save, replay if another request got there first ----
@@ -1062,8 +1598,11 @@ const makeOut = () => { const o = { code: 200, headers: {}, body: '', failed: fa
 const flush = (o, res) => { res.statusCode = o.code; for (const [k, v] of Object.entries(o.headers)) res.setHeader(k, v); res.end(o.body); };
 async function readBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD') return {};
-  try { if (req.body !== undefined && req.body !== null) { if (Buffer.isBuffer(req.body)) return JSON.parse(req.body.toString() || '{}'); return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body; } } catch { return {}; }
-  return new Promise(r => { let d = ''; req.on('data', c => { d += c; if (d.length > (String(req.url).startsWith('/api/backup/import') ? 4e6 : 1e5)) req.destroy(); }); req.on('end', () => { try { r(JSON.parse(d || '{}')); } catch { r({}); } }); });
+  try { if (req.body !== undefined && req.body !== null) { // Vercel's helpers already parsed it (set NODEJS_HELPERS=0 to get the exact bytes)
+    if (Buffer.isBuffer(req.body)) { req._raw = req.body.toString(); return JSON.parse(req._raw || '{}'); }
+    if (typeof req.body === 'string') { req._raw = req.body; return JSON.parse(req.body || '{}'); }
+    req._raw = JSON.stringify(req.body); return req.body; } } catch { return {}; }
+  return new Promise(r => { let d = ''; req.on('data', c => { d += c; if (d.length > (String(req.url).startsWith('/api/backup/import') ? 4e6 : 1e5)) req.destroy(); }); req.on('end', () => { req._raw = d; try { r(JSON.parse(d || '{}')); } catch { r({}); } }); });
 }
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x'), p = url.pathname;
@@ -1074,7 +1613,7 @@ async function handle(req, res) {
     const out = makeOut();
     await route(req, out, url, p);
     if (!out.failed) await runOC().catch(() => {});
-    if (out.failed || await commit()) { await sendHooks(); for (const f of out.after) await f().catch(() => {}); return flush(out, res); }
+    if (out.failed || await commit()) { await sendHooks(); await sendBot(); for (const f of out.after) await f().catch(() => {}); return flush(out, res); }
     await new Promise(r => setTimeout(r, 25 + Math.random() * 100)); // lost a race with another request: run again on fresh data
   }
   res.statusCode = 503; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'Busy, please try again' }));
