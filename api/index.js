@@ -907,10 +907,10 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/workspace') {
       if (!u.isOwner) return ownerOnly(res);
       if (B.op === 'ocsave') {
-        const key = String(B.key || '').trim(), uni = String(B.universe || '').replace(/\s/g, '');
+        const key = String(B.key || '').replace(/\s+/g, ''), uni = String(B.universe || '').replace(/\s/g, '');
         if (uni && !/^\d{3,20}$/.test(uni)) return send(res, 400, { error: 'The Universe ID is only numbers.' });
         if (!D.meta.oc && key.length < 20) return send(res, 400, { error: 'Paste your Roblox API key.' });
-        if (key && (key.length < 20 || key.length > 600 || /\s/.test(key))) return send(res, 400, { error: 'That does not look like a Roblox API key.' });
+        if (key && (key.length < 20 || key.length > 4000 || !/^[\x21-\x7e]+$/.test(key))) return send(res, 400, { error: key.length < 20 ? 'That key is too short. Copy the whole key from Roblox.' : 'That key has characters a Roblox key never has. Copy it again from Roblox.' });
         D.meta.oc = { ...(D.meta.oc || {}), ...(key ? { key: ocEnc(key) } : {}), universe: uni, last: null }; delete D.meta.oc.uni; audit(u.user, 'Saved the Roblox Open Cloud key'); return ok(res);
       }
       if (B.op === 'occlear') { delete D.meta.oc; audit(u.user, 'Removed the Roblox Open Cloud key'); return ok(res); }
