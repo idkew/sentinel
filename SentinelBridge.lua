@@ -40,21 +40,111 @@ local function queue(ev)
 	if #pending > 300 then table.remove(pending, 1) end -- never grow forever if the panel is down
 end
 
-local function banner(plr, text, color)
+local TweenService = game:GetService("TweenService")
+local STYLES = {
+	warn = { color = Color3.fromRGB(255, 159, 10), glyph = "!", title = "Warning" },
+	red = { color = Color3.fromRGB(255, 69, 58), glyph = "!", title = "Notice" },
+	blue = { color = Color3.fromRGB(10, 132, 255), glyph = "i", title = "Notice" },
+	green = { color = Color3.fromRGB(48, 209, 88), glyph = "\u{2713}", title = "Done" },
+}
+local activeBanner = {}
+
+-- a small frosted card that slides in from the top, matching the Sentinel website
+local function banner(plr, text, kind, title)
 	local pg = plr:FindFirstChild("PlayerGui")
 	if not pg then return end
+	local st = STYLES[kind] or STYLES.red
+	if activeBanner[plr] then activeBanner[plr]:Destroy() end
+
 	local gui = Instance.new("ScreenGui")
-	gui.ResetOnSpawn, gui.DisplayOrder = false, 200
-	local l = Instance.new("TextLabel")
-	l.AnchorPoint, l.Position = Vector2.new(0.5, 0), UDim2.fromScale(0.5, 0.05)
-	l.Size = UDim2.fromOffset(460, 54)
-	l.BackgroundColor3, l.TextColor3 = color, Color3.new(1, 1, 1)
-	l.Font, l.TextSize, l.TextWrapped = Enum.Font.GothamBold, 16, true
-	l.Text = text
-	Instance.new("UICorner", l).CornerRadius = UDim.new(0, 12)
-	l.Parent = gui
+	gui.Name, gui.ResetOnSpawn, gui.DisplayOrder, gui.IgnoreGuiInset = "SentinelBanner", false, 200, true
+
+	local card = Instance.new("CanvasGroup")
+	card.AnchorPoint = Vector2.new(0.5, 0)
+	card.Position = UDim2.new(0.5, 0, 0, -110)
+	card.Size = UDim2.new(0.92, 0, 0, 0)
+	card.AutomaticSize = Enum.AutomaticSize.Y
+	card.BackgroundColor3 = Color3.fromRGB(28, 28, 31)
+	card.BackgroundTransparency = 0.04
+	card.BorderSizePixel = 0
+	card.GroupTransparency = 1
+	card.Parent = gui
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0, 16)
+	local limit = Instance.new("UISizeConstraint", card)
+	limit.MaxSize = Vector2.new(400, math.huge)
+	limit.MinSize = Vector2.new(220, 0)
+	local stroke = Instance.new("UIStroke", card)
+	stroke.Color, stroke.Transparency, stroke.Thickness = Color3.new(1, 1, 1), 0.86, 1
+	local pad = Instance.new("UIPadding", card)
+	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 14), UDim.new(0, 16)
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 14), UDim.new(0, 16)
+
+	local row = Instance.new("Frame")
+	row.BackgroundTransparency = 1
+	row.Size = UDim2.new(1, 0, 0, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
+	row.Parent = card
+	local rowLayout = Instance.new("UIListLayout", row)
+	rowLayout.FillDirection, rowLayout.Padding = Enum.FillDirection.Horizontal, UDim.new(0, 12)
+
+	local icon = Instance.new("TextLabel")
+	icon.Size = UDim2.fromOffset(30, 30)
+	icon.BackgroundColor3 = st.color
+	icon.TextColor3 = Color3.new(1, 1, 1)
+	icon.Font, icon.TextSize, icon.Text = Enum.Font.GothamBold, 17, st.glyph
+	icon.Parent = row
+	Instance.new("UICorner", icon).CornerRadius = UDim.new(1, 0)
+
+	local col = Instance.new("Frame")
+	col.BackgroundTransparency = 1
+	col.Size = UDim2.new(1, -42, 0, 0)
+	col.AutomaticSize = Enum.AutomaticSize.Y
+	col.Parent = row
+	local colLayout = Instance.new("UIListLayout", col)
+	colLayout.Padding = UDim.new(0, 2)
+
+	local head = Instance.new("TextLabel")
+	head.BackgroundTransparency = 1
+	head.Size = UDim2.new(1, 0, 0, 0)
+	head.AutomaticSize = Enum.AutomaticSize.Y
+	head.TextXAlignment, head.TextWrapped = Enum.TextXAlignment.Left, true
+	head.TextColor3 = Color3.fromRGB(245, 245, 247)
+	head.Font, head.TextSize = Enum.Font.GothamBold, 14
+	head.Text = title or st.title
+	head.LayoutOrder = 1
+	head.Parent = col
+
+	local body = Instance.new("TextLabel")
+	body.BackgroundTransparency = 1
+	body.Size = UDim2.new(1, 0, 0, 0)
+	body.AutomaticSize = Enum.AutomaticSize.Y
+	body.TextXAlignment, body.TextYAlignment, body.TextWrapped = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true
+	body.TextColor3 = Color3.fromRGB(190, 190, 197)
+	body.Font, body.TextSize = Enum.Font.GothamMedium, 14
+	body.Text = text
+	body.LayoutOrder = 2
+	body.Parent = col
+
+	local bar = Instance.new("Frame") -- thin countdown line along the bottom
+	bar.AnchorPoint, bar.Position = Vector2.new(0, 1), UDim2.new(0, 0, 1, 0)
+	bar.Size = UDim2.new(1, 0, 0, 3)
+	bar.BackgroundColor3, bar.BackgroundTransparency, bar.BorderSizePixel = st.color, 0.35, 0
+	bar.ZIndex = 5
+	bar.Parent = card
+
 	gui.Parent = pg
-	Debris:AddItem(gui, 7)
+	activeBanner[plr] = gui
+	local SHOW = 6
+	TweenService:Create(card, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.new(0.5, 0, 0, 18), GroupTransparency = 0 }):Play()
+	TweenService:Create(bar, TweenInfo.new(SHOW, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 0, 3) }):Play()
+	task.delay(SHOW, function()
+		if not gui.Parent then return end
+		local out = TweenService:Create(card, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.new(0.5, 0, 0, -110), GroupTransparency = 1 })
+		out:Play()
+		out.Completed:Wait()
+		gui:Destroy()
+		if activeBanner[plr] == gui then activeBanner[plr] = nil end
+	end)
 end
 
 ------------------------------------------------------------------ chat: monitor, commands, mute
@@ -70,7 +160,7 @@ local function onChat(userId, text)
 		return true
 	elseif command == "modcall" then
 		if os.clock() - (lastCall[userId] or -999) < MODCALL_COOLDOWN then
-			banner(plr, "Please wait a moment before sending another ModCall.", COLORS.red)
+			banner(plr, "Please wait a moment before sending another report.", "red", "Slow down")
 		else
 			lastCall[userId] = os.clock()
 			queue({ type = "modcall", userId = userId, name = plr.Name, text = rest })
@@ -135,6 +225,7 @@ local function doBan(userId, reason, seconds)
 		UserIds = { userId }, Duration = seconds, DisplayReason = reason,
 		PrivateReason = "Banned from web panel", ApplyToUniverse = true,
 	})
+	if ok then print("[Sentinel] Roblox ban applied to user " .. tostring(userId)) end
 	if not ok then
 		warn("[Sentinel] BanAsync failed (" .. tostring(err) .. "). Kicking instead; the panel keeps re-kicking while the ban is active.")
 		local plr = Players:GetPlayerByUserId(userId)
@@ -149,12 +240,22 @@ local function handle(c)
 	elseif c.type == "ban" then
 		doBan(c.userId, tostring(c.reason), c.seconds)
 	elseif c.type == "unban" then
-		pcall(Players.UnbanAsync, Players, { UserIds = { c.userId }, ApplyToUniverse = true })
+		local ok, err
+		for attempt = 1, 4 do
+			ok, err = pcall(Players.UnbanAsync, Players, { UserIds = { c.userId }, ApplyToUniverse = true })
+			if ok then break end
+			task.wait(3 * attempt)
+		end
+		if ok then
+			print("[Sentinel] Lifted the Roblox ban on user " .. tostring(c.userId))
+		else
+			warn("[Sentinel] Could not lift the Roblox ban on user " .. tostring(c.userId) .. ": " .. tostring(err))
+		end
 	elseif c.type == "message" then
-		local color = (c.kind == "ok" and COLORS.green) or (c.kind == "info" and COLORS.blue) or COLORS.red
-		if plr then banner(plr, tostring(c.text), color) end
+		local kind = (c.kind == "warn" and "warn") or (c.kind == "ok" and "green") or (c.kind == "info" and "blue") or "red"
+		if plr then banner(plr, tostring(c.body or c.text), kind, c.title) end
 	elseif c.type == "announce" then
-		for _, p in Players:GetPlayers() do banner(p, tostring(c.text), COLORS.blue) end
+		for _, p in Players:GetPlayers() do banner(p, tostring(c.text), "blue", "Announcement") end
 	end
 end
 
