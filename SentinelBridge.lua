@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 4 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 5 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -216,21 +216,39 @@ local function setupChat()
 	end
 end
 
+local lastMuteErr = ""
+-- takes chat privileges away from muted players (and gives them back when the mute ends).
+-- TextSources are named by UserId. CanSend = false is what Roblox itself uses to stop a player chatting.
 local function applyMutes()
+	if TextChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
+		lastMuteErr = next(muted) and "legacy chat: mutes need TextChatService" or ""
+		return
+	end
 	local channels = TextChatService:FindFirstChild("TextChannels")
-	if not channels then return end
-	-- every chat channel, not just RBXGeneral. TextSources are named by UserId (not by player name)
-	for _, ch in channels:GetChildren() do
-		if ch:IsA("TextChannel") then
-			for _, p in Players:GetPlayers() do
+	if not channels then lastMuteErr = "no TextChannels"; return end
+	local missing
+	for _, p in Players:GetPlayers() do
+		local isMuted = muted[p.UserId] == true
+		local found = false
+		for _, ch in channels:GetChildren() do
+			if ch:IsA("TextChannel") then
 				local src = ch:FindFirstChild(tostring(p.UserId))
 				if src and src:IsA("TextSource") then
-					local want = not muted[p.UserId]
-					if src.CanSend ~= want then src.CanSend = want end
+					found = true
+					if src.CanSend == isMuted then src.CanSend = not isMuted end
 				end
 			end
 		end
+		if isMuted and not found then missing = p.Name end
 	end
+	lastMuteErr = missing and ("no chat channel yet for " .. missing) or ""
+end
+
+local function chatMode()
+	if TextChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then return "legacy" end
+	local channels = TextChatService:FindFirstChild("TextChannels")
+	if not (channels and channels:FindFirstChild("RBXGeneral")) then return "nochannel" end
+	return "text"
 end
 
 -- a player who joins (or a channel that appears) while muted is silenced straight away
@@ -297,7 +315,7 @@ local function sync()
 	local sent = table.clone(pending)
 	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
 		Url = URL .. "/game/sync", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
-		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION }),
+		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION, chat = chatMode(), muteErr = lastMuteErr }),
 	})
 	busy = false
 	if not ok or not res.Success then
