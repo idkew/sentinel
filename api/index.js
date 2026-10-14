@@ -63,6 +63,15 @@ const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
 const save = () => {};
 const pruneCalls = () => { const cut = Date.now() - cfg.callRetentionDays * 864e5; D.calls = D.calls.filter(c => c.t > cut); };
+const MUTE_SCRIPT = 4; // the first script version that really stops muted players chatting
+function muteWarn() { // why a mute might not stop chat right now (checked at the moment a mute is made), or null
+  const live = Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS); if (!live.length) return null; // nobody in game: it applies when a server connects
+  const old = live.find(s => s.sv < MUTE_SCRIPT); if (old) return `Muted, but your game script is out of date (version ${old.sv}), so it will not stop the player chatting. Update the script in Settings, Game.`;
+  if (live.some(s => s.chat === 'legacy')) return 'Muted, but your game uses the old Roblox chat, which mutes cannot control. In Studio, set TextChatService, ChatVersion to TextChatService.';
+  if (live.some(s => s.chat === 'nochannel')) return 'Muted, but the game has no RBXGeneral chat channel, so mutes cannot be applied. Check TextChatService has CreateDefaultTextChannels on.';
+  const e = live.find(s => s.muteErr); if (e) return `Muted, but the game reported a problem applying it: ${e.muteErr}`;
+  return null;
+}
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
 const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch'];
 const ROWS = {
@@ -80,7 +89,7 @@ const ROWS = {
 };
 const phys = k => k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
-  '/api/action': ['logs', 'play', 'cmds'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls'], '/api/backup/import': ['logs', 'play', 'calls'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
+  '/api/action': ['logs', 'play', 'cmds', 'live'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls'], '/api/backup/import': ['logs', 'play', 'calls'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
   '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
@@ -274,7 +283,7 @@ function sync(b) {
   const now = Date.now(), id = String(b.jobId || 'studio').slice(0, 64), prev = R.servers[id], dt = prev ? Math.min((now - prev.last) / 1000, 30) : 0;
   const players = (Array.isArray(b.players) ? b.players : []).slice(0, 200).filter(p => p && Number.isInteger(p.userId) && p.userId > 0)
     .map(p => ({ userId: p.userId, name: String(p.name || p.userId).slice(0, 40), displayName: String(p.displayName || p.name || '').slice(0, 40) }));
-  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now };
+  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160) };
   for (const [j, sv] of Object.entries(R.servers)) if (now - sv.last > 6e4) delete R.servers[j];
   for (const p of players) tick({ ...p, sv: id.slice(0, 8) }, dt, now);
   for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 100)) {
@@ -775,7 +784,8 @@ async function route(req, res, url, p) {
       }
       if (action === 'points') { const amt = clampInt(B.amount, -100000, 100000); if (!amt) return send(res, 400, { error: 'Enter a points amount' }); addPoints(B.userId, nm, amt, reason, u.user, uid); return ok(res); }
       act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId });
-      return send(res, 200, { ok: true, applied: { action, minutes } });
+      const mw = action === 'mute' ? muteWarn() : null;
+      return send(res, 200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) });
     }
     if (req.method === 'POST' && p === '/api/entry') {
       const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
