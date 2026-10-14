@@ -1,11 +1,41 @@
-<p>This page explains the cookies and similar technologies used by {{service}}. In short: <b>three small essential cookies, and no advertising or analytics cookies.</b></p>
-<h2>Cookies we set</h2>
-<table><tr><th>Name</th><th>Purpose</th><th>Lifetime</th><th>Type</th></tr>
-<tr><td><code>sid</code></td><td>Keeps you signed in. It holds a signed token with your account ID. HttpOnly (scripts cannot read it), SameSite=Strict, Secure.</td><td>7 days, or until you sign out</td><td>Strictly necessary</td></tr><tr><td><code>ws</code></td><td>Remembers which workspace (game) you have open.</td><td>1 year, or until you sign out</td><td>Strictly necessary</td></tr><tr><td><code>oa</code></td><td>Protects the sign-in handshake with Google or Roblox against forgery.</td><td>10 minutes</td><td>Strictly necessary</td></tr><tr><td><code>sv</code></td><td>Remembers the last version of Sentinel you saw, so we only show you the "What's new" notice once. Holds a version number only, nothing about you.</td><td>1 year</td><td>Preference</td></tr><tr><td><code>sa</code></td><td>Remembers that you have seen the one-time welcome notice explaining that Sentinel is in alpha, so it is not shown again. Holds the value 1 only.</td><td>1 year</td><td>Preference</td></tr><tr><td><code>mp</code></td><td>Only set if you have turned on two-step verification. After you sign in with Google or Roblox it holds a signed token that lets you enter your code. HttpOnly, SameSite=Strict, Secure. It gives no access by itself.</td><td>10 minutes</td><td>Strictly necessary</td></tr></table>
-<p>The Service does not use local storage, advertising cookies, analytics or tracking pixels.</p>
-<h2>Third-party requests</h2>
-<ul><li><b>Google and Roblox sign-in:</b> when you choose Continue with Google or Roblox, you leave our site and they set their own cookies under their own policies.</li><li><b>Roblox:</b> avatar images are loaded from Roblox's content network, which also receives your IP address.</li></ul>
-<h2>Consent</h2>
-<p>Strictly necessary cookies do not need consent in most places, so we do not show a cookie banner. If we add optional cookies in future, we will ask first and update this page.</p>
-<h2>Your choices</h2>
-<p>You can delete or block cookies in your browser settings, but you will not be able to stay signed in. Questions: <a href="mailto:{{email}}">{{email}}</a>. See also our <a href="/legal/privacy">Privacy Policy</a>.</p>
+<div style="background:#fff;border:1px solid #e6e9f2;border-radius:10px;padding:14px 18px;margin:16px 0">
+<b>The short version:</b> {{service}} uses a few small cookies and browser-storage items that it needs to work, plus two that only remember that you have seen a notice. There are <b>no advertising cookies, no analytics and no tracking pixels</b>.</div>
+<p>This page explains the cookies and similar technologies ("cookies") used by {{service}} (the "Service"), provided by {{company}}. It should be read with our <a href="/legal/privacy">Privacy Policy</a>. A cookie is a small piece of text a website stores in your browser. Similar technologies, such as local storage, work the same way for this purpose.</p>
+
+<h2>1. Cookies we set</h2>
+<table><tr><th>Name</th><th>What it does</th><th>Lifetime</th><th>Type</th></tr>
+<tr><td><code>sid</code></td><td>Keeps you signed in. It holds a signed token with your account ID. HttpOnly (scripts on the page cannot read it), SameSite=Strict, Secure.</td><td>7 days, or until you sign out</td><td>Strictly necessary</td></tr>
+<tr><td><code>ws</code></td><td>Remembers which workspace (game) you have open. HttpOnly, SameSite=Strict, Secure.</td><td>1 year, or until you sign out</td><td>Strictly necessary</td></tr>
+<tr><td><code>oa</code></td><td>Protects the sign-in handshake with Google or Roblox against forgery. It holds a signed, random value used only for that one sign-in, and is removed when it is done. HttpOnly, SameSite=Lax, Secure.</td><td>30 minutes at most</td><td>Strictly necessary</td></tr>
+<tr><td><code>mp</code></td><td>Only set if you have turned on two-step verification. After you sign in with Google or Roblox it holds a signed token that lets you type your code. It gives no access by itself. HttpOnly, SameSite=Strict, Secure.</td><td>10 minutes</td><td>Strictly necessary</td></tr>
+<tr><td><code>sv</code></td><td>Remembers the last version of {{service}} you saw, so the "What's new" notice only appears once per update. It holds a version number only, nothing about you. Set by the page.</td><td>1 year</td><td>Preference</td></tr>
+<tr><td><code>sa</code></td><td>Remembers that you have seen the welcome notice explaining that {{service}} is in alpha, so it is not shown again. It holds the value 1 only. Set by the page.</td><td>1 year</td><td>Preference</td></tr></table>
+
+<h2>2. Browser storage we use</h2>
+<table><tr><th>Name</th><th>What it does</th><th>Lifetime</th><th>Type</th></tr>
+<tr><td><code>sentinel_widgets</code> (local storage)</td><td>Remembers which sections you chose to show or hide on a player's audit page.</td><td>Until you clear your browser data</td><td>Preference</td></tr>
+<tr><td><code>sentinel_tour4</code> (local storage)</td><td>Remembers that you have seen the first-visit tour.</td><td>Until you clear your browser data</td><td>Preference</td></tr>
+<tr><td><code>sentinel_nolink</code> (local storage)</td><td>Remembers that you closed the banner that suggests linking a Roblox account.</td><td>Until you clear your browser data</td><td>Preference</td></tr>
+<tr><td><code>gj</code> (session storage)</td><td>Holds the ID of a group join link while you finish signing in, so you land on the right page.</td><td>Until you close the tab</td><td>Strictly necessary</td></tr></table>
+<p>None of these identify you outside {{service}}, and none are shared with anyone. Browser storage stays on your device and is not sent to us with your requests. We do not use advertising cookies, analytics, tracking pixels, fingerprinting or cross-site tracking.</p>
+
+<h2>3. Requests to other companies</h2>
+<ul>
+<li><b>Google and Roblox sign-in.</b> When you choose Continue with Google or Continue with Roblox, you leave our site and they set their own cookies under their own policies. They learn that you are using {{service}}.</li>
+<li><b>Roblox content network.</b> Avatar images are loaded straight from Roblox, which receives your IP address and browser details when your browser asks for them.</li>
+<li><b>Fonts.</b> The pages may load fonts from Google Fonts, which receives your IP address when it does.</li>
+</ul>
+<p>We do not control cookies set by other companies. Please see their policies.</p>
+
+<h2>4. Consent</h2>
+<p>Strictly necessary cookies are needed to give you the service you asked for, and do not need consent in most places, so we do not show a cookie banner. Preference items only remember your own choices on this device. If we ever add optional cookies, for example for analytics, we will ask you first and update this page before we do.</p>
+
+<h2>5. Your choices</h2>
+<ul>
+<li>You can delete or block cookies and clear local and session storage in your browser settings. If you block the strictly necessary ones you will not be able to stay signed in.</li>
+<li>Signing out removes your sign-in cookies. Deleting <code>sv</code>, <code>sa</code> and the local storage items just means those notices and choices come back.</li>
+<li>We do not respond to "Do Not Track" signals, because we do not track you across other sites.</li>
+</ul>
+
+<h2>6. Changes and contact</h2>
+<p>If we change the cookies we use we will update this page and the date above. Questions: {{company}}, <a href="mailto:{{email}}">{{email}}</a>.</p>
