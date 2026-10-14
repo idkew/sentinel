@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 3 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 4 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -218,13 +218,34 @@ end
 
 local function applyMutes()
 	local channels = TextChatService:FindFirstChild("TextChannels")
-	local ch = channels and channels:FindFirstChild("RBXGeneral")
-	if not ch then return end
-	for _, p in Players:GetPlayers() do
-		local src = ch:FindFirstChild(p.Name)
-		if src and src:IsA("TextSource") then src.CanSend = not muted[p.UserId] end
+	if not channels then return end
+	-- every chat channel, not just RBXGeneral. TextSources are named by UserId (not by player name)
+	for _, ch in channels:GetChildren() do
+		if ch:IsA("TextChannel") then
+			for _, p in Players:GetPlayers() do
+				local src = ch:FindFirstChild(tostring(p.UserId))
+				if src and src:IsA("TextSource") then
+					local want = not muted[p.UserId]
+					if src.CanSend ~= want then src.CanSend = want end
+				end
+			end
+		end
 	end
 end
+
+-- a player who joins (or a channel that appears) while muted is silenced straight away
+local function watchChannel(ch)
+	if not ch:IsA("TextChannel") then return end
+	ch.ChildAdded:Connect(function(src)
+		if src:IsA("TextSource") and muted[tonumber(src.Name) or 0] then src.CanSend = false end
+	end)
+end
+task.spawn(function()
+	local channels = TextChatService:WaitForChild("TextChannels", 30)
+	if not channels then return end
+	for _, ch in channels:GetChildren() do watchChannel(ch) end
+	channels.ChildAdded:Connect(watchChannel)
+end)
 
 ------------------------------------------------------------------ commands from the panel
 local function doBan(userId, reason, seconds)
