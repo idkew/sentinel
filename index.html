@@ -286,9 +286,9 @@ input.swc:checked{background:#30d158}input.swc:checked::after{transform:translat
 .cl{margin:6px 0 0;padding-left:18px;color:var(--ink2);font-size:13.5px;line-height:1.5}.cl li{margin:3px 0}
 .vh{padding:18px 20px;border-top:1px solid var(--line)}.vh:first-child{border-top:0}.vh .vn{font-size:17px;font-weight:700;letter-spacing:-.01em}
 .nv .cnt.new{background:var(--ac);font-size:10.5px;padding:0 7px}
-.live{gap:6px;color:var(--ink2)}.live svg{width:14px;height:14px}.live::before{content:"";width:7px;height:7px;border-radius:50%;background:#30d158;box-shadow:0 0 0 0 rgba(48,209,88,.5);animation:lp 2s infinite;flex:none}.live.spin svg{animation:rot .7s linear infinite}
+.lvbtn{gap:6px;color:var(--ink2)}.lvbtn svg{width:14px;height:14px}.lvbtn::before{content:"";width:7px;height:7px;border-radius:50%;background:#30d158;box-shadow:0 0 0 0 rgba(48,209,88,.5);animation:lp 2s infinite;flex:none}.lvbtn.spin svg{animation:rot .7s linear infinite}
 @keyframes rot{to{transform:rotate(360deg)}}@keyframes lp{0%{box-shadow:0 0 0 0 rgba(48,209,88,.45)}70%{box-shadow:0 0 0 6px rgba(48,209,88,0)}100%{box-shadow:0 0 0 0 rgba(48,209,88,0)}}
-@media(prefers-reduced-motion:reduce){.live::before{animation:none}}
+@media(prefers-reduced-motion:reduce){.lvbtn::before{animation:none}}
 .warnbox{margin-top:10px;padding:11px 13px;border-radius:11px;background:rgba(255,159,10,.12);box-shadow:inset 0 0 0 .5px rgba(255,159,10,.35);font-size:13px;line-height:1.5;color:var(--ink)}.warnbox b{color:var(--ink)}
 .warnbox code,.cmp code{display:block;margin-top:5px;padding:6px 9px;border-radius:7px;background:rgba(127,127,127,.14);font:12px/1.4 var(--m,monospace);word-break:break-all;color:var(--ink)}.warnbox .ng{color:#ff453a}.warnbox .gd{color:#30d158}
 </style>
@@ -364,15 +364,15 @@ const clItems=l=>`<ul class="cl">${l.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
 async function whatsNew(tourShown){if(!S||OB)return;const c=getSV();if(c===APPV)return;tourShown=tourShown||dwOpen();if(!c&&tourShown){setSV(APPV);return}if(tourShown)return;
  const list=unseenV();if(!list.length){setSV(APPV);return}
  await drawer({center:1,title:"What's new in Sentinel",sub:'Version '+APPV,ok:'Got it',html:`<div class="col" style="gap:16px">${list.map(x=>`<div><div class="row" style="gap:8px"><b>${esc(x.title)}</b><span class="tag">v${x.v}</span></div>${clItems(x.items)}</div>`).join('')}<a class="sm" href="#/help/updates" data-x>See the full version history</a></div>`});setSV(APPV);render()}
-const liveBtn=()=>`<button class="btn s ghost live" data-a="live" title="Refresh now. It also updates by itself every 3 seconds.">${ic('refresh')}<span data-live>Live</span></button>`;
+const liveBtn=()=>`<button class="btn s ghost lvbtn" data-a="live" title="Refresh now. It also updates by itself every 3 seconds.">${ic('refresh')}<span data-live>Live</span></button>`;
 let LIVEAT=Date.now(),LIVEBUSY=false,LIVELAST=0;
 const quiet=async path=>{try{const r=await fetch(path,{signal:AbortSignal.timeout(8000)});const j=await r.json().catch(()=>({}));j._s=r.status;if(!r.ok)j.error=j.error||('Error '+r.status);return j}catch{return{error:'offline'}}};
-const spin=on=>$$('.live').forEach(e=>e.classList.toggle('spin',on));
+const spin=on=>$$('.lvbtn').forEach(e=>e.classList.toggle('spin',on));
 function softRender(){const vals=[...$$('[data-flt]')].map(e=>[e.dataset.flt,e.value]),ae=document.activeElement,af=ae&&ae.dataset&&ae.dataset.flt,ss=ae&&ae.selectionStart;
  render();$$('[data-flt]').forEach(e=>{const v=vals.find(x=>x[0]===e.dataset.flt);if(v&&v[1]){e.value=v[1];e.dispatchEvent(new Event('input',{bubbles:true}))}if(af&&e.dataset.flt===af){e.focus();try{e.setSelectionRange(ss,ss)}catch{}}})}
 async function pollLive(force){
  if(LIVEBUSY||!S||!ME||!ME.user||OB||JOIN)return;if(!force&&(document.hidden||dwOpen()||$('#mn .menu')))return;
- LIVEBUSY=true;spin(true);
+ LIVEBUSY=true;if(force)spin(true);
  try{
   if(route.page==='player'&&route.id){const id=route.id,r=await quiet('/api/player?userId='+id);if(r.error||route.page!=='player'||route.id!==id)return;
    const key=x=>JSON.stringify([x.chat,x.reports,x.logbook,x.play&&x.play.total,x.hist&&x.hist.joins&&x.hist.joins.length]),changed=!PROF||key(r)!==key(PROF);PROF=r;LIVEAT=Date.now();
