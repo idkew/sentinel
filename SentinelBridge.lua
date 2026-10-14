@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 2 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 3 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -76,15 +76,21 @@ local function banner(plr, text, kind, title)
 	limit.MinSize = Vector2.new(220, 0)
 	local stroke = Instance.new("UIStroke", card)
 	stroke.Color, stroke.Transparency, stroke.Thickness = Color3.new(1, 1, 1), 0.86, 1
-	local pad = Instance.new("UIPadding", card)
-	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 14), UDim.new(0, 16)
+	-- padding lives on an inner frame so the countdown bar can sit on the card's real bottom edge
+	local inner = Instance.new("Frame")
+	inner.BackgroundTransparency = 1
+	inner.Size = UDim2.new(1, 0, 0, 0)
+	inner.AutomaticSize = Enum.AutomaticSize.Y
+	inner.Parent = card
+	local pad = Instance.new("UIPadding", inner)
+	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 14), UDim.new(0, 17)
 	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 14), UDim.new(0, 16)
 
 	local row = Instance.new("Frame")
 	row.BackgroundTransparency = 1
 	row.Size = UDim2.new(1, 0, 0, 0)
 	row.AutomaticSize = Enum.AutomaticSize.Y
-	row.Parent = card
+	row.Parent = inner
 	local rowLayout = Instance.new("UIListLayout", row)
 	rowLayout.FillDirection, rowLayout.Padding = Enum.FillDirection.Horizontal, UDim.new(0, 12)
 
