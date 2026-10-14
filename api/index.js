@@ -166,7 +166,11 @@ function tick(p, dt, now) {
   h.cur.s += dt; h.cur.last = now; h.d[di] = Math.round(((h.d[di] || 0) + dt) * 10) / 10;
   if (!h.pr || h.pr !== ws) { h.pr = ws; for (const k of Object.keys(h.d)) if (+k < di - 182) delete h.d[k]; }
 }
-const cmd = c => R.cmds.push({ id: R.nextId++, t: Date.now(), seen: {}, ...c });
+const KEEP_MS = 7 * 864e5; // bans and unbans wait for a server to start, since a banned player can't join to trigger anything
+const cmd = c => {
+  if ((c.type === 'ban' || c.type === 'unban') && c.userId) { R.cmds = R.cmds.filter(x => !((x.type === 'ban' || x.type === 'unban') && x.userId === c.userId)); c.keep = 1; } // the newest decision for a player replaces older ones
+  R.cmds.push({ id: R.nextId++, t: Date.now(), seen: {}, ...c });
+};
 const MOD_TYPES = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'];
 function logEntry(userId, name, e) {
   const list = (D.logs[userId] ||= []), x = { id: rnd(6), name, status: 'active', time: Date.now(), ...e };
@@ -244,9 +248,9 @@ function sync(b) {
   if (total > ((D.daily[dayKey(now)] || {}).p || 0)) daily().p = total;
   const hist = R.history; if (!hist.length || now - hist[hist.length - 1].t > 6e4) { hist.push({ t: now, n: total }); if (hist.length > 120) hist.shift(); }
   for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason }); }
-  R.cmds = R.cmds.filter(c => now - c.t < 120000);
+  R.cmds = R.cmds.filter(c => now - c.t < (c.keep ? KEEP_MS : 120000)); if (R.cmds.length > 300) R.cmds = R.cmds.slice(-300);
   const out = R.cmds.filter(c => !c.seen[id]); out.forEach(c => c.seen[id] = 1);
-  return { commands: out.map(({ seen, t, ...c }) => c), muted: Object.values(D.mutes).filter(live).map(m => m.userId) };
+  return { commands: out.map(({ seen, t, keep, ...c }) => c.type === 'ban' && c.seconds > 0 ? { ...c, seconds: Math.max(1, Math.round(c.seconds - (now - t) / 1000)) } : c), muted: Object.values(D.mutes).filter(live).map(m => m.userId) };
 }
 
 // ---- Roblox lookups ----
