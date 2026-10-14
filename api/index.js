@@ -166,6 +166,9 @@ function tick(p, dt, now) {
   h.cur.s += dt; h.cur.last = now; h.d[di] = Math.round(((h.d[di] || 0) + dt) * 10) / 10;
   if (!h.pr || h.pr !== ws) { h.pr = ws; for (const k of Object.keys(h.d)) if (+k < di - 182) delete h.d[k]; }
 }
+let LUA_V = null; // the newest game script version is read from SentinelBridge.lua, so changing that file's SCRIPT_VERSION alerts every workspace
+const latestScript = () => { if (LUA_V === null) { try { LUA_V = +((fs.readFileSync(path.join(__dirname, '..', 'SentinelBridge.lua'), 'utf8').match(/^local SCRIPT_VERSION = (\d+)/m) || [])[1]) || 0; } catch { LUA_V = 0; } } return LUA_V; };
+const scriptInfo = () => { const v = D.meta.scriptV || (D.meta.connectedAt ? 1 : 0), latest = latestScript(); return { v, latest, outdated: v > 0 && latest > 0 && v < latest }; };
 const KEEP_MS = 7 * 864e5; // bans and unbans wait for a server to start, since a banned player can't join to trigger anything
 const cmd = c => {
   if ((c.type === 'ban' || c.type === 'unban') && c.userId) { R.cmds = R.cmds.filter(x => !((x.type === 'ban' || x.type === 'unban') && x.userId === c.userId)); c.keep = 1; } // the newest decision for a player replaces older ones
@@ -254,6 +257,10 @@ function sync(b) {
   for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 100)) {
     if (!e) continue;
     const text = String(e.text || '').slice(0, 200), name = String(e.name || '?').slice(0, 40), uid = Number.isInteger(e.userId) ? e.userId : 0;
+    if (e.type === 'join' && D.meta && scriptInfo().outdated && Date.now() - (D.meta.scriptAlertAt || 0) > 6 * 36e5) { // tell the owner and anyone who can change settings, in game
+      const dev = Object.entries(D.members).some(([mid, m]) => m.robloxId && String(m.robloxId) === String(uid) && (mid === D.meta.owner || has(who(mid), 'automations.manage')));
+      if (dev) { D.meta.scriptAlertAt = Date.now(); const msg = 'Your Sentinel game script is out of date. Open Settings, then Game on the website, download the new script and paste it into your game.'; cmd({ type: 'message', kind: 'warn', title: 'Sentinel update available', body: msg, text: 'Sentinel update: ' + msg, userId: uid }); }
+    }
     if (e.type === 'join') { D.stats.joins++; daily().j++; feed(`${name} joined`); if (D.watch[uid]) { feed(`Watchlist: ${name} joined (${D.watch[uid].reason || 'no reason'})`); notify('watch', `Watched player joined: ${name}`, D.watch[uid].reason || '', [['Server', String(b.jobId || '').slice(0, 8)]], 0xffc53d); } const w = rule('welcome'); if (w.enabled) cmd({ type: 'message', kind: 'info', userId: uid, text: w.text }); if (uid) { const h = phist(uid); if (h.cur && h.cur.s >= 5) { closeSession(h); h.cur = { t: now, s: 0, sv: id.slice(0, 8), last: now }; } } }
     else if (e.type === 'leave') { feed(`${name} left`); if (uid) closeSession(phist(uid)); }
     else if (e.type === 'chat') { // rolling buffer: latest 300 messages, at most 24 hours
@@ -538,7 +545,7 @@ async function route(req, res, url, p) {
     if (p.startsWith('/auth/')) return await authRoute(req, res, url, p, ip);
 
     if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
-      const b = await body(req), k = String(b.key || '').trim(), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
+      const b = await body(req), k = String(b.key || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
       if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
       const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 40, 60000) || limit('sync:' + wid, 400, 60000); if (w1) return tooMany(res, w1);
       setWid(wid);
@@ -550,6 +557,7 @@ async function route(req, res, url, p) {
       const place = Number.isInteger(b.placeId) ? b.placeId : 0;
       if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) return send(res, 403, { error: 'This game key is locked to a different place' });
       if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
+      const sv = Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1; if (sv > (D.meta.scriptV || 0)) D.meta.scriptV = sv; // the highest version seen, so old servers that are still shutting down don't matter
       if (!D.meta.connectedAt) D.meta.connectedAt = Date.now();
       if (chatty && rule('flaggedmute').enabled) await need('logs');
       return send(res, 200, sync(b));
@@ -648,7 +656,7 @@ async function route(req, res, url, p) {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now) })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos },
-        workspace: { id: CTX.wid, name: D.meta.name, everConnected: !!D.meta.connectedAt, ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
+        workspace: { id: CTX.wid, name: D.meta.name, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
         invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by })) : [],
