@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 6 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 7 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -156,13 +156,17 @@ end
 
 ------------------------------------------------------------------ chat: monitor, commands, mute
 -- returns true when the message was a panel command (so it can be hidden from public chat)
+local diagText -- filled in below, once the mute code exists
 local function onChat(userId, text)
 	local plr = Players:GetPlayerByUserId(userId)
 	if not plr then return false end
 	text = string.sub(text, 1, 200)
 	local command, rest = string.match(text, "^!(%a+)%s*(.*)$")
 	command = command and string.lower(command)
-	if command == "attend" then
+	if command == "sentinel" then
+		banner(plr, diagText(plr), "blue", "Sentinel check")
+		return true
+	elseif command == "attend" then
 		queue({ type = "attend", userId = userId, name = plr.Name })
 		return true
 	elseif command == "modcall" then
@@ -225,7 +229,7 @@ local function setupChat()
 	end
 end
 
-local lastMuteErr = ""
+local lastMuteErr, lastMuteSig = "", nil
 -- takes chat privileges away from muted players (and gives them back when the mute ends).
 -- CanSend = false on the player's TextSource is what Roblox itself uses to stop a player chatting.
 local function applyMutes()
@@ -255,6 +259,14 @@ local function applyMutes()
 		end
 		if isMuted and not found then missing = p.Name end
 	end
+	local nowMuted = {}
+	for id in muted do table.insert(nowMuted, tostring(id)) end
+	table.sort(nowMuted)
+	local sig = table.concat(nowMuted, ",")
+	if sig ~= lastMuteSig then
+		lastMuteSig = sig
+		print("[Sentinel] Muted players now: " .. (sig == "" and "none" or sig))
+	end
 	lastMuteErr = failed and ("could not switch off chat for " .. failed) or (missing and ("no chat channel yet for " .. missing) or "")
 end
 
@@ -263,6 +275,27 @@ local function chatMode()
 	local channels = TextChatService:FindFirstChild("TextChannels")
 	if not (channels and channels:FindFirstChild("RBXGeneral")) then return "nochannel" end
 	return "text"
+end
+
+diagText = function(plr)
+	local mode = chatMode()
+	local n, mine, canSend = 0, 0, "n/a"
+	local channels = TextChatService:FindFirstChild("TextChannels")
+	if channels then
+		for _, ch in channels:GetChildren() do
+			if ch:IsA("TextChannel") then
+				for _, src in ch:GetChildren() do
+					if src:IsA("TextSource") and src.UserId == plr.UserId then
+						mine += 1
+						canSend = tostring(src.CanSend)
+					end
+				end
+			end
+		end
+	end
+	for _ in muted do n += 1 end
+	return string.format("Script v%d. Chat: %s. Your chat sources: %d (can send: %s). Muted players now: %d.%s",
+		SCRIPT_VERSION, mode, mine, canSend, n, lastMuteErr ~= "" and (" Problem: " .. lastMuteErr) or "")
 end
 
 -- a player who joins (or a channel that appears) while muted is silenced straight away
