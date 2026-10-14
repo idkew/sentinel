@@ -265,6 +265,10 @@ select.inp{appearance:none;-webkit-appearance:none;padding-right:28px;background
 .gr .gn{width:22px;height:22px;border-radius:50%;background:var(--ac);color:#fff;font-size:12px;font-weight:650;display:grid;place-items:center;flex:none;margin-top:1px}
 .gr .gt{flex:1;min-width:0}.gr .gt>b:first-child{font-weight:600;font-size:14px;display:block}.gr .sm b{font-weight:600;color:var(--ink)}.gr .sm{margin-top:2px}.gr .keybox{margin-top:8px;background:var(--neb)}.gr .row.wrap{margin-top:10px}
 .gr.sw2{align-items:center}
+.okmark{width:42px;height:42px;fill:none;stroke:#fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.okmark circle{stroke-dasharray:145;stroke-dashoffset:145;animation:okc .7s cubic-bezier(.65,0,.35,1) forwards}.okmark path{stroke-width:3.6;stroke-dasharray:40;stroke-dashoffset:40;animation:okp .45s .55s cubic-bezier(.65,0,.35,1) forwards}
+.appi.ok{animation:okpop .9s cubic-bezier(.2,.8,.2,1) both}
+@keyframes okc{to{stroke-dashoffset:0}}@keyframes okp{to{stroke-dashoffset:0}}@keyframes okpop{0%{transform:scale(.8)}55%{transform:scale(1.08)}100%{transform:scale(1)}}
+@media (prefers-reduced-motion:reduce){.okmark circle,.okmark path{animation:none;stroke-dashoffset:0}.appi.ok{animation:none}}
 input.swc{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:99px;background:rgba(120,120,128,.32);position:relative;flex:none;cursor:pointer;transition:background .22s;margin:0}
 input.swc::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.28);transition:transform .26s var(--sp)}
 input.swc:checked{background:#30d158}input.swc:checked::after{transform:translateX(16px)}input.swc:focus-visible{box-shadow:0 0 0 3.5px var(--acr);outline:0}
@@ -452,7 +456,7 @@ async function onRoute(){
  if(r.linked){toast('Roblox account linked');history.replaceState(null,'','#/');}
  route=r;sideOpen=false;closeMenu();if(route.page!=='player')PROF=null;if(route.page==='player'&&PROF&&String(PROF.userId)!==route.id)PROF=null;
  if(S&&route.page==='setup'&&!S.me.owner){location.hash='#/';return}
- if(S&&route.page==='setup'&&!OB)OB={step:'script'};
+ if(S&&route.page==='setup'&&!OB)OB={step:'code'};
  render(true);if(S){await pageData();render()}}
 window.addEventListener('hashchange',onRoute);
 const go=h=>{if(location.hash==='#/'+h)onRoute();else location.hash='#/'+h};
@@ -500,8 +504,8 @@ function joinView(){
  <button class="btn pri l w" data-a="join-yes">Accept invite</button><button class="btn ghost w" style="margin-top:8px" data-a="join-no">Not now</button></div></div>`}
 
 function obView(){
- OB=OB||{step:'name',creating:1};const steps=['name','script','place','connect'],idx=steps.indexOf(OB.step),first=esc((ME.user.name||'').split(' ')[0]);
- const dots=`<div class="dots" role="img" aria-label="Step ${idx+1} of 4">${steps.map((s,i)=>`<i class="${i===idx?'on':i<idx?'done':''}"></i>`).join('')}</div>`;
+ OB=OB||{step:'name',creating:1};const steps=['name','code','script','paste','http','place','connect'],idx=steps.indexOf(OB.step),first=esc((ME.user.name||'').split(' ')[0]);
+ const dots=`<div class="dots" role="img" aria-label="Step ${idx+1} of 7">${steps.map((s,i)=>`<i class="${i===idx?'on':i<idx?'done':''}"></i>`).join('')}</div>`;
  const back=v=>`<button type="button" class="btn l" data-a="ob" data-v="${v}">Back</button>`;
  let body='',left='<span></span>',right='',form='';
  if(OB.step==='name'){form='ob-name';
@@ -509,20 +513,32 @@ function obView(){
   <label class="lab" for="obn" style="text-align:center">Game name</label><input id="obn" class="inp bigin" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off" autofocus>
   <div class="hint">Your team will see this name. You can change it later.</div>`;
   left=ME.workspaces.length?`<button type="button" class="btn l" data-a="ob-exit">Cancel</button>`:'<span></span>';right=`<button class="btn pri l">Continue</button>`}
+ else if(OB.step==='code'){
+  body=`<div class="appi">${ic('lock')}</div><h1>Your game code</h1><p class="lead">Every game gets its own private code. It is how your game proves to Sentinel that it is really yours, so treat it like a password.</p>${codeBox()}`;
+  right=`<button type="button" class="btn pri l" data-a="ob" data-v="script">I copied it</button>`}
  else if(OB.step==='script'){
-  body=`<div class="appi">${ic('game')}</div><h1>Add Sentinel to your game</h1><p class="lead">Your game has its own one-time code. Treat it like a password.</p>
-  <div class="grp"><div class="gr"><span class="gn">1</span><div class="gt"><b>Copy your game code</b>${codeBox()}</div></div>
-  <div class="gr"><span class="gn">2</span><div class="gt"><b>Get the script</b><div class="sm muted">The same script works for every game. Only the code is yours.</div><div class="row wrap"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
-  <div class="gr"><span class="gn">3</span><div class="gt"><b>Paste it in Roblox Studio</b><div class="sm muted">Hover <b>ServerScriptService</b> in the Explorer, click <b>+</b>, choose <b>Script</b>, paste, then replace <b>[INPUT CODE HERE]</b> with your code.</div>${BRACKETS()}</div></div>
-  <div class="gr"><span class="gn">4</span><div class="gt"><b>Allow HTTP requests</b><div class="sm muted">Open <b>Game Settings</b>, then <b>Security</b>, turn on <b>Allow HTTP Requests</b> and save.</div></div></div></div>`;
-  right=`<button class="btn pri l" data-a="ob" data-v="place">Continue</button>`}
+  body=`<div class="appi">${ic('copy')}</div><h1>Get the script</h1><p class="lead">This is the small program that connects your game to Sentinel. The same script works for every game. Only the code is yours.</p>
+  <div class="row wrap" style="justify-content:center;gap:10px"><button type="button" class="btn pri l" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn l" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div>
+  <div class="hint">Not sure which? Press <b>Copy script</b>. You will paste it in the next step.</div>`;
+  left=back('code');right=`<button type="button" class="btn pri l" data-a="ob" data-v="paste">Next</button>`}
+ else if(OB.step==='paste'){
+  body=`<div class="appi">${ic('game')}</div><h1>Paste it into Roblox Studio</h1><p class="lead">Open your game in Roblox Studio, then follow these three small steps.</p>
+  <div class="grp"><div class="gr"><span class="gn">1</span><div class="gt"><b>Make a new Script</b><div class="sm muted">In the Explorer, hover <b>ServerScriptService</b>, click the <b>+</b> and choose <b>Script</b>.</div></div></div>
+  <div class="gr"><span class="gn">2</span><div class="gt"><b>Paste the script</b><div class="sm muted">Delete what is already inside it, then paste.</div></div></div>
+  <div class="gr"><span class="gn">3</span><div class="gt"><b>Add your code</b><div class="sm muted">Near the top, replace <b>[INPUT CODE HERE]</b> with your game code. Keep the quote marks around it.</div>${BRACKETS()}</div></div></div>`;
+  left=back('script');right=`<button type="button" class="btn pri l" data-a="ob" data-v="http">Done</button>`}
+ else if(OB.step==='http'){
+  body=`<div class="appi">${ic('bolt')}</div><h1>Allow web requests</h1><p class="lead">Roblox blocks games from talking to websites unless you allow it. Sentinel needs this to send and receive moderation actions.</p>
+  <div class="grp"><div class="gr"><span class="gn">1</span><div class="gt"><b>Open Game Settings</b><div class="sm muted">In Studio, press <b>Home</b>, then <b>Game Settings</b>.</div></div></div>
+  <div class="gr"><span class="gn">2</span><div class="gt"><b>Turn it on</b><div class="sm muted">Open <b>Security</b>, switch on <b>Allow HTTP Requests</b> and press <b>Save</b>.</div></div></div></div>`;
+  left=back('paste');right=`<button type="button" class="btn pri l" data-a="ob" data-v="place">Done</button>`}
  else if(OB.step==='place'){form='ob-place';
   body=`<div class="appi">${ic('lock')}</div><h1>Lock it to your game</h1><p class="lead">Your Place ID is the number in your game's link: roblox.com/games/<b>1234567890</b>/My-Game. Locking stops anyone using a stolen code in another game.</p>
   <div class="grp"><div class="gr" style="display:block"><label class="lab" style="margin:0 0 8px">Place ID</label><input class="inp" name="placeId" inputmode="numeric" placeholder="1234567890" value="${esc(SETUP&&SETUP.placeId||'')}"></div>
   <div class="gr sw2"><div class="gt"><b>Only accept this place</b><div class="sm muted">Studio tests use Place ID 0. Publish first, or turn this off while testing.</div></div><input type="checkbox" class="swc" name="lock" checked aria-label="Only accept this place"></div></div>`;
-  left=back('script');right=`<button type="button" class="btn l" data-a="ob" data-v="connect">Skip</button><button class="btn pri l">Save and continue</button>`}
+  left=back('http');right=`<button type="button" class="btn l" data-a="ob" data-v="connect">Skip</button><button class="btn pri l">Save and continue</button>`}
  else{const okc=OB.ok;
-  body=`<div class="appi ${okc?'ok':'gl'}">${okc?ic('check'):'<div class="spin"></div>'}</div><h1>${okc?"You're live":'Join your game'}</h1>
+  body=`<div class="appi ${okc?'ok':'gl'}">${okc?'<svg class="okmark" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="26" r="23"/><path d="M15 27.5l8 8 15-17"/></svg>':'<div class="spin"></div>'}</div><h1>${okc?"You're live":'Join your game'}</h1>
   <p class="lead">${okc?`Sentinel is receiving data${SETUP&&SETUP.lastPlace?` from place <b>${SETUP.lastPlace}</b>`:''}. Your team can now moderate in real time. Invite them from <b>Team</b>.`:'Press <b>Play</b> in Studio, or join your published game. This page updates by itself.'}</p>`;
   left=okc?'<span></span>':back('place');right=okc?`<button class="btn pri l" data-a="ob-done">Open dashboard</button>`:`<button class="btn l" data-a="ob-done">Finish later</button>`}
  const inner=`<div class="wt"><span class="tl" aria-hidden="true"><i></i><i></i><i></i></span><b>Sentinel Setup</b><span></span></div><div class="wb" key="${OB.step}">${body}</div><div class="wf">${left}${dots}<div>${right}</div></div>`;
@@ -918,9 +934,9 @@ document.addEventListener('click',async e=>{
   else if(a==='key-rotate'){if(await confirmBox('Make a new game code?','The current code stops working at once. You will need to paste the new one into the script in your game.','Make new code')){const r=await api('/api/workspace',{op:'rotatekey'});if(!bad(r)){NEWCODE=r.code;SETUP=await api('/api/setup');toast('New code ready. Copy it now.');render()}}}
  else if(a==='mod')moderate(pp());
  else if(a==='points'){const v=await drawer({center:1,title:'Points for '+d.n,ok:'Apply',html:`<label class="lab">Amount</label><input class="inp" type="number" name="amount" value="5" required><div class="hint">Use a minus to remove points.</div><label class="lab">Reason</label><input class="inp" name="reason" maxlength="200" placeholder="Helped a new player" required>`,check:v=>!+v.amount?'Enter an amount':!v.reason.trim()?'Add a reason':''});if(v){const r=await api('/api/action',{action:'points',userId:+d.uid,name:d.n,amount:+v.amount,reason:v.reason});if(!bad(r)){toast('Points updated');refresh()}}}
- else if(a==='lift'){const r=await api('/api/action',{action:d.k==='ban'?'unban':'unmute',userId:+d.uid,name:d.n,reason:'Lifted from the dashboard'});if(!bad(r)){toast(r.pending?r.msg:d.k==='ban'?'Unbanned':'Unmuted');refresh()}}
+ else if(a==='lift'){const r=await api('/api/action',{action:d.k==='ban'?'unban':'unmute',userId:+d.uid,name:d.n,reason:'Lifted from the dashboard'});if(!bad(r)){toast(r.pending?r.msg:d.k==='ban'?'Unbanned':'Unmuted');if(r.warn)setTimeout(()=>toast(r.warn,'err'),350);refresh()}}
  else if(a==='note'){const v=await drawer({center:1,title:'Note on '+PROF.name,sub:'Only staff can see notes.',ok:'Add note',html:`<textarea class="inp" name="t" maxlength="500" placeholder="What should the team know?" required></textarea>`,check:v=>v.t.trim()?'':'Write a note'});if(v){const r=await api('/api/entry',{op:'note',userId:PROF.userId,name:PROF.name,text:v.t});if(!bad(r)){toast('Note added');refresh()}}}
- else if(a==='revert'){if(await confirmBox('Revert this '+d.t.toLowerCase()+'?','It stays on the record, marked as reverted. Bans and mutes are lifted and points are taken back.','Revert')){const r=await api('/api/entry',{op:'revert',userId:PROF.userId,id:d.id});if(!bad(r)){toast('Reverted');refresh()}}}
+ else if(a==='revert'){if(await confirmBox('Revert this '+d.t.toLowerCase()+'?','It stays on the record, marked as reverted. Bans and mutes are lifted and points are taken back.','Revert')){const r=await api('/api/entry',{op:'revert',userId:PROF.userId,id:d.id});if(!bad(r)){toast('Reverted');if(r.warn)setTimeout(()=>toast(r.warn,'err'),350);refresh()}}}
  else if(a==='erase'){closeMenu();if(await confirmBox('Erase '+PROF.name+"'s data?",'Removes their logbook, playtime, points and reports. An active ban is kept so they cannot return. This cannot be undone.','Erase data')){const r=await api('/api/erase',{userId:PROF.userId});if(!bad(r)){toast('Data erased');location.hash='#/players'}}}
  else if(a==='rule-starter'){const r=await api('/api/rulebook',{op:'starter'});if(!bad(r)){toast('Added 8 starter rules');refresh()}}
  else if(a==='range'){PT.range=d.v;render()}
@@ -1012,7 +1028,7 @@ document.addEventListener('change',async e=>{const el=e.target.closest('[data-a]
  if(d.a==='setrank'){const r=await api('/api/team',{op:'setrank',uid:d.uid,rank:el.value});if(!bad(r)){toast('Rank updated')}refresh()}
  else if(d.a==='rp'){const r={...S.rules[d.id]};r[d.k]=el.type==='number'?+el.value:el.value;const x=await api('/api/rules',{id:d.id,enabled:r.enabled,params:r});if(!bad(x)){toast('Saved');await loadState()}}});
 document.addEventListener('submit',async e=>{const f=e.target.closest('[data-f]');if(!f)return;e.preventDefault();const k=f.dataset.f,v=Object.fromEntries(new FormData(f));
- if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;NEWCODE=r.code||null;await loadMe();SETUP=null;await loadState();obStep('script')}
+ if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;NEWCODE=r.code||null;await loadMe();SETUP=null;await loadState();obStep('code')}
  else if(k==='ob-place'){if(v.placeId){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(bad(r))return}obStep('connect')}
  else if(k==='lookup'){lookup(v.q.trim())}
  else if(k==='lbq'){LBF.q=v.q;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
@@ -1170,7 +1186,7 @@ setInterval(async()=>{if(route.page==='player'||route.page==='reports')return;if
 (async()=>{try{render();route=parse();if(route.page==='join'||route.page==='gjoin'){await loadMe();await onRoute();LOADED=true;return}
  await loadMe();let gj=null;try{gj=sessionStorage.getItem('gj')}catch{}if(gj&&ME.user){LOADED=true;location.hash='#/g/'+gj;return}
  if(route.linked){toast('Roblox account linked');history.replaceState(null,'','#/');route={page:'home'}}
- if(ME.user&&ME.workspaces.length){await loadState();if(route.page==='setup'&&S&&S.me.owner)OB={step:'script'};await pageData()}}catch(e){console.error(e);LASTERR=LASTERR||String(e.message||e)}LOADED=true;render(true);setTimeout(async()=>{await alphaNotice();whatsNew(tour())},900)})();
+ if(ME.user&&ME.workspaces.length){await loadState();if(route.page==='setup'&&S&&S.me.owner)OB={step:'code'};await pageData()}}catch(e){console.error(e);LASTERR=LASTERR||String(e.message||e)}LOADED=true;render(true);setTimeout(async()=>{await alphaNotice();whatsNew(tour())},900)})();
 </script>
 </body>
 </html>
