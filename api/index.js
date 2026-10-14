@@ -57,7 +57,7 @@ const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, ruleboo
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
   flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {} });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 };
-let U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
+let FB = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
@@ -76,17 +76,18 @@ const ROWS = {
   user: { get: () => U, set: v => { U = v; } },
   ...Object.fromEntries([...Array(16).keys()].map(i => ['h' + i, { get: () => (D.hist[i] ||= {}), set: v => { D.hist[i] = v || {}; } }])), // per-player playtime history, split in 16 rows so each save stays small
   glob: { get: () => G, set: v => { G = v; } },
+  fb: { get: () => FB, set: v => { FB = Array.isArray(v) ? v : []; } }, // feedback and questions from every workspace, answered from the admin page
 };
-const phys = k => k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : `w${CTX.wid}:${k}`;
+const phys = k => k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
-  '/api/action': ['logs', 'play', 'cmds'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls'], '/api/backup/download': ['logs', 'play', 'calls'], '/api/backup/import': ['logs', 'play', 'calls'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
+  '/api/action': ['logs', 'play', 'cmds'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls'], '/api/backup/import': ['logs', 'play', 'calls'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
   '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -334,11 +335,13 @@ const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><
 .c{background:var(--card);border-radius:12px;box-shadow:0 0 0 .5px var(--ln);padding:16px 18px;margin-bottom:12px}.r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.sp{flex:1}.mu{color:var(--mu);font-size:13px}
 input{height:34px;border:0;border-radius:8px;padding:0 12px;background:rgba(127,127,127,.14);color:inherit;font:inherit;min-width:260px}button{height:30px;padding:0 12px;border:0;border-radius:8px;background:rgba(127,127,127,.18);color:inherit;font:inherit;font-weight:500;cursor:pointer}button.p{background:var(--ac);color:#fff}button.d{background:#ff3b30;color:#fff}
 .b{display:inline-block;font-size:12px;border-radius:99px;padding:1px 9px;background:rgba(127,127,127,.18)}.b.x{background:rgba(255,59,48,.16);color:#d70015}code{font-size:12px;background:rgba(127,127,127,.16);padding:1px 6px;border-radius:5px}</style></head><body><div class="w"><h1>Sentinel admin</h1><p>Recover workspaces that were deleted or tampered with.</p>
-<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div id="o"></div></div>
+<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div id="fb"></div><div id="o"></div></div>
 <script>const $=i=>document.getElementById(i);let T=sessionStorage.getItem('adm')||'';const e=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function call(b){const r=await fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':T},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error '+r.status);return j}
-async function load(){try{const j=await call({op:'list'});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
+async function loadFb(){const j=await call({op:'feedback'});$('fb').innerHTML=j.items.length?'<h2 style="font-size:17px;margin:18px 0 10px">Feedback and questions</h2>'+j.items.map(f=>'<div class="c"><div class="r"><span class="b">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="mu">'+e(f.rank)+' · '+e(f.wsName)+' · '+new Date(f.t).toLocaleString()+'</span></div><p style="color:inherit;margin:8px 0;white-space:pre-wrap">'+e(f.text)+'</p><div class="r"><input data-r="'+f.id+'" placeholder="Write a reply" value="'+e(f.reply||'')+'" style="flex:1"><button class="p" data-o="fr" data-i="'+f.id+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="d" data-o="fd" data-i="'+f.id+'">Delete</button></div></div>').join(''):''}
+async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
 $('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
+$('fb').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;try{if(b.dataset.o==='fr')await call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value});else if(confirm('Delete this message?'))await call({op:'feedbackDelete',id:b.dataset.i});loadFb()}catch(x){$('m').textContent=x.message}};
 $('o').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;const w=b.dataset.w,s=$('s'+w);try{
 if(b.dataset.o==='rd'){if(!confirm('Restore this workspace?'))return;await call({op:'restoreDeleted',wid:w});load()}
 else if(b.dataset.o==='sn'){await call({op:'snapshotNow',wid:w});s.textContent='Backed up.'}
@@ -473,6 +476,12 @@ async function route(req, res, url, p) {
       if (!same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
       const A = await body(req), wid = String(A.wid || '');
       if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
+      if (A.op === 'feedback') { await need('fb'); return send(res, 200, { items: FB.slice(0, 200) }); }
+      if (A.op === 'feedbackReply' || A.op === 'feedbackDelete') {
+        await need('fb'); const i = FB.findIndex(f => f.id === String(A.id || '')); if (i < 0) return send(res, 404, { error: 'Not found' });
+        if (A.op === 'feedbackDelete') FB.splice(i, 1); else { FB[i].reply = String(A.reply || '').slice(0, 2000).trim() || null; FB[i].repliedAt = FB[i].reply ? Date.now() : null; }
+        return ok(res);
+      }
       if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 400, { error: 'bad workspace' });
       if (A.op === 'snaps') return send(res, 200, { snaps: await listSnapshots(wid) });
       if (A.op === 'snapshotNow') return (await snapshot(wid, bkDay())) ? ok(res) : send(res, 404, { error: 'No such workspace' });
@@ -794,6 +803,14 @@ async function route(req, res, url, p) {
         audit(u.user, `${B.approve ? 'Approved' : 'Denied'} leave for ${x.name}`); notify('loa', `Leave ${x.status} for ${x.name}`, x.note, [['By', u.user]], 0x12a594); return ok(res);
       }
       return send(res, 400, { error: 'bad request' });
+    }
+    if (p === '/api/feedback') {
+      if (req.method === 'GET') return send(res, 200, { items: FB.filter(f => f.uid === uid).slice(0, 30).map(f => ({ id: f.id, t: f.t, type: f.type, text: f.text, reply: f.reply || null, repliedAt: f.repliedAt || null })) });
+      const w0 = limit('fb:' + uid, 6, 3600000); if (w0) return tooMany(res, w0);
+      const type = ['question', 'idea', 'bug', 'praise'].includes(B.type) ? B.type : 'idea', text = String(B.text || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f<>]/g, '').trim().slice(0, 2000);
+      if (text.length < 5) return send(res, 400, { error: 'Write a little more so we can help (at least 5 characters).' });
+      FB.unshift({ id: rnd(6), t: Date.now(), type, text, uid, user: mem.name, rank: u.isOwner ? 'Owner' : (D.ranks[mem.rank] || {}).name || 'Member', ws: CTX.wid, wsName: D.meta.name, page: cleanName(B.page, 30) }); FB.length = Math.min(FB.length, 400);
+      return ok(res);
     }
     if (p === '/api/backups') {
       if (!u.isOwner) return ownerOnly(res);
