@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 5 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 6 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -178,6 +178,7 @@ local function onChat(userId, text)
 	return false
 end
 
+local mutedNote = {}
 local function setupChat()
 	if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
 		local channels = TextChatService:WaitForChild("TextChannels", 30)
@@ -190,7 +191,15 @@ local function setupChat()
 		ch.ShouldDeliverCallback = function(message, _target)
 			local src = message.TextSource
 			if not src then return true end
-			if muted[src.UserId] then return false end
+			if muted[src.UserId] then
+				-- tell them why nothing happens, at most every 8 seconds
+				if os.clock() - (mutedNote[src.UserId] or -999) > 8 then
+					mutedNote[src.UserId] = os.clock()
+					local mp = Players:GetPlayerByUserId(src.UserId)
+					if mp then banner(mp, "You are muted and can't chat right now.", "red", "Muted") end
+				end
+				return false
+			end
 			local id = message.MessageId
 			if hidden[id] then return false end
 			if not seen[id] then
@@ -218,7 +227,7 @@ end
 
 local lastMuteErr = ""
 -- takes chat privileges away from muted players (and gives them back when the mute ends).
--- TextSources are named by UserId. CanSend = false is what Roblox itself uses to stop a player chatting.
+-- CanSend = false on the player's TextSource is what Roblox itself uses to stop a player chatting.
 local function applyMutes()
 	if TextChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
 		lastMuteErr = next(muted) and "legacy chat: mutes need TextChatService" or ""
@@ -226,22 +235,27 @@ local function applyMutes()
 	end
 	local channels = TextChatService:FindFirstChild("TextChannels")
 	if not channels then lastMuteErr = "no TextChannels"; return end
-	local missing
+	local missing, failed
 	for _, p in Players:GetPlayers() do
 		local isMuted = muted[p.UserId] == true
 		local found = false
 		for _, ch in channels:GetChildren() do
 			if ch:IsA("TextChannel") then
-				local src = ch:FindFirstChild(tostring(p.UserId))
-				if src and src:IsA("TextSource") then
-					found = true
-					if src.CanSend == isMuted then src.CanSend = not isMuted end
+				-- Roblox names TextSources after the player, not the UserId, so match on the UserId property instead
+				for _, src in ch:GetChildren() do
+					if src:IsA("TextSource") and src.UserId == p.UserId then
+						found = true
+						if src.CanSend == isMuted then
+							local okSet = pcall(function() src.CanSend = not isMuted end)
+							if not okSet or src.CanSend == isMuted then failed = p.Name end
+						end
+					end
 				end
 			end
 		end
 		if isMuted and not found then missing = p.Name end
 	end
-	lastMuteErr = missing and ("no chat channel yet for " .. missing) or ""
+	lastMuteErr = failed and ("could not switch off chat for " .. failed) or (missing and ("no chat channel yet for " .. missing) or "")
 end
 
 local function chatMode()
@@ -255,7 +269,7 @@ end
 local function watchChannel(ch)
 	if not ch:IsA("TextChannel") then return end
 	ch.ChildAdded:Connect(function(src)
-		if src:IsA("TextSource") and muted[tonumber(src.Name) or 0] then src.CanSend = false end
+		if src:IsA("TextSource") and muted[src.UserId] then src.CanSend = false end
 	end)
 end
 task.spawn(function()
