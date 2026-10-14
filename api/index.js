@@ -1,936 +1,806 @@
-// Sentinel v3: moderation and staff management for Roblox games. Vercel + Supabase edition (many games, one site).
-// Vercel runs this file as ONE serverless function. Functions forget everything between requests, so all
-// state lives in Supabase (table panel_kv). Each request loads the rows it needs, runs, and saves only what
-// changed in one all-or-nothing transaction (panel_commit). If two requests collide, the loser re-runs.
-// Every game gets its own "workspace": its own rows (w<id>:*), its own members and its own game key.
-const fs = require('fs'), path = require('path'), crypto = require('crypto');
-const env = process.env, rnd = n => crypto.randomBytes(n).toString('base64url');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="color-scheme" content="light dark">
+<title>Sentinel</title>
+<style>
+:root{
+ --bg:#fff;--side:#f7f8fa;--ink:#1a1f36;--ink2:#3c4257;--muted:#697386;--faint:#a3acb9;--line:#e3e8ee;--hover:#f6f8fa;--sel:#f0f1f7;
+ --ac:#635bff;--ac2:#5148e8;--acs:#efeeff;--acr:rgba(99,91,255,.32);
+ --ok:#0a7c2f;--okb:#d7f7c2;--wa:#983705;--wab:#fcedb9;--er:#c0123c;--erb:#ffe7ef;--in:#0055bc;--inb:#d1ecff;--ne:#545969;--neb:#ebeef1;
+ --sh:0 0 0 1px rgba(60,66,87,.08),0 2px 5px rgba(60,66,87,.06),0 1px 1px rgba(0,0,0,.04);--shl:0 15px 35px rgba(50,50,93,.18),0 5px 15px rgba(0,0,0,.08);
+ --f:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Ubuntu,sans-serif;--m:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{
+ --bg:#0f1117;--side:#0b0d12;--ink:#e8eaf0;--ink2:#c4c8d4;--muted:#8a91a5;--faint:#596074;--line:#232733;--hover:#161a23;--sel:#1b1f2b;
+ --ac:#7a73ff;--ac2:#8e88ff;--acs:rgba(122,115,255,.14);--acr:rgba(122,115,255,.4);
+ --ok:#5fd37f;--okb:rgba(52,199,89,.14);--wa:#f5b44a;--wab:rgba(245,180,74,.14);--er:#ff7a93;--erb:rgba(255,92,124,.14);--in:#6cb6ff;--inb:rgba(56,139,253,.15);--ne:#a3aabd;--neb:rgba(140,149,170,.15);
+ --sh:0 0 0 1px rgba(255,255,255,.06),0 2px 8px rgba(0,0,0,.35);--shl:0 20px 50px rgba(0,0,0,.6)}}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--f);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}button{background:none;border:0;padding:0;cursor:pointer}
+a{color:var(--ac);text-decoration:none}a:hover{color:var(--ac2)}
+h1{font-size:28px;line-height:1.2;font-weight:700;letter-spacing:-.02em;margin:0}h2{font-size:18px;font-weight:600;margin:0;letter-spacing:-.01em}h3{font-size:15px;font-weight:600;margin:0}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.muted{color:var(--muted)}.sm{font-size:13px}.xs{font-size:12px}.mono{font-family:var(--m);font-size:12.5px}.b{font-weight:600}
+.row{display:flex;align-items:center;gap:10px}.col{display:flex;flex-direction:column;gap:6px}.sp{flex:1}.wrap{flex-wrap:wrap}.mt{margin-top:20px}.mt2{margin-top:32px}
 
-const cfg = { service: env.PANEL_SERVICE || 'Sentinel', company: env.PANEL_COMPANY || '', email: env.PANEL_EMAIL || '', country: env.PANEL_COUNTRY || '',
-  legalReviewed: /^(1|true|yes)$/i.test(env.LEGAL_REVIEWED || ''), callRetentionDays: +env.CALL_RETENTION_DAYS || 90, updated: env.PANEL_LEGAL_UPDATED || '' };
-const ENVNAME = { service: 'PANEL_SERVICE', company: 'PANEL_COMPANY', email: 'PANEL_EMAIL', country: 'PANEL_COUNTRY', callRetentionDays: 'CALL_RETENTION_DAYS' };
-const APP_SECRET = env.APP_SECRET || '';
-const SB_URL = (env.SUPABASE_URL || '').replace(/\/$/, ''), SB_KEY = env.SUPABASE_SERVICE_KEY || '';
-const PROV = {
-  google: { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET, auth: 'https://accounts.google.com/o/oauth2/v2/auth', token: 'https://oauth2.googleapis.com/token', info: 'https://openidconnect.googleapis.com/v1/userinfo', scope: 'openid profile' },
-  roblox: { id: env.ROBLOX_CLIENT_ID, secret: env.ROBLOX_CLIENT_SECRET, auth: 'https://apis.roblox.com/oauth/v1/authorize', token: 'https://apis.roblox.com/oauth/v1/token', info: 'https://apis.roblox.com/oauth/v1/userinfo', scope: 'openid profile' },
-};
-if (env.OAUTH_TEST_BASE) for (const [k, P] of Object.entries(PROV)) Object.assign(P, { auth: `${env.OAUTH_TEST_BASE}/${k}/authorize`, token: `${env.OAUTH_TEST_BASE}/${k}/token`, info: `${env.OAUTH_TEST_BASE}/${k}/userinfo` }); // tests only
-const providers = () => Object.keys(PROV).filter(k => PROV[k].id && PROV[k].secret);
-const MAX_WORKSPACES = +env.MAX_WORKSPACES || 50, MAX_PER_USER = +env.MAX_WORKSPACES_PER_USER || 3, SIGNUPS_OPEN = !/^(0|false|no)$/i.test(env.SIGNUPS_OPEN || '');
-const CONFIG_ERROR = [!SB_URL && 'SUPABASE_URL', !SB_KEY && 'SUPABASE_SERVICE_KEY', APP_SECRET.length < 32 && 'APP_SECRET (at least 32 characters)',
-  !providers().length && 'GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET and/or ROBLOX_CLIENT_ID + ROBLOX_CLIENT_SECRET'].filter(Boolean);
-const LIVE_MS = 35000, CHAT_MS = 24 * 36e5; // a game server counts as online for 35 s after its last check-in; chat is kept at most 24 h
+/* shell */
+.app{display:grid;grid-template-columns:244px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px 10px;gap:4px;z-index:20}
+.ws{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;text-align:left;width:100%}.ws:hover{background:var(--sel)}
+.logo{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#fff;font-weight:700;font-size:13px;background:linear-gradient(135deg,#7a73ff,#635bff 45%,#0ea5e9);flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}
+.ws .n{flex:1;min-width:0;line-height:1.2}.ws b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ws small{color:var(--muted);font-size:12px}
+.search{display:flex;align-items:center;gap:8px;margin:6px 2px 10px;padding:6px 10px;border-radius:7px;color:var(--muted);background:var(--bg);box-shadow:var(--sh);font-size:13px;text-align:left}
+.search kbd{margin-left:auto;font:11px var(--m);color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.navl{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);padding:14px 10px 4px}
+.nv{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;color:var(--ink2);font-weight:500;font-size:14px}
+.nv:hover{background:var(--sel);color:var(--ink)}.nv.on{color:var(--ac);background:var(--acs)}.nv .ic{color:var(--muted)}.nv.on .ic{color:var(--ac)}
+.nv .cnt{margin-left:auto;background:var(--er);color:#fff;border-radius:99px;font-size:11px;font-weight:600;min-width:18px;height:18px;display:grid;place-items:center;padding:0 5px}
+.sfoot{margin-top:auto;display:flex;flex-direction:column;gap:6px}
+.live{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);padding:6px 10px}.dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}.dot.on{background:#30c75a;box-shadow:0 0 0 3px rgba(48,199,90,.18);animation:pulse 2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 5px rgba(48,199,90,.06)}}
+.me{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:8px;text-align:left;width:100%}.me:hover{background:var(--sel)}.me .n{flex:1;min-width:0;line-height:1.2}.me b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.me small{font-size:12px;color:var(--muted)}
+.menu{position:fixed;background:var(--bg);border-radius:10px;box-shadow:var(--shl);border:1px solid var(--line);padding:6px;z-index:60;min-width:230px;animation:pop .14s ease}
+.menu button,.menu a{display:flex;align-items:center;gap:9px;width:100%;padding:7px 10px;border-radius:6px;color:var(--ink);font-size:14px;text-align:left}.menu button:hover,.menu a:hover{background:var(--sel)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:5px 2px}.menu .lab2{font-size:12px;color:var(--muted);padding:6px 10px 2px}
+main{min-width:0}.page{max-width:1140px;margin:0 auto;padding:32px 40px 80px}.page.anim{animation:in .22s ease}
+@keyframes in{from{opacity:0;transform:translateY(5px)}}@keyframes pop{from{opacity:0;transform:scale(.97)}}
+.top{display:none}
+.hd{display:flex;align-items:flex-end;gap:16px;margin-bottom:24px;flex-wrap:wrap}.hd .t{flex:1;min-width:240px}.hd p{margin:6px 0 0;color:var(--muted);font-size:14.5px}
+.crumb{font-size:13px;color:var(--muted);margin-bottom:8px}.crumb a{color:var(--muted)}.crumb a:hover{color:var(--ac)}
 
-// ---- rate limiter: counts per key in a time window. Lives in memory, so each serverless instance counts on its own ----
-const buckets = new Map();
-function limit(key, max, windowMs) { // returns 0 if allowed, otherwise the seconds to wait
-  const now = Date.now(); let b = buckets.get(key);
-  if (!b || now > b.reset) { b = { n: 0, reset: now + windowMs }; buckets.set(key, b); }
-  if (buckets.size > 5000) for (const [k, v] of buckets) if (now > v.reset) buckets.delete(k);
-  return ++b.n <= max ? 0 : Math.ceil((b.reset - now) / 1000);
+/* controls */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:6px;font-weight:500;font-size:14px;white-space:nowrap;transition:background .12s,box-shadow .12s,transform .06s;background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px rgba(60,66,87,.16),0 1px 1px rgba(0,0,0,.08)}
+.btn:hover{background:var(--hover)}.btn:active{transform:translateY(1px)}.btn:focus-visible,.inp:focus,.nv:focus-visible{outline:0;box-shadow:0 0 0 4px var(--acr)}
+.btn.pri{background:var(--ac);color:#fff;box-shadow:0 1px 1px rgba(0,0,0,.12),0 2px 5px rgba(60,66,87,.12),inset 0 -1px 1px rgba(0,0,0,.12)}.btn.pri:hover{background:var(--ac2)}
+.btn.red{background:#df1b41;color:#fff;box-shadow:0 1px 1px rgba(0,0,0,.12)}.btn.red:hover{background:#c0123c}.btn.ghost{box-shadow:none;background:none;color:var(--ac)}.btn.ghost:hover{background:var(--acs)}
+.btn.s{height:28px;padding:0 10px;font-size:13px}.btn.l{height:40px;padding:0 18px;font-size:15px}.btn[disabled]{opacity:.5;pointer-events:none}.btn.w{width:100%}
+@media(prefers-color-scheme:dark){.btn{box-shadow:0 0 0 1px rgba(255,255,255,.1)}}
+.inp{width:100%;height:34px;padding:0 10px;border-radius:6px;border:0;background:var(--bg);box-shadow:0 0 0 1px rgba(60,66,87,.18),0 1px 1px rgba(0,0,0,.06);transition:box-shadow .12s}
+@media(prefers-color-scheme:dark){.inp{box-shadow:0 0 0 1px rgba(255,255,255,.12);background:#0b0d12}}
+textarea.inp{height:auto;padding:8px 10px;resize:vertical;min-height:76px}select.inp{padding-right:28px}
+.lab{display:block;font-weight:500;font-size:13px;margin:16px 0 6px;color:var(--ink2)}.lab:first-child{margin-top:0}.hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+.seg{display:inline-flex;padding:2px;border-radius:7px;background:var(--neb);gap:2px;flex-wrap:wrap}.seg button{padding:5px 12px;border-radius:5px;font-size:13px;font-weight:500;color:var(--ink2)}.seg button.on{background:var(--bg);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.tog{position:relative;width:36px;height:20px;border-radius:99px;background:var(--faint);transition:.18s;flex:none}.tog::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.3)}.tog.on{background:var(--ac)}.tog.on::after{transform:translateX(16px)}
+.chk{display:flex;gap:10px;align-items:flex-start;padding:8px 0;cursor:pointer}.chk input{margin-top:3px;accent-color:var(--ac)}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--line);margin-bottom:22px;overflow-x:auto}.tabs a{padding:0 1px 10px;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tabs a:hover{color:var(--ink)}.tabs a.on{color:var(--ac);border-color:var(--ac)}.tabs .n{font-size:12px;background:var(--neb);color:var(--ne);border-radius:99px;padding:1px 7px;margin-left:5px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{padding:3px 11px;border-radius:99px;font-size:13px;font-weight:500;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}.chip.on{background:var(--ink);color:var(--bg);box-shadow:none}
+
+/* data */
+.card{background:var(--bg);border-radius:10px;box-shadow:var(--sh);padding:20px}.card.p0{padding:0}.card h3+p{margin:4px 0 0}
+.grid{display:grid;gap:16px}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(3,minmax(0,1fr))}.g4{grid-template-columns:repeat(4,minmax(0,1fr))}.gm{grid-template-columns:minmax(0,1.7fr) minmax(0,1fr)}
+.kpi{padding:16px 18px 12px}.kpi .kl{font-size:13px;color:var(--muted);font-weight:500}.kpi .kv{font-size:26px;font-weight:600;letter-spacing:-.02em;margin:2px 0 4px;font-variant-numeric:tabular-nums}.kpi .kf{font-size:12px;color:var(--faint);display:flex;justify-content:space-between;margin-top:2px}
+.spk{width:100%;height:42px;display:block}.spk .a{fill:url(#sg)}.spk .l{fill:none;stroke:var(--ac);stroke-width:1.8;vector-effect:non-scaling-stroke}
+table{width:100%;border-collapse:collapse}th{text-align:left;font-size:12px;font-weight:500;color:var(--muted);padding:9px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}tr:last-child td{border-bottom:0}tbody tr{transition:background .1s}tbody tr:hover{background:var(--hover)}tr.click{cursor:pointer}
+.tw{overflow-x:auto}.tbar{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.bdg{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:4px;font-size:12px;font-weight:500;background:var(--neb);color:var(--ne);white-space:nowrap}
+.bdg.ok{background:var(--okb);color:var(--ok)}.bdg.wa{background:var(--wab);color:var(--wa)}.bdg.er{background:var(--erb);color:var(--er)}.bdg.in{background:var(--inb);color:var(--in)}.bdg.ac{background:var(--acs);color:var(--ac)}
+.rtag{display:inline-flex;align-items:center;gap:6px;font-weight:500;white-space:nowrap}.rtag i{width:9px;height:9px;border-radius:3px;flex:none}
+.av{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#c3c8d6,#9aa1b5);color:#fff;font-size:11.5px;font-weight:600;display:grid;place-items:center;flex:none;overflow:hidden}.av img{width:100%;height:100%;object-fit:cover}.av.l{width:42px;height:42px;font-size:14px}.av.xl{width:68px;height:68px;font-size:22px}
+.who{display:flex;align-items:center;gap:11px;min-width:0}.who b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.who small{display:block;font-size:12.5px;color:var(--muted)}
+.bar{height:6px;border-radius:99px;background:var(--neb);overflow:hidden;min-width:90px}.bar i{display:block;height:100%;border-radius:99px;background:var(--ac)}.bar.done i{background:#30c75a}
+.empty{padding:48px 20px;text-align:center;color:var(--muted)}.empty .ei{width:44px;height:44px;border-radius:12px;background:var(--acs);color:var(--ac);display:grid;place-items:center;margin:0 auto 12px}.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px}
+.banner{display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:10px;background:var(--acs);margin-bottom:20px}.banner .ic{width:20px;height:20px;color:var(--ac)}.banner.wa{background:var(--wab)}.banner.wa .ic{color:var(--wa)}
+.feed>div{display:flex;gap:12px;padding:10px 18px;border-bottom:1px solid var(--line);font-size:13.5px}.feed>div:last-child{border:0}.feed .t{color:var(--faint);font-size:12px;white-space:nowrap;margin-left:auto}
+.steps{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.steps .arr{color:var(--faint)}
+.kv2{display:grid;grid-template-columns:150px 1fr;gap:10px 16px;font-size:14px}.kv2 dt{color:var(--muted)}.kv2 dd{margin:0}
+.chatl{padding:9px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:baseline}.chatl:last-child{border:0}.chatl.fl{background:var(--wab)}
+.chatl .acts{opacity:0;margin-left:auto;display:flex;gap:6px;transition:.12s}.chatl:hover .acts{opacity:1}
+.ctx{background:var(--hover);border-radius:8px;padding:10px 14px;font-size:13px;margin-top:12px}.ctx div+div{margin-top:3px}
+code{font-family:var(--m);font-size:12.5px;background:var(--neb);padding:1px 6px;border-radius:4px}
+.keybox{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:7px;box-shadow:0 0 0 1px var(--line);font-family:var(--m);font-size:13px}.keybox span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw{display:inline-flex;gap:6px;flex-wrap:wrap}.sw label{width:24px;height:24px;border-radius:6px;cursor:pointer;position:relative}.sw input{position:absolute;opacity:0}.sw input:checked+i{position:absolute;inset:-3px;border-radius:8px;box-shadow:0 0 0 2px var(--ac)}
+.pg{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}.pg:last-child{border:0}
+
+/* drawer, modal, palette, toast */
+#dw .scrim,#ck .scrim{position:fixed;inset:0;background:rgba(15,17,30,.36);z-index:70;opacity:0;transition:opacity .2s}
+#dw.open .scrim,#ck.open .scrim{opacity:1}
+.dwr{position:fixed;top:0;right:0;bottom:0;width:min(480px,100vw);background:var(--bg);z-index:71;display:flex;flex-direction:column;box-shadow:var(--shl);transform:translateX(100%);transition:transform .26s cubic-bezier(.2,.8,.2,1)}
+#dw.open .dwr{transform:none}.dwr.c{top:50%;left:50%;right:auto;bottom:auto;width:min(440px,calc(100vw - 32px));max-height:85vh;border-radius:12px;transform:translate(-50%,-48%) scale(.97);opacity:0;transition:.2s}
+#dw.open .dwr.c{transform:translate(-50%,-50%);opacity:1}
+.dwh{display:flex;align-items:flex-start;gap:12px;padding:20px 24px;border-bottom:1px solid var(--line)}.dwh .t{flex:1}.dwh p{margin:3px 0 0;color:var(--muted);font-size:13.5px}
+.x{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted);font-size:20px}.x:hover{background:var(--sel)}
+.dwb{padding:20px 24px;overflow:auto;flex:1}.dwf{display:flex;justify-content:flex-end;gap:8px;padding:14px 24px;border-top:1px solid var(--line)}
+.esc{margin-top:10px;padding:12px 14px;border-radius:8px;background:var(--acs);font-size:13.5px}
+.ckb{position:fixed;top:12vh;left:50%;transform:translateX(-50%);width:min(620px,calc(100vw - 32px));background:var(--bg);border-radius:12px;box-shadow:var(--shl);z-index:71;overflow:hidden;animation:pop .14s ease}
+.ckb input{width:100%;border:0;outline:0;background:none;padding:18px 20px;font-size:16px;border-bottom:1px solid var(--line)}
+.ckl{max-height:52vh;overflow:auto;padding:6px}.ckl .sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);padding:10px 12px 4px}
+.ckl button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:7px;text-align:left}.ckl button.on{background:var(--acs);color:var(--ac)}.ckl small{margin-left:auto;color:var(--faint);font-size:12px}
+.ckf{display:flex;gap:14px;padding:9px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--faint)}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:90;display:grid;gap:8px;justify-items:center}
+.toast{display:flex;align-items:center;gap:9px;background:#1a1f36;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;box-shadow:var(--shl);animation:tin .25s cubic-bezier(.2,.9,.3,1.3)}.toast.err{background:#c0123c}.toast .ic{color:#5fe08a}.toast.err .ic{color:#fff}
+@keyframes tin{from{opacity:0;transform:translateY(12px) scale(.96)}}
+.skel{background:linear-gradient(90deg,var(--neb),var(--hover),var(--neb));background-size:200% 100%;animation:sk 1.2s infinite;border-radius:6px;height:14px}@keyframes sk{to{background-position:-200% 0}}
+.spin{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--neb);border-top-color:var(--ac);animation:rot .8s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
+
+/* auth + onboarding */
+.auth{min-height:100vh;display:grid;place-items:center;padding:24px;position:relative;overflow:hidden;background:var(--side)}
+.band{position:absolute;left:-10%;right:-10%;top:-38vh;height:78vh;transform:skewY(-11deg);background:linear-gradient(115deg,#635bff 0%,#80e9ff 30%,#a960ee 55%,#ff6c95 78%,#ffcb57 100%);background-size:220% 220%;animation:flow 14s ease infinite;opacity:.95}
+@keyframes flow{50%{background-position:100% 50%}}
+.acard{position:relative;width:100%;max-width:420px;background:var(--bg);border-radius:12px;box-shadow:var(--shl);padding:38px 36px 28px}
+.acard .logo{width:40px;height:40px;border-radius:10px;font-size:18px;margin-bottom:22px}.acard h1{font-size:24px}.acard .lead{color:var(--muted);margin:6px 0 24px;font-size:15px}
+.oa{display:flex;align-items:center;justify-content:center;gap:10px;height:42px;border-radius:7px;font-weight:500;font-size:15px;width:100%;margin-top:10px;background:var(--bg);color:var(--ink);box-shadow:0 0 0 1px rgba(60,66,87,.18),0 1px 2px rgba(0,0,0,.08);transition:.12s}.oa:hover{background:var(--hover);color:var(--ink)}.oa svg{width:18px;height:18px}
+.oa.dk{background:#1a1f36;color:#fff;box-shadow:none;--rbx:#1a1f36}.oa.dk:hover{background:#2a2f4a;color:#fff}
+@media(prefers-color-scheme:dark){.oa.dk{background:#e8eaf0;color:#1a1f36;--rbx:#e8eaf0}.oa.dk:hover{background:#fff;color:#1a1f36}}
+.afoot{position:relative;margin-top:22px;display:flex;gap:16px;justify-content:center;font-size:13px}.afoot a{color:var(--muted)}
+.inv{background:var(--acs);color:var(--ac);border-radius:8px;padding:10px 14px;font-size:14px;margin:-8px 0 16px}
+.ob{min-height:100vh;display:grid;grid-template-columns:320px 1fr;background:var(--bg)}
+.obl{background:var(--side);border-right:1px solid var(--line);padding:28px 26px;display:flex;flex-direction:column;gap:6px}
+.obs{display:flex;gap:12px;padding:12px;border-radius:8px;align-items:flex-start}.obs.on{background:var(--bg);box-shadow:var(--sh)}
+.obs .n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;flex:none;box-shadow:inset 0 0 0 1.5px var(--faint);color:var(--muted)}
+.obs.on .n{box-shadow:none;background:var(--ac);color:#fff}.obs.done .n{box-shadow:none;background:#30c75a;color:#fff}.obs b{display:block;font-weight:600;font-size:14px}.obs small{color:var(--muted);font-size:12.5px}
+.obr{display:grid;place-items:center;padding:40px}.obc{width:100%;max-width:560px;animation:in .25s ease}.obc h1{font-size:30px}.obc .lead{color:var(--muted);font-size:16px;margin:8px 0 28px}
+.inst{counter-reset:s;display:grid;gap:10px}.inst>div{display:flex;gap:14px;padding:16px;border-radius:10px;box-shadow:var(--sh)}.inst>div::before{counter-increment:s;content:counter(s);width:24px;height:24px;border-radius:50%;background:var(--acs);color:var(--ac);font-weight:700;font-size:12px;display:grid;place-items:center;flex:none}
+.big{width:84px;height:84px;border-radius:50%;margin:0 0 22px;display:grid;place-items:center;background:var(--acs)}.big.ok{background:var(--okb);color:var(--ok)}.big .ic{width:38px;height:38px;stroke-width:2.2}.big .spin{width:34px;height:34px;border-width:3px}
+
+@media(max-width:980px){.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.gm,.g3{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:860px){
+ .app{display:block}.side{position:fixed;left:0;top:0;bottom:0;width:270px;transform:translateX(-100%);transition:transform .25s;box-shadow:var(--shl)}.side.open{transform:none}
+ .top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:15}
+ .page{padding:22px 16px 60px}.g2,.g4{grid-template-columns:minmax(0,1fr)}h1{font-size:24px}.ob{grid-template-columns:1fr}.obl{display:none}.obr{padding:24px 16px}.kv2{grid-template-columns:1fr}
 }
-const ipOf = req => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '?').split(',')[0].trim();
 
-// ---- permissions: every rank gets a set of these. The workspace owner always has all of them ----
-const PERMS = [
-  ['mod.warn', 'Warn players', 'Moderation'], ['mod.kick', 'Kick players', 'Moderation'], ['mod.mute', 'Mute and unmute players', 'Moderation'],
-  ['mod.ban', 'Suspend players (timed bans)', 'Moderation', 1], ['mod.permban', 'Ban players permanently', 'Moderation', 1], ['mod.unban', 'Unban players', 'Moderation', 1],
-  ['logbook.note', 'Add private notes to players', 'Moderation'], ['logbook.revert', 'Revert logbook entries', 'Moderation', 1],
-  ['reports.handle', 'Claim and resolve reports', 'Reports'], ['appeals.review', 'Review ban appeals', 'Reports'], ['chat.view', 'Read live chat', 'Reports'],
-  ['announce', 'Announce to every server', 'Game'], ['sessions.host', 'Host sessions', 'Activity'], ['points.manage', 'Give and remove points', 'Activity'],
-  ['loa.review', 'Approve or deny leave requests', 'Team'], ['team.manage', 'Invite, remove and re-rank members below them', 'Team', 1], ['ranks.manage', 'Create and edit ranks below their own', 'Team', 1],
-  ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
-  ['webhooks.manage', 'Manage Discord notifications', 'Settings', 1], ['privacy.manage', 'Export and erase player data', 'Settings', 1],
-];
-const ALLP = PERMS.map(p => p[0]);
-const defaultRanks = () => ({
-  admin: { name: 'Administrator', color: '#635bff', pos: 30, perms: ALLP.slice(), quota: 0, limit: 0 },
-  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
-  helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'sessions.host'], quota: 60, limit: 15 },
+/* ===== Sentinel skin: macOS-style ===== */
+:root{
+ --f:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Inter","Segoe UI",system-ui,sans-serif;
+ --bg:#fff;--canvas:#f5f5f7;--side:rgba(238,239,243,.66);--ink:#1d1d1f;--ink2:#3a3a3d;--muted:#6e6e73;--faint:#a1a1a6;
+ --line:rgba(0,0,0,.085);--hover:rgba(0,0,0,.04);--sel:rgba(0,0,0,.065);
+ --ac:#0a7aff;--ac2:#0063d6;--acs:rgba(10,122,255,.1);--acr:rgba(10,122,255,.32);
+ --ok:#1f8a3b;--okb:rgba(48,209,88,.16);--wa:#9a5b00;--wab:rgba(255,159,10,.16);--er:#d70015;--erb:rgba(255,59,48,.12);--in:#0063d6;--inb:rgba(10,122,255,.12);--ne:#58585d;--neb:rgba(0,0,0,.06);
+ --sh:0 0 0 .5px rgba(0,0,0,.09),0 1px 2px rgba(0,0,0,.04),0 4px 14px rgba(0,0,0,.025);--shl:0 0 0 .5px rgba(0,0,0,.14),0 24px 64px rgba(20,24,40,.24),0 6px 18px rgba(0,0,0,.1);
+ --glass:rgba(250,250,252,.78);--rad:12px;--sp:cubic-bezier(.32,.72,0,1)}
+@media(prefers-color-scheme:dark){:root{
+ --bg:#262629;--canvas:#1c1c1e;--side:rgba(38,38,42,.62);--ink:#f5f5f7;--ink2:#d2d2d7;--muted:#98989f;--faint:#636366;
+ --line:rgba(255,255,255,.09);--hover:rgba(255,255,255,.05);--sel:rgba(255,255,255,.09);
+ --ac:#0a84ff;--ac2:#409cff;--acs:rgba(10,132,255,.16);--acr:rgba(10,132,255,.45);
+ --ok:#32d74b;--okb:rgba(48,209,88,.16);--wa:#ffb340;--wab:rgba(255,159,10,.16);--er:#ff6961;--erb:rgba(255,69,58,.16);--in:#64b5ff;--inb:rgba(10,132,255,.18);--ne:#aeaeb2;--neb:rgba(255,255,255,.09);
+ --sh:0 0 0 .5px rgba(255,255,255,.1),0 1px 2px rgba(0,0,0,.3);--shl:0 0 0 .5px rgba(255,255,255,.14),0 24px 64px rgba(0,0,0,.6);--glass:rgba(44,44,48,.78)}}
+html{-webkit-text-size-adjust:100%}
+body{font-size:13.5px;letter-spacing:-.003em;background:var(--canvas);font-optical-sizing:auto;text-rendering:optimizeLegibility}
+body::before{content:"";position:fixed;inset:-10%;z-index:-1;pointer-events:none;opacity:.7;background:radial-gradient(40% 35% at 8% 12%,rgba(10,122,255,.16),transparent 70%),radial-gradient(35% 35% at 4% 85%,rgba(175,82,222,.12),transparent 70%),radial-gradient(30% 30% at 40% 0%,rgba(255,159,10,.07),transparent 70%)}
+::selection{background:var(--acr)}
+h1{font-size:26px;letter-spacing:-.026em;font-weight:700}h2{font-size:17px;letter-spacing:-.016em;font-weight:650}h3{font-size:14.5px;letter-spacing:-.01em;font-weight:620}
+.app{grid-template-columns:252px minmax(0,1fr)}main{background:transparent}
+.side{background:var(--side);-webkit-backdrop-filter:saturate(190%) blur(34px);backdrop-filter:saturate(190%) blur(34px);border-right:.5px solid var(--line);padding:16px 10px 12px}
+.ws{padding:6px 8px;border-radius:9px}.ws b{font-weight:620;letter-spacing:-.01em}
+.logo{border-radius:9px;background:linear-gradient(160deg,#5eb0ff,#0a7aff 55%,#5e5ce6);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.35),0 1px 3px rgba(10,60,160,.35)}
+.search{background:var(--neb);box-shadow:none;border-radius:8px;padding:6px 10px;margin:8px 2px 12px}.search kbd{border:0;background:var(--neb);padding:1px 6px;border-radius:5px;font:11px var(--f)}
+.navl{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--faint);padding:16px 10px 5px}
+.nv{height:30px;padding:0 10px;border-radius:7px;font-weight:500;font-size:13.5px;transition:background .15s}
+.nv:hover{background:var(--hover)}.nv.on{background:var(--sel);color:var(--ink)}.nv .ic{color:var(--ac);width:17px;height:17px}.nv.on .ic{color:var(--ac)}
+.nv .cnt{background:var(--er);height:17px;min-width:17px}
+.me,.ws{transition:background .15s}
+.page{max-width:1120px;padding:36px 44px 90px}.page.anim{animation:in .35s var(--sp)}
+@keyframes in{from{opacity:0;transform:translateY(8px)}}@keyframes pop{from{opacity:0;transform:scale(.96)}}
+.hd{margin-bottom:26px}.hd p{font-size:14px}
+.btn{height:28px;padding:0 13px;border-radius:7px;font-weight:500;font-size:13.5px;background:var(--bg);box-shadow:0 0 0 .5px rgba(0,0,0,.18),0 1px 1.5px rgba(0,0,0,.1);transition:background .12s,box-shadow .12s,transform .12s}
+.btn:hover{background:var(--bg);filter:brightness(.97)}.btn:active{transform:scale(.97);filter:brightness(.93)}
+.btn.pri{background:linear-gradient(180deg,#3d9bff,var(--ac));color:#fff;box-shadow:0 0 0 .5px rgba(0,60,160,.6),0 1px 2px rgba(0,60,160,.25),inset 0 .5px 0 rgba(255,255,255,.3)}.btn.pri:hover{background:linear-gradient(180deg,#3d9bff,var(--ac));filter:brightness(1.06)}
+.btn.red{background:linear-gradient(180deg,#ff6259,#ff3b30);box-shadow:0 0 0 .5px rgba(160,20,10,.6),0 1px 2px rgba(160,20,10,.25),inset 0 .5px 0 rgba(255,255,255,.3)}.btn.red:hover{background:linear-gradient(180deg,#ff6259,#ff3b30);filter:brightness(1.06)}
+.btn.ghost{background:none;box-shadow:none;color:var(--ac)}.btn.ghost:hover{background:var(--acs);filter:none}
+.btn.s{height:24px;padding:0 10px;font-size:12.5px;border-radius:6px}.btn.l{height:34px;padding:0 20px;font-size:14px;border-radius:8px}
+.btn:focus-visible,.inp:focus,.nv:focus-visible{box-shadow:0 0 0 3.5px var(--acr)}
+@media(prefers-color-scheme:dark){.btn{background:#3a3a3d;box-shadow:0 0 0 .5px rgba(255,255,255,.14),0 1px 1.5px rgba(0,0,0,.3)}.btn.ghost{background:none}.inp{background:rgba(255,255,255,.06)!important}}
+.inp{height:30px;border-radius:7px;box-shadow:0 0 0 .5px rgba(0,0,0,.2),inset 0 1px 1.5px rgba(0,0,0,.06);padding:0 10px;font-size:13.5px}
+.inp:focus{box-shadow:0 0 0 .5px var(--ac),0 0 0 3.5px var(--acr)}
+.lab{font-size:12.5px;font-weight:550;color:var(--ink2)}
+.seg{border-radius:8px;padding:2px;background:var(--neb)}.seg button{border-radius:6px;padding:4px 13px;font-size:13px;transition:background .18s,box-shadow .18s}.seg button.on{background:var(--bg);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.14)}
+@media(prefers-color-scheme:dark){.seg button.on{background:#636366;color:#fff}}
+.tog{width:38px;height:22px;background:rgba(120,120,128,.32);transition:background .22s}.tog::after{width:18px;height:18px;top:2px;left:2px;transition:transform .26s var(--sp);box-shadow:0 2px 4px rgba(0,0,0,.28),0 0 0 .5px rgba(0,0,0,.06)}.tog.on{background:#30d158}.tog.on::after{transform:translateX(16px)}
+.tabs{display:inline-flex;gap:2px;padding:2px;background:var(--neb);border-radius:9px;border:0;margin-bottom:24px;max-width:100%}
+.tabs a{padding:5px 14px;border:0;margin:0;border-radius:7px;color:var(--ink2);font-size:13px;transition:background .18s}.tabs a:hover{color:var(--ink)}
+.tabs a.on{background:var(--bg);color:var(--ink);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.14)}
+@media(prefers-color-scheme:dark){.tabs a.on{background:#636366;color:#fff}}
+.chip{box-shadow:inset 0 0 0 .5px var(--line);background:var(--bg)}.chip.on{background:var(--ac);color:#fff}
+.card{border-radius:var(--rad);box-shadow:var(--sh);padding:20px 22px;background:var(--bg)}
+.kpi .kv{font-size:28px;font-weight:650;letter-spacing:-.03em}.kpi .kl{font-weight:550}
+th{font-size:12px;font-weight:550;padding:10px 16px;color:var(--muted);background:transparent}
+td{padding:11px 16px;border-bottom:.5px solid var(--line)}tbody tr:hover{background:var(--hover)}.tbar{border-bottom:.5px solid var(--line)}
+.bdg{border-radius:99px;height:20px;padding:0 9px;font-weight:550}
+.av{background:linear-gradient(160deg,#b8bcc8,#8e92a3);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.3)}
+.bar{height:5px}.bar i{background:var(--ac)}.bar.done i{background:#30d158}
+.banner{border-radius:var(--rad);background:var(--acs)}
+.empty .ei{border-radius:14px}
+.menu,.ckb,.dwr{background:var(--glass);-webkit-backdrop-filter:saturate(190%) blur(40px);backdrop-filter:saturate(190%) blur(40px)}
+.menu{border:0;border-radius:11px;box-shadow:var(--shl);padding:5px;animation:pop .18s var(--sp)}.menu button,.menu a{border-radius:6px;font-size:13.5px;padding:6px 10px}.menu button:hover,.menu a:hover{background:var(--ac);color:#fff}.menu button:hover .ic,.menu a:hover .ic{color:#fff}
+.menu hr{border-top:.5px solid var(--line)}
+.ckb{top:14vh;width:min(660px,calc(100vw - 32px));border-radius:16px;border:0;box-shadow:var(--shl);animation:pop .22s var(--sp)}.ckb input{font-size:19px;padding:20px 22px;letter-spacing:-.01em;border-bottom:.5px solid var(--line)}
+.ckl button{border-radius:8px}.ckl button.on{background:var(--ac);color:#fff}.ckl button.on small{color:rgba(255,255,255,.75)}.ckf{border-top:.5px solid var(--line)}
+#dw .scrim,#ck .scrim{background:rgba(20,24,40,.28);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.dwr{top:10px;right:10px;bottom:10px;border-radius:16px;box-shadow:var(--shl);transition:transform .42s var(--sp)}.dwr.c{border-radius:16px}
+.dwh,.dwf{border-color:var(--line);border-width:.5px}.x{border-radius:50%;background:var(--neb)}
+#toast{bottom:28px}.toast{background:rgba(28,28,32,.82);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);border-radius:99px;padding:10px 18px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.28),0 0 0 .5px rgba(255,255,255,.1)}.toast.err{background:rgba(190,20,40,.9)}
+.keybox{border-radius:9px;box-shadow:inset 0 0 0 .5px var(--line);background:var(--neb)}
+code{border-radius:5px}
+.dot.on{background:#30d158}
+.chatl.fl{background:var(--wab)}.ctx{border-radius:10px}
+
+.ckl .sec{text-transform:none;letter-spacing:0;font-size:11.5px}
+select.inp{appearance:none;-webkit-appearance:none;padding-right:28px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%236e6e73' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.chk input[type=checkbox]:not(.swc){appearance:none;-webkit-appearance:none;width:16px;height:16px;border-radius:5px;background:var(--bg);box-shadow:inset 0 0 0 .5px rgba(0,0,0,.3),0 1px 1px rgba(0,0,0,.08);flex:none;display:grid;place-items:center;cursor:pointer;margin-top:2px;transition:background .15s}
+.chk input[type=checkbox]:not(.swc):checked{background:var(--ac);box-shadow:none}.chk input[type=checkbox]:not(.swc):checked::after{content:"";width:8px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.chk input[type=checkbox]:not(.swc):focus-visible{outline:0;box-shadow:0 0 0 3.5px var(--acr)}
+[hidden]{display:none!important}
+.search2{display:flex;align-items:center;gap:8px;padding:0 12px;height:34px;border-radius:9px;background:var(--neb);margin-bottom:12px;color:var(--muted)}.search2 input{flex:1;border:0;outline:0;background:none;height:100%;font-size:13.5px}
+.inl{max-height:340px;overflow:auto;margin:0 -22px -20px;border-top:.5px solid var(--line)}.inl .chatl{padding-left:22px}
+.hmw{overflow-x:auto;padding-bottom:4px}.hm{display:grid;grid-template-rows:repeat(7,12px);grid-auto-flow:column;gap:3px}.hm i,.hmk{display:block;width:12px;height:12px;border-radius:3px;background:var(--neb)}.hmk{display:inline-block}
+.hml{display:flex;gap:3px;font-size:11px;color:var(--muted);height:18px}.hml span{width:12px;white-space:nowrap}.hmy{display:grid;grid-template-rows:repeat(7,12px);gap:3px;font-size:10px;color:var(--muted);width:28px;line-height:12px}
+.auditq{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 16px;border-radius:14px;background:var(--bg);box-shadow:var(--sh);color:var(--muted)}.auditq input{flex:1;border:0;outline:0;background:none;font-size:16px;height:36px;color:var(--ink)}
+.ib .av{flex:none}
+.ibl{background:var(--bg);border-radius:12px;box-shadow:var(--sh);overflow:hidden}
+.ib{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:.5px solid var(--line);color:var(--ink);transition:background .12s}.ib:last-child{border:0}.ib:hover{background:var(--hover);color:var(--ink)}
+.ib .tile{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#fff;background:var(--ac);flex:none}.ib .tile.er{background:#ff453a}.ib .tile.wa{background:#ff9f0a}.ib .tile.ok{background:#30d158}.ib b{display:block;font-weight:600}.ib .chv{margin-left:auto;color:var(--faint)}
+.appi.sm{width:34px;height:34px;border-radius:9px;margin:0;flex:none;box-shadow:inset 0 0 0 .5px rgba(255,255,255,.4),0 2px 6px rgba(10,90,220,.3)}.appi.sm .ic{width:17px;height:17px;stroke-width:2}.ib .chv{transform:rotate(-90deg)}
+.kbd{font:12px var(--f);background:var(--neb);border-radius:5px;padding:1px 7px;margin:0 2px;box-shadow:inset 0 -1px 0 var(--line)}
+/* wallpaper, sheets and windows (sign-in + onboarding) */
+.auth,.wall{min-height:100vh;display:grid;place-items:center;padding:24px;position:relative;overflow:hidden;background:#e9eefb}
+.auth::before,.wall::before{content:"";position:absolute;inset:-20%;background:radial-gradient(38% 42% at 18% 22%,#8ab8ff 0,transparent 70%),radial-gradient(34% 40% at 82% 14%,#d3a8ff 0,transparent 70%),radial-gradient(40% 44% at 78% 86%,#ffc2a1 0,transparent 70%),radial-gradient(36% 40% at 12% 88%,#8fe6d2 0,transparent 70%);animation:drift 28s ease-in-out infinite alternate}
+@keyframes drift{to{transform:translate3d(-3%,2%,0) scale(1.08) rotate(4deg)}}
+@media(prefers-color-scheme:dark){.auth,.wall{background:#0d1020}.auth::before,.wall::before{background:radial-gradient(38% 42% at 18% 22%,#1d4ed8 0,transparent 70%),radial-gradient(34% 40% at 82% 14%,#6d28d9 0,transparent 70%),radial-gradient(40% 44% at 78% 86%,#9a3412 0,transparent 70%),radial-gradient(36% 40% at 12% 88%,#0f766e 0,transparent 70%);opacity:.75}}
+.band{display:none}
+.acard{border-radius:20px;background:var(--glass);-webkit-backdrop-filter:saturate(190%) blur(40px);backdrop-filter:saturate(190%) blur(40px);box-shadow:var(--shl);padding:44px 40px 30px;text-align:center;max-width:400px;animation:pop .5s var(--sp)}
+.appi{width:72px;height:72px;border-radius:17px;margin:0 auto 20px;display:grid;place-items:center;color:#fff;font-size:32px;font-weight:700;letter-spacing:-.04em;background:linear-gradient(160deg,#6ec0ff,#0a7aff 55%,#5e5ce6);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.4),0 8px 22px rgba(10,90,220,.38),0 2px 5px rgba(10,60,160,.3)}
+.appi .ic{width:34px;height:34px;stroke-width:1.7}.appi.ok{background:linear-gradient(160deg,#6ee08a,#30d158 55%,#1da34a);box-shadow:inset 0 0 0 .5px rgba(255,255,255,.4),0 8px 22px rgba(30,170,70,.38)}.appi.ok .ic{stroke-width:2.4;animation:pop .5s var(--sp)}
+.appi.gl{background:var(--neb);box-shadow:none}.appi .spin{width:30px;height:30px;border-width:3px}
+.acard .logo{display:none}.acard h1{font-size:23px}.acard .lead{margin:6px 0 26px}
+.oa{height:40px;border-radius:9px;font-weight:550;font-size:14.5px;box-shadow:0 0 0 .5px rgba(0,0,0,.2),0 1px 2px rgba(0,0,0,.1);background:var(--bg);transition:transform .12s,filter .12s}.oa:hover{background:var(--bg);filter:brightness(.97)}.oa:active{transform:scale(.98)}
+.oa.dk{background:#1d1d1f;color:#fff;box-shadow:0 0 0 .5px #000,0 1px 2px rgba(0,0,0,.3)}.oa.dk:hover{background:#1d1d1f;color:#fff;filter:brightness(1.25)}
+.afoot a{color:var(--ink2);opacity:.75}.inv{border-radius:10px}
+.win{position:relative;width:min(780px,100%);min-height:600px;max-height:calc(100vh - 48px);display:flex;flex-direction:column;border-radius:14px;background:var(--glass);-webkit-backdrop-filter:saturate(190%) blur(46px);backdrop-filter:saturate(190%) blur(46px);box-shadow:var(--shl);overflow:hidden;animation:pop .55s var(--sp)}
+.winf{display:contents}
+.wt{height:44px;display:grid;grid-template-columns:90px 1fr 90px;align-items:center;padding:0 16px;flex:none}.wt b{text-align:center;font-size:13px;font-weight:600;color:var(--muted)}
+.tl{display:flex;gap:8px}.tl i{width:12px;height:12px;border-radius:50%;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.22)}.tl i:nth-child(1){background:#ff5f57}.tl i:nth-child(2){background:#febc2e}.tl i:nth-child(3){background:#28c840}
+.wb{flex:1;padding:14px 64px 28px;overflow:auto;display:flex;flex-direction:column;align-items:center;text-align:center}
+.wb>*{width:100%;max-width:520px}.wb .appi{width:72px}.wb h1{font-size:28px;margin:0}.wb .lead{color:var(--muted);font-size:15px;line-height:1.5;margin:8px auto 26px}
+.wb .grp{text-align:left}.wb .lab{text-align:left}
+.wf{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:14px 20px;border-top:.5px solid var(--line);flex:none;background:rgba(127,127,127,.04)}.wf>:last-child{justify-self:end;display:flex;gap:8px}.wf>:first-child{justify-self:start}
+.dots{display:flex;gap:7px}.dots i{width:7px;height:7px;border-radius:50%;background:var(--faint);opacity:.45;transition:all .35s var(--sp)}.dots i.done{background:var(--ac);opacity:.55}.dots i.on{background:var(--ac);opacity:1;width:20px;border-radius:4px}
+.grp{background:var(--bg);border-radius:11px;box-shadow:var(--sh);overflow:hidden}
+.gr{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;border-bottom:.5px solid var(--line)}.gr:last-child{border:0}
+.gr .gn{width:22px;height:22px;border-radius:50%;background:var(--ac);color:#fff;font-size:12px;font-weight:650;display:grid;place-items:center;flex:none;margin-top:1px}
+.gr .gt{flex:1;min-width:0}.gr .gt>b:first-child{font-weight:600;font-size:14px;display:block}.gr .sm b{font-weight:600;color:var(--ink)}.gr .sm{margin-top:2px}.gr .keybox{margin-top:8px;background:var(--neb)}.gr .row.wrap{margin-top:10px}
+.gr.sw2{align-items:center}
+input.swc{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:99px;background:rgba(120,120,128,.32);position:relative;flex:none;cursor:pointer;transition:background .22s;margin:0}
+input.swc::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.28);transition:transform .26s var(--sp)}
+input.swc:checked{background:#30d158}input.swc:checked::after{transform:translateX(16px)}input.swc:focus-visible{box-shadow:0 0 0 3.5px var(--acr);outline:0}
+.bigin{height:44px!important;font-size:17px!important;text-align:center;border-radius:10px!important;letter-spacing:-.01em}
+@media(max-width:860px){.app{display:block}.side{width:276px;border-radius:0 16px 16px 0}.page{padding:22px 16px 70px}.wb{padding:10px 22px 22px}.win{min-height:0}.dwr{top:6px;right:6px;bottom:6px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* hover hints and help */
+.tip{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;margin-left:6px;border-radius:50%;background:var(--neb);color:var(--muted);font:600 10px/1 var(--f,inherit);cursor:help;vertical-align:middle;user-select:none;transition:background .15s,color .15s;flex:none;text-transform:none;letter-spacing:0}
+.tip:hover,.tip:focus-visible{background:var(--ac);color:#fff;outline:0}
+#tipbox{position:fixed;z-index:400;max-width:250px;padding:8px 11px;border-radius:9px;background:rgba(32,32,36,.96);color:#f5f5f7;font:400 12.5px/1.45 var(--f,inherit);box-shadow:0 8px 28px rgba(0,0,0,.28);pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity .12s,transform .12s;text-transform:none;letter-spacing:0;font-weight:400}
+#tipbox.on{opacity:1;transform:none}
+.qa{border-radius:10px;background:var(--bg);box-shadow:0 0 0 .5px var(--line);margin-bottom:8px;overflow:hidden}.qa summary{list-style:none;cursor:pointer;padding:13px 16px;font-weight:600;display:flex;gap:10px;align-items:center}.qa summary::-webkit-details-marker{display:none}.qa summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.6px solid var(--muted);border-bottom:1.6px solid var(--muted);transform:rotate(45deg);transition:transform .2s;flex:none}.qa[open] summary::after{transform:rotate(-135deg)}.qa .ans{padding:0 16px 14px;color:var(--ink2);font-size:14px;line-height:1.55}.qa .ans p{margin:0 0 8px}.qa .ans b{color:var(--ink)}
+.qh{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:22px 2px 8px}
+.seg label{position:relative;cursor:pointer}.seg label input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}.seg label span{display:block;border-radius:6px;padding:4px 13px;font-size:13px;font-weight:500;color:var(--ink2);transition:background .18s}.seg label input:checked+span{background:var(--bg);color:var(--ink);box-shadow:0 0 0 .5px rgba(0,0,0,.1),0 1px 3px rgba(0,0,0,.12)}.seg label input:focus-visible+span{box-shadow:0 0 0 3.5px var(--acr)}
+@media(prefers-color-scheme:dark){.seg label input:checked+span{background:#636366;color:#fff}.qa{background:rgba(255,255,255,.04)}}
+.fbi{padding:14px 18px;border-top:1px solid var(--line)}.fbi:first-child{border-top:0}.fbr{margin-top:8px;padding:10px 12px;border-radius:9px;background:rgba(10,132,255,.08);font-size:13.5px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs><linearGradient id="sg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#635bff" stop-opacity=".22"/><stop offset="1" stop-color="#635bff" stop-opacity="0"/></linearGradient></defs></svg>
+<div id="root"></div><div id="dw"></div><div id="ck"></div><div id="mn"></div><div id="toast"></div>
+<script>
+"use strict";
+/* ============ helpers ============ */
+const $=(s,e=document)=>e.querySelector(s),$$=(s,e=document)=>[...e.querySelectorAll(s)];
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ago=t=>{const s=Math.max(0,(Date.now()-t)/1000|0);return s<10?'just now':s<60?s+'s ago':s<3600?(s/60|0)+'m ago':s<86400?(s/3600|0)+'h ago':s<2592000?(s/86400|0)+'d ago':new Date(t).toLocaleDateString()};
+const dur=sec=>{sec=Math.round(sec||0);const m=Math.round(sec/60);return sec<60&&sec>0?'<1m':m<60?m+'m':(m/60|0)+'h '+(m%60?m%60+'m':'')};
+const fmin=m=>!m?'Permanent':m<60?m+' min':m<1440?(Math.round(m/6)/10)+' h':(Math.round(m/144)/10)+((Math.round(m/144)/10)===1?' day':' days');
+const date=t=>new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+const dtime=t=>new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const ini=n=>String(n||'?').trim().split(/[\s_]+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'?';
+const I={help:'<circle cx="12" cy="12" r="9"/><path d="M9.4 9.3a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2.2-2.6 3.9M12 17.4v.1"/>',chat:'<path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-5 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',audit:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6"/><circle cx="17" cy="16" r="2.6"/><path d="M19 18l2.2 2.2"/>',inbox:'<path d="M4 13l2-7h12l2 7v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M4 13h5l1 2h4l1-2h5"/>',eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',appeal:'<path d="M12 3v18M7 21h10M5 7l7-3 7 3"/><path d="M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z"/>',lock:'<rect x="5" y="11" width="14" height="9" rx="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',home:'<path d="M4 10.5 12 4l8 6.5V20H4z"/><path d="M10 20v-6h4v6"/>',players:'<circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c.8-3.3 3.3-5.2 6-5.2s5.2 1.9 6 5.2"/><path d="M16 5.5a3 3 0 0 1 0 5.6M18 14.6c1.6.6 2.6 2.1 3 4.9"/>',
+ flag:'<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',book:'<path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h10"/>',team:'<path d="M12 3l7 3v5c0 4.6-3 8.3-7 10-4-1.7-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
+ chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',leave:'<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',rules:'<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.6 15H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9.7 4.4V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
+ search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',chev:'<path d="m8 10 4 4 4-4"/>',check:'<path d="m5 12.5 4.5 4.5L19 7.5"/>',plus:'<path d="M12 5v14M5 12h14"/>',out:'<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 8l-4 4 4 4M6 12h10"/>',
+ up:'<path d="m6 15 6-6 6 6"/>',down:'<path d="m6 9 6 6 6-6"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',bolt:'<path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/>',link:'<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+ menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',x:'<path d="M6 6l12 12M18 6 6 18"/>',copy:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',dl:'<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',game:'<rect x="3" y="7" width="18" height="11" rx="4"/><path d="M8 11v3M6.5 12.5h3M15 12h.01M17.5 13.5h.01"/>'};
+const ic=n=>`<svg class="ic" viewBox="0 0 24 24">${I[n]}</svg>`;
+const GOOGLE='<svg viewBox="0 0 24 24"><path fill="#4285F4" d="M23 12.27c0-.8-.07-1.56-.2-2.3H12v4.35h6.18a5.28 5.28 0 0 1-2.3 3.47v2.88h3.7C21.75 18.7 23 15.7 23 12.27z"/><path fill="#34A853" d="M12 23.5c3.1 0 5.7-1.03 7.6-2.8l-3.7-2.88c-1.03.7-2.35 1.1-3.9 1.1-3 0-5.5-2.02-6.4-4.73H1.8v2.97A11.5 11.5 0 0 0 12 23.5z"/><path fill="#FBBC05" d="M5.6 14.2a6.9 6.9 0 0 1 0-4.4V6.83H1.8a11.5 11.5 0 0 0 0 10.34z"/><path fill="#EA4335" d="M12 5.07c1.7 0 3.2.58 4.4 1.73l3.3-3.3C17.7 1.6 15.1.5 12 .5 7.5.5 3.7 3 1.8 6.83L5.6 9.8C6.5 7.1 9 5.07 12 5.07z"/></svg>';
+const RBX='<svg viewBox="0 0 24 24"><g transform="rotate(14 12 12)"><rect x="4" y="4" width="16" height="16" rx="2.6" fill="currentColor"/><rect x="9.6" y="9.6" width="4.8" height="4.8" rx=".8" fill="var(--rbx)"/></g></svg>';
+const COLORS=['#635bff','#0ea5e9','#10b981','#84cc16','#f59e0b','#f97316','#ef4444','#ec4899','#a855f7','#64748b'];
+
+/* ============ state ============ */
+let FBL=null,BK=null,NEWCODE=null,ME=null,S=null,SETUP=null,OB=null,JOIN=null,PROF=null,LB=null,AVC={},AVQ=new Set(),route={page:'home'},lastPage='',sideOpen=false;
+const LBF={type:'',q:''},PT={tab:'logbook',f:'',range:'30'};
+const WDEF=[['chat','Chatlogs','Recent messages from this player'],['mod','Moderation history','Warnings, bans, notes and points'],['byThem','Actions by this player','Only shown for staff members'],['joins','Game joins','Every visit in the chosen period'],['heat','Playtime heatmap','Daily playtime over six months'],['mins','Playtime minutes','Totals for the chosen period'],['reports','Reports','Reports this player sent'],['info','Roblox profile','Account details']];
+let WG=(()=>{try{return JSON.parse(localStorage.getItem('sentinel_widgets'))||{}}catch{return{}}})();const wOn=k=>WG[k]!==false;
+const P=p=>!!S&&S.me.perms.includes(p);
+const rk=id=>(S&&S.ranks.find(r=>r.id===id))||{name:'No rank',color:'#a3acb9',pos:0};
+const rtag=id=>{const r=rk(id);return `<span class="rtag"><i style="background:${esc(r.color)}"></i>${esc(r.name)}</span>`};
+const below=pos=>S.me.owner||S.me.pos>pos;
+
+function toast(m,kind){const t=document.createElement('div');t.className='toast'+(kind?' '+kind:'');t.innerHTML=(kind==='err'?ic('info'):ic('check'))+esc(m);$('#toast').append(t);setTimeout(()=>{t.style.transition='.3s';t.style.opacity=0;setTimeout(()=>t.remove(),300)},3000)}
+let LASTERR='',LOADED=false;
+async function api(path,body){
+ let r;try{const o=body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};o.signal=AbortSignal.timeout(20000);r=await fetch(path,o)}catch{toast('No connection. Check your internet.','err');return{error:'offline',_s:0}}
+ let j={};try{j=await r.json()}catch{} if(!j||typeof j!=='object')j={};j._s=r.status;
+ if(r.status>=500)LASTERR=j.error||('Server error '+r.status);if(r.status===429)toast(j.error||'Slow down a moment.','err');else if(r.status===401&&ME&&ME.user){ME=await (await fetch('/api/me')).json();S=null;render()}
+ return j}
+const bad=r=>{if(r.error&&r._s!==429){toast(r.error,'err');return true}return!!r.error};
+async function loadMe(){ME=await api('/api/me')}
+async function loadState(){const s=await api('/api/state');if(s.code==='no_workspace'){await loadMe();S=ME.current?await api('/api/state'):null}else S=s.error?null:s}
+async function refresh(){await loadState();await pageData();render()}
+async function pageData(){
+ if(!S)return;
+ if(route.page==='player'&&route.id){const r=await api('/api/player?userId='+route.id);PROF=r.error?{error:r.error}:r}
+ if(route.page==='logbook'){LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`)}
+ if(S.me.owner&&(route.page==='settings'&&(route.tab||'general')==='game'||route.page==='setup'))SETUP=await api('/api/setup');
+ if(S.me.owner&&route.page==='settings'&&route.tab==='backups')BK=await api('/api/backups');
+ if(route.page==='help'&&route.tab==='feedback')FBL=await api('/api/feedback')}
+
+function av(id,name,c=''){const u=AVC[id];if(id&&!(id in AVC))AVQ.add(id);return `<span class="av ${c}" data-av="${id||''}">${u?`<img src="${esc(u)}" alt="">`:esc(ini(name))}</span>`}
+async function fillAv(){const ids=[...AVQ].slice(0,80);AVQ.clear();if(ids.length&&S){const r=await api('/api/avatars?ids='+ids.join(','));ids.forEach(i=>AVC[i]=r[i]||'')}
+ $$('[data-av]').forEach(e=>{const u=AVC[e.dataset.av];if(u&&!e.querySelector('img'))e.innerHTML=`<img src="${esc(u)}" alt="">`})}
+function spark(v){if(!v||!v.length)v=[0];if(v.length<2)v=[v[0],v[0]];const W=200,H=42,m=Math.max(1,...v),pts=v.map((x,i)=>[i/(v.length-1)*W,H-3-x/m*(H-8)]);const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+ return `<svg class="spk" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path class="a" d="${d} L${W} ${H} L0 ${H}Z"/><path class="l" d="${d}"/></svg>`}
+const kpi=(l,v,s,f1,f2)=>`<div class="card kpi"><div class="kl">${l}</div><div class="kv">${v}</div>${s?spark(s):''}<div class="kf"><span>${f1||''}</span><span>${f2||''}</span></div></div>`;
+const empty=(t,s,icn='info',act='')=>`<div class="empty"><div class="ei">${ic(icn)}</div><b>${t}</b>${s?`<div class="sm">${s}</div>`:''}${act?`<div style="margin-top:14px">${act}</div>`:''}</div>`;
+const tip=t=>`<span class="tip" tabindex="0" role="note" aria-label="${esc(t)}" data-tip="${esc(t)}">?</span>`;
+const HT={Rulebook:'Your community rules. Each rule has a severity and a ladder of punishments for repeat offences.',Leave:'Time off for staff. While leave is approved they are not counted as missing their weekly goal.',Logbook:'A permanent record of every warning, mute, kick, ban and note. Entries can be reverted if they were a mistake.',Inbox:'Everything waiting for you in one place: reports, appeals, leave requests and watched players.',Reports:'Messages players send from inside the game when they need a moderator.',Appeals:'Requests from banned players to be unbanned. Accepting one lifts the ban at once.',Activity:'How much time your staff spend in game and what they do.',Team:'The people who can use this workspace, their ranks, and invite links.','Player audit':'Look up any player to see their chat, joins, playtime and the actions staff took on them.'};
+const hd=(t,s,a='',crumb='')=>`${crumb?`<div class="crumb">${crumb}</div>`:''}<div class="hd"><div class="t"><h1>${t}${HT[t]?tip(HT[t]):''}</h1>${s?`<p>${s}</p>`:''}</div>${a?`<div class="row wrap">${a}</div>`:''}</div>`;
+const tabs=(base,items,cur)=>`<div class="tabs">${items.map(([k,t,n])=>`<a href="#/${base}/${k}" class="${cur===k?'on':''}">${t}${n?`<span class="n">${n}</span>`:''}</a>`).join('')}</div>`;
+const LTYPE={Warned:'wa',Kicked:'wa',Muted:'in',Unmuted:'',Suspended:'er',Banned:'er',Unbanned:'ok',Points:'ac',Note:''};
+const actBtn=(p,cls='s')=>MODP()?`<button class="btn ${cls}" data-a="mod" data-uid="${p.userId}" data-n="${esc(p.name)}">Moderate</button>`:'';
+const MODP=()=>['mod.warn','mod.kick','mod.mute','mod.ban','mod.permban'].some(P);
+
+/* ============ drawer / modal / menus ============ */
+function drawer(o){return new Promise(res=>{
+ const w=$('#dw');w.innerHTML=`<div class="scrim"></div><form class="dwr ${o.center?'c':''}" novalidate><div class="dwh"><div class="t"><h2>${esc(o.title)}</h2>${o.sub?`<p>${o.sub}</p>`:''}</div><button type="button" class="x" data-x aria-label="Close">${ic('x')}</button></div><div class="dwb">${o.html||''}</div>${o.ok===false?'':`<div class="dwf"><button type="button" class="btn" data-x>Cancel</button><button class="btn ${o.danger?'red':'pri'}">${esc(o.ok||'Save')}</button></div>`}</form>`;
+ requestAnimationFrame(()=>requestAnimationFrame(()=>w.classList.add('open')));
+ const f=$('form',w);let extra=null;
+ const close=v=>{w.classList.remove('open');document.removeEventListener('keydown',kd);setTimeout(()=>{if(!w.classList.contains('open'))w.innerHTML=''},260);res(v)};
+ const kd=e=>{if(e.key==='Escape')close(null)};document.addEventListener('keydown',kd);
+ $('.scrim',w).onclick=()=>close(null);$$('[data-x]',w).forEach(b=>b.onclick=()=>close(null));
+ f.onsubmit=e=>{e.preventDefault();const v={};for(const[k,x]of new FormData(f)){if(k in v)v[k]=[].concat(v[k],x);else v[k]=x}if(extra)Object.assign(v,extra());if(o.check){const m=o.check(v);if(m){toast(m,'err');return}}close(v)};
+ if(o.mount)extra=o.mount(f)||null;const first=$('input:not([type=checkbox]):not([type=radio]),select,textarea',f);if(first&&!o.noFocus)setTimeout(()=>first.focus(),80)})}
+const dwOpen=()=>$('#dw').classList.contains('open');
+const confirmBox=(title,text,ok,danger=true)=>drawer({center:1,title,sub:esc(text),ok,danger,html:''}).then(v=>!!v);
+function menu(anchor,html){const m=$('#mn');const r=anchor.getBoundingClientRect();m.innerHTML=`<div class="menu" style="left:${Math.min(r.left,innerWidth-250)}px;${r.top>innerHeight/2?`bottom:${innerHeight-r.top+6}px`:`top:${r.bottom+6}px`}">${html}</div>`}
+const closeMenu=()=>$('#mn').innerHTML='';
+
+/* ============ routing ============ */
+const PAGES=['home','audit','inbox','appeals','players','player','reports','logbook','team','activity','leave','rulebook','settings','setup','help'];
+function parse(){const h=location.hash.replace(/^#\/?/,''),[a,b]=h.split('/');
+ if(a==='join'&&/^[a-f0-9]{28}$/.test(b||''))return{page:'join',id:b};if(a==='linked')return{page:'home',linked:1};
+ return{page:PAGES.includes(a)?a:'home',tab:a==='player'?null:(b||null),id:a==='player'?b:null}}
+async function onRoute(){
+ const r=parse();if(r.page==='join'){JOIN={code:r.id};const pv=await api('/api/invite?code='+r.id);if(pv._s===200)JOIN.info=pv;else JOIN.err=pv.error;render();return}
+ if(r.linked){toast('Roblox account linked');history.replaceState(null,'','#/');}
+ route=r;sideOpen=false;closeMenu();if(route.page!=='player')PROF=null;if(route.page==='player'&&PROF&&String(PROF.userId)!==route.id)PROF=null;
+ if(S&&route.page==='setup'&&!S.me.owner){location.hash='#/';return}
+ if(S&&route.page==='setup'&&!OB)OB={step:'script'};
+ render(true);if(S){await pageData();render()}}
+window.addEventListener('hashchange',onRoute);
+const go=h=>{if(location.hash==='#/'+h)onRoute();else location.hash='#/'+h};
+
+/* ============ screens ============ */
+function render(anim){try{return render0(anim)}catch(e){console.error(e);const r=$('#root');if(r)r.innerHTML='<div class="auth"><div class="acard"><div class="appi gl">'+ic('warn')+'</div><h1>Something went wrong</h1><p class="lead">'+esc(String(e&&e.message||e))+'</p><button class="btn pri l w" onclick="location.reload()">Reload</button></div></div>'}}
+function render0(anim){
+ const root=$('#root');
+ if(!ME||ME.error&&!ME.providers){if(LOADED){LASTERR=LASTERR||'Could not reach the server.';ME=null;S=null;root.innerHTML='<div class="auth"><div class="acard"><div class="appi gl">'+ic('warn')+'</div><h1>Couldn\'t load Sentinel</h1><p class="lead">'+esc(LASTERR||'The server did not respond.')+'</p><button class="btn pri l w" onclick="location.reload()">Try again</button><button class="btn ghost w" style="margin-top:8px" onclick="fetch(\'/logout\',{method:\'POST\'}).then(()=>{location.hash=\'\';location.reload()})">Sign out</button></div></div>';return}root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
+ if(!ME.user){root.innerHTML=authView();return}
+ if(JOIN){root.innerHTML=joinView();return}
+ if(!ME.workspaces.length||OB&&(OB.creating||route.page==='setup')){root.innerHTML=obView();fillAv();return}
+ if(!S){if(LOADED){root.innerHTML='<div class="auth"><div class="acard"><div class="appi gl">'+ic('warn')+'</div><h1>Couldn\'t load Sentinel</h1><p class="lead">'+esc(LASTERR||'The server did not respond.')+'</p><button class="btn pri l w" onclick="location.reload()">Try again</button><button class="btn ghost w" style="margin-top:8px" onclick="fetch(\'/logout\',{method:\'POST\'}).then(()=>{location.hash=\'\';location.reload()})">Sign out</button></div></div>';return}root.innerHTML='<div class="auth"><div class="spin"></div></div>';return}
+ const p=route.page,scroll=$('main')?$('main').scrollTop:0,doAnim=anim||p+route.tab+route.id!==lastPage;lastPage=p+route.tab+route.id;
+ root.innerHTML=`<div class="app">${sideView()}<main><div class="top"><button class="btn s" data-a="side" aria-label="Menu">${ic('menu')}</button><b>${esc(S.workspace.name)}</b><span class="sp"></span><button class="btn s" data-a="cmdk">${ic('search')}</button></div><div class="page ${doAnim?'anim':''}">${(V[p]||V.home)()}</div></main></div>`;
+ if(!doAnim&&$('main'))$('main').scrollTop=scroll;fillAv()}
+
+function authView(){const has=k=>ME.providers.includes(k),q=JOIN&&JOIN.code?'?invite='+JOIN.code:'';
+ return `<div class="auth"><div style="position:relative;width:100%;max-width:400px"><div class="acard"><div class="appi">S</div><h1>Sign in to Sentinel</h1><p class="lead">Moderation and staff tools for your Roblox game.</p>
+ ${JOIN&&JOIN.info?`<div class="inv">You're invited to join <b>${esc(JOIN.info.workspace)}</b> as ${esc(JOIN.info.role)}.</div>`:''}
+ ${has('google')?`<a class="oa" href="/auth/google${q}">${GOOGLE}Continue with Google</a>`:''}${has('roblox')?`<a class="oa dk" href="/auth/roblox${q}">${RBX}Continue with Roblox</a>`:''}
+ <p class="xs muted" style="margin:24px 0 0">By continuing you agree to the <a href="/legal/terms" target="_blank">Terms</a> and <a href="/legal/privacy" target="_blank">Privacy Policy</a>. You must be 13 or older.</p></div>
+ <div class="afoot"><a href="/legal/privacy" target="_blank">Privacy</a><a href="/legal/terms" target="_blank">Terms</a><a href="/legal/cookies" target="_blank">Cookies</a></div></div></div>`}
+function joinView(){
+ if(!JOIN.info)return `<div class="auth"><div class="acard"><div class="appi gl">${ic('flag')}</div><h1>Invite not valid</h1><p class="lead">${esc(JOIN.err||'This invite has expired or was already used.')}</p><button class="btn pri l w" data-a="join-no">Continue</button></div></div>`;
+ return `<div class="auth"><div class="acard"><div class="appi">${esc(ini(JOIN.info.workspace)[0])}</div><h1>Join ${esc(JOIN.info.workspace)}</h1><p class="lead">You'll join as <b>${esc(JOIN.info.role)}</b>, signed in as ${esc(ME.user.name)}.</p>
+ <button class="btn pri l w" data-a="join-yes">Accept invite</button><button class="btn ghost w" style="margin-top:8px" data-a="join-no">Not now</button></div></div>`}
+
+function obView(){
+ OB=OB||{step:'name',creating:1};const steps=['name','script','place','connect'],idx=steps.indexOf(OB.step),first=esc((ME.user.name||'').split(' ')[0]);
+ const dots=`<div class="dots" role="img" aria-label="Step ${idx+1} of 4">${steps.map((s,i)=>`<i class="${i===idx?'on':i<idx?'done':''}"></i>`).join('')}</div>`;
+ const back=v=>`<button type="button" class="btn l" data-a="ob" data-v="${v}">Back</button>`;
+ let body='',left='<span></span>',right='',form='';
+ if(OB.step==='name'){form='ob-name';
+  body=`<div class="appi">S</div><h1>Welcome, ${first}</h1><p class="lead">Let's connect your Roblox game. It takes about three minutes, and only you, the owner, will ever see these setup details.</p>
+  <label class="lab" for="obn" style="text-align:center">Game name</label><input id="obn" class="inp bigin" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off" autofocus>
+  <div class="hint">Your team will see this name. You can change it later.</div>`;
+  left=ME.workspaces.length?`<button type="button" class="btn l" data-a="ob-exit">Cancel</button>`:'<span></span>';right=`<button class="btn pri l">Continue</button>`}
+ else if(OB.step==='script'){
+  body=`<div class="appi">${ic('game')}</div><h1>Add Sentinel to your game</h1><p class="lead">Your game has its own one-time code. Treat it like a password.</p>
+  <div class="grp"><div class="gr"><span class="gn">1</span><div class="gt"><b>Copy your game code</b>${codeBox()}</div></div>
+  <div class="gr"><span class="gn">2</span><div class="gt"><b>Get the script</b><div class="sm muted">The same script works for every game. Only the code is yours.</div><div class="row wrap"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div></div></div>
+  <div class="gr"><span class="gn">3</span><div class="gt"><b>Paste it in Roblox Studio</b><div class="sm muted">Hover <b>ServerScriptService</b> in the Explorer, click <b>+</b>, choose <b>Script</b>, paste, then replace <b>[INPUT CODE HERE]</b> with your code.</div></div></div>
+  <div class="gr"><span class="gn">4</span><div class="gt"><b>Allow HTTP requests</b><div class="sm muted">Open <b>Game Settings</b>, then <b>Security</b>, turn on <b>Allow HTTP Requests</b> and save.</div></div></div></div>`;
+  right=`<button class="btn pri l" data-a="ob" data-v="place">Continue</button>`}
+ else if(OB.step==='place'){form='ob-place';
+  body=`<div class="appi">${ic('lock')}</div><h1>Lock it to your game</h1><p class="lead">Your Place ID is the number in your game's link: roblox.com/games/<b>1234567890</b>/My-Game. Locking stops anyone using a stolen code in another game.</p>
+  <div class="grp"><div class="gr" style="display:block"><label class="lab" style="margin:0 0 8px">Place ID</label><input class="inp" name="placeId" inputmode="numeric" placeholder="1234567890" value="${esc(SETUP&&SETUP.placeId||'')}"></div>
+  <div class="gr sw2"><div class="gt"><b>Only accept this place</b><div class="sm muted">Studio tests use Place ID 0. Publish first, or turn this off while testing.</div></div><input type="checkbox" class="swc" name="lock" checked aria-label="Only accept this place"></div></div>`;
+  left=back('script');right=`<button type="button" class="btn l" data-a="ob" data-v="connect">Skip</button><button class="btn pri l">Save and continue</button>`}
+ else{const okc=OB.ok;
+  body=`<div class="appi ${okc?'ok':'gl'}">${okc?ic('check'):'<div class="spin"></div>'}</div><h1>${okc?"You're live":'Join your game'}</h1>
+  <p class="lead">${okc?`Sentinel is receiving data${SETUP&&SETUP.lastPlace?` from place <b>${SETUP.lastPlace}</b>`:''}. Your team can now moderate in real time. Invite them from <b>Team</b>.`:'Press <b>Play</b> in Studio, or join your published game. This page updates by itself.'}</p>`;
+  left=okc?'<span></span>':back('place');right=okc?`<button class="btn pri l" data-a="ob-done">Open dashboard</button>`:`<button class="btn l" data-a="ob-done">Finish later</button>`}
+ const inner=`<div class="wt"><span class="tl" aria-hidden="true"><i></i><i></i><i></i></span><b>Sentinel Setup</b><span></span></div><div class="wb" key="${OB.step}">${body}</div><div class="wf">${left}${dots}<div>${right}</div></div>`;
+ return `<div class="wall"><div class="win">${form?`<form class="winf" data-f="${form}" style="display:contents">${inner}</form>`:inner}</div></div>`}
+
+function sideView(){
+ const n=(k,t,icn,c)=>`<a href="#/${k}" class="nv ${route.page===k||(k==='audit'&&route.page==='player')?'on':''}">${ic(icn)}${t}${c?`<span class="cnt">${c}</span>`:''}</a>`;
+ const me=ME.user,wsr=S.me.owner?'Owner':rk(S.me.rank).name;
+ return `<aside class="side ${sideOpen?'open':''}"><button class="ws" data-a="wsmenu"><div class="logo">${esc(ini(S.workspace.name)[0])}</div><div class="n"><b>${esc(S.workspace.name)}</b><small>${esc(wsr)}</small></div>${ic('chev')}</button>
+ <button class="search" data-a="cmdk">${ic('search')}Search<kbd>${navigator.platform.includes('Mac')?'⌘':'Ctrl'} K</kbd></button>
+ ${n('home','Home','home')}${n('inbox','Inbox','inbox',inboxItems().length)}${n('players','Players','players')}${n('audit','Player audit','audit')}${n('reports','Reports','flag',S.openCalls)}${P('appeals.review')?n('appeals','Appeals','appeal',S.appeals.filter(a=>a.status==='open').length):''}${n('logbook','Logbook','book')}
+ <div class="navl">Staff</div>${n('team','Team','team')}${n('activity','Activity','chart')}${n('leave','Leave','leave',P('loa.review')?S.loa.all.filter(x=>x.status==='pending').length:0)}
+ <div class="navl">Configure</div>${n('rulebook','Rulebook','rules')}${n('settings','Settings','gear')}${n('help','Help','help')}
+ <div class="sfoot"><div class="live"><span class="dot ${S.connected?'on':''}"></span>${S.connected?`Live · ${S.serverCount} server${S.serverCount>1?'s':''} · ${S.players.length} playing`:S.workspace.everConnected?'Game offline':'Not connected yet'}</div>
+ <button class="me" data-a="memenu">${av('',me.name)}<div class="n"><b>${esc(me.name)}</b><small>${me.roblox?'@'+esc(me.roblox.name):me.provider==='google'?'Google account':'Roblox account'}</small></div>${ic('chev')}</button></div></aside>`}
+
+/* ============ pages ============ */
+const QAD=[["Getting started", [["What is Sentinel?", "Sentinel is a control room for your Roblox game. Your staff can see who is online, warn, mute, kick and ban players, answer reports, review ban appeals and track how much time moderators spend in game, all from one website."], ["How do I connect my game?", "Open <b>Settings → Game</b> (only the owner sees it). Copy the script, put it in a <b>Script</b> inside <b>ServerScriptService</b>, turn on <b>Allow HTTP Requests</b> in Game Settings, then paste your game code where it says <b>[INPUT CODE HERE]</b>. Press Play and the dashboard shows <b>Connected</b> within a few seconds."], ["Why does it say \"Not connected\"?", "Check that HTTP requests are allowed, the game code in the script is exact, and the script is a normal <b>Script</b>, not a LocalScript. If you turned on <b>Place lock</b>, the game must be running from that exact place. Studio tests count as place 0."], ["I lost my game code. What now?", "The code is only shown once, when it is made. Go to <b>Settings → Game → Replace code</b> to make a new one. The old code stops working at once, so paste the new one into your script and republish."], ["Why can every game not use the same code?", "Each game gets its own random code. That keeps one game from reading or changing another game’s players, and a leaked code can be replaced in one click."]]], ["Moderation", [["How do warnings, mutes, kicks and bans work?", "Open a player from <b>Players</b> and pick an action with a reason. The command reaches every running server within seconds. Bans and mutes can be timed or permanent, and everything is saved in the <b>Logbook</b>."], ["What are the Rulebook and the punishment ladder?", "The Rulebook lists your community rules. Each rule has a <b>punishment ladder</b>: the first offence might be a warning, the next a 1-day mute, then a ban. When staff pick a rule, Sentinel suggests the right step for that player’s history."], ["What is the watchlist?", "Open a player and press <b>Watch</b>. You are told in your Inbox, and by Discord if you set it up, the moment they join a server. Good for repeat offenders and suspected alts."], ["How do ban appeals work?", "Banned players can use your public appeal link (see <b>Appeals</b>). Staff with the review permission accept or deny. Accepting an appeal lifts the ban right away. You can turn appeals off at any time."], ["Can I undo a mistake?", "Yes. Open the <b>Logbook</b> and revert the entry. Reverting a ban unbans the player, and the log keeps a record that it was reverted."]]], ["Your team", [["How do I invite staff?", "Go to <b>Team → Invites</b>, pick a rank and copy the link. Links expire, and each works once. Whoever opens it signs in and joins with that rank."], ["What do ranks and permissions do?", "A rank is a set of permissions, such as who can ban, review appeals or host sessions. Ranks also have an optional <b>weekly goal</b> (minutes in game) and an <b>action limit</b>, the most punishments a moderator may hand out per hour."], ["Why should staff link their Roblox account?", "Time in game only counts toward weekly goals when Sentinel knows which Roblox account is yours. Staff who sign in with Roblox are linked already. Google users link from <b>Settings → General</b>."], ["What is a leave of absence?", "Staff can tell the team they will be away. While leave is approved they are not marked as missing their weekly goal."]]], ["Player audit", [["What is Player audit?", "A full profile for any player: recent chat, staff actions, game joins, a playtime heatmap and daily minutes. Use the <b>Widgets</b> button on a profile to show or hide sections."], ["How long is history kept?", "Playtime and joins are kept for about six months. Chat is only kept for 24 hours unless it was flagged or reported, which keeps player privacy in mind. See the Player Notice under <b>Settings → Legal</b>."]]], ["Backups and safety", [["Is my workspace backed up?", "Yes. A copy is saved every night and kept for 7 days, and owners can <b>Back up now</b> or download a copy from <b>Settings → Backups</b>. Restoring always makes a safety copy first."], ["I deleted a workspace by mistake.", "Deleted workspaces are kept for 30 days. Send us a message on the <b>Feedback</b> tab with the workspace name and we will bring it back."], ["Someone got into my account.", "Replace your game code in Settings → Game, remove people you do not recognise from Team, and tell us on the Feedback tab. Backups let us put your workspace back how it was before the change."]]]];
+const HELPQA=()=>`<div class="search2" style="margin-bottom:6px">${ic('search')}<input data-flt=".qa" placeholder="Search questions" aria-label="Search questions"></div>${QAD.map(([g,l])=>`<div class="qh">${g}</div>${l.map(([q,a])=>`<details class="qa"><summary>${esc(q)}</summary><div class="ans"><p>${a}</p></div></details>`).join('')}`).join('')}
+ <div class="card mt row wrap" style="margin-top:22px"><div class="sp"><b>Did not find your answer?</b><div class="sm muted">Ask us. Questions get a reply right here on the Feedback tab.</div></div><a class="btn pri" href="#/help/feedback">${ic('chat')}Ask a question</a></div>`;
+const FBT={question:'Question',idea:'Idea',bug:'Problem',praise:'Praise'};
+const HELPFB=()=>{const l=FBL;return `<div class="grid g2"><div class="card"><h3>Send feedback${tip('Goes to the people who run Sentinel. Your name, rank and workspace name are included so we can help, never your game code.')}</h3><p class="sm muted">Found a bug, have an idea, or stuck on something? Tell us.</p>
+ <form data-f="feedback" class="mt"><div class="seg" role="radiogroup" aria-label="Type">${Object.entries(FBT).map(([k,v],i)=>`<label><input type="radio" name="type" value="${k}" ${i===(window.FBTYPE||0)?'checked':''}><span>${v}</span></label>`).join('')}</div>
+ <textarea class="inp mt" name="text" rows="6" maxlength="2000" required minlength="5" placeholder="What is on your mind?" style="min-height:140px"></textarea><div class="row mt"><span class="xs muted sp">Up to 2000 characters.</span><button class="btn pri">Send</button></div></form></div>
+ <div class="card p0"><div class="tbar"><h3>Your messages</h3></div>${!l?'<div class="fbi"><div class="skel"></div></div>':l.error?'<p class="sm muted fbi">Could not load your messages.</p>':l.items.length?l.items.map(f=>`<div class="fbi"><div class="row"><span class="tag">${FBT[f.type]||'Idea'}</span><span class="xs muted">${ago(f.t)}</span></div><div class="sm" style="margin-top:6px;white-space:pre-wrap">${esc(f.text)}</div>${f.reply?`<div class="fbr"><b>Reply</b> <span class="xs muted">${ago(f.repliedAt)}</span><div style="white-space:pre-wrap;margin-top:2px">${esc(f.reply)}</div></div>`:'<div class="xs muted" style="margin-top:6px">Waiting for a reply</div>'}</div>`).join(''):'<p class="sm muted fbi">Nothing sent yet.</p>'}</div></div>`};
+function inboxItems(){const it=[];if(!S)return it;
+ if(S.openCalls)it.push({icn:'flag',c:'er',t:`${S.openCalls} open report${S.openCalls>1?'s':''}`,s:'Players are waiting for help',h:'#/reports'});
+ const lv=P('loa.review')?S.loa.all.filter(x=>x.status==='pending').length:0;if(lv)it.push({icn:'leave',c:'wa',t:`${lv} leave request${lv>1?'s':''} to review`,s:'Staff are waiting for an answer',h:'#/leave'});
+ const ap=P('appeals.review')?S.appeals.filter(a=>a.status==='open').length:0;if(ap)it.push({icn:'appeal',c:'wa',t:`${ap} ban appeal${ap>1?'s':''} to review`,s:'Banned players asked for another chance',h:'#/appeals'});
+ for(const [id,w] of Object.entries(S.watch||{}))if(S.players.some(p=>String(p.userId)===id))it.push({icn:'eye',c:'wa',t:`${w.name} is online`,s:'On your watchlist'+(w.reason?': '+w.reason:''),h:'#/player/'+id});
+ if(!S.workspace.everConnected&&S.me.owner)it.push({icn:'game',c:'',t:'Finish connecting your game',s:'Add the script to start moderating',h:'#/setup'});
+ else if(S.workspace.everConnected&&!S.connected)it.push({icn:'game',c:'er',t:'Your game is offline',s:'No server has checked in recently',h:S.me.owner?'#/settings/game':'#/home'});
+ return it}
+const V={
+home(){
+ const s=S.series,st=S.stats,hr=new Date().getHours(),gr=hr<12?'Good morning':hr<18?'Good afternoon':'Good evening',me=S.team.find(t=>t.uid===S.me.uid),q=rk(S.me.rank).quota||0;
+ let banner='';if(!S.workspace.everConnected)banner=S.me.owner?`<div class="banner">${ic('game')}<div class="sp"><b>Finish connecting your game</b><div class="sm muted">Add the script to start tracking players and moderating.</div></div><a class="btn pri" href="#/setup">Continue setup</a></div>`:`<div class="banner wa">${ic('info')}<div class="sp"><b>Waiting for the owner</b><div class="sm muted">The workspace owner still needs to connect the game. Everything will appear here once they do.</div></div></div>`;
+ return hd(`${gr}, ${esc(S.me.name.split(' ')[0])}`,`Here's what's happening in <b>${esc(S.workspace.name)}</b> right now.`,P('announce')?`<button class="btn" data-a="announce">${ic('bolt')}Announce</button>`:'')+banner+
+ `<div class="grid g4">${kpi('Playing now',S.players.length,S.history.map(h=>h.n).slice(-60),`Peak today ${s.peak[13]}`,'live')}${kpi('Players today',s.players[13],s.players,`${s.players.reduce((a,b)=>a+b,0)} visits`,'14 days')}${kpi('Moderation actions',s.actions[13],s.actions,`${s.actions.reduce((a,b)=>a+b,0)} total`,'14 days')}${kpi('Reports',s.reports[13],s.reports,`${S.openCalls} open`,'14 days')}</div>
+ <div class="grid gm mt"><div class="col" style="gap:16px">
+  <div class="card p0"><div class="tbar"><h3>Live servers</h3><span class="sp"></span><span class="sm muted">${S.serverCount} online</span></div>${S.servers.length?`<div class="tw"><table><thead><tr><th>Server</th><th>Players</th><th>Uptime</th></tr></thead><tbody>${S.servers.map(x=>`<tr><td class="mono">${esc(x.id)}</td><td>${x.players}</td><td class="muted">${dur(x.uptime/1000)}</td></tr>`).join('')}</tbody></table></div>`:empty('No servers running','Servers appear here while people play.','game')}</div>
+  <div class="card p0"><div class="tbar"><h3>Recent activity</h3></div><div class="feed">${S.feed.length?S.feed.slice(0,10).map(f=>`<div><span>${esc(f.text)}</span><span class="t">${ago(f.t)}</span></div>`).join(''):empty('Nothing yet','Joins, reports and moderation show up here.')}</div></div></div>
+ <div class="col" style="gap:16px">
+  <div class="card"><h3>Your week${tip('Your minutes in game this week compared with your rank\'s weekly goal. Link your Roblox account so it counts.')}</h3>${me&&me.linked?`<div class="row" style="margin-top:12px"><div class="sp"><div style="font-size:24px;font-weight:600">${dur(me.week)}</div><div class="sm muted">in game${q?` of ${dur(q*60)} goal`:''}</div></div>${me.onLeave?'<span class="bdg in">On leave</span>':''}</div>${q?`<div class="bar ${me.week>=q*60?'done':''}" style="margin-top:12px"><i style="width:${Math.min(100,me.week/(q*60)*100)}%"></i></div>`:''}`:`<p class="sm muted">Link your Roblox account so your in-game time counts toward your rank's activity goal.</p><button class="btn s" data-a="link">${ic('link')}Link Roblox</button>`}</div>
+  ${S.session?`<div class="card"><div class="row"><span class="bdg ok">Live</span><h3>${esc(S.session.type)}</h3></div><p class="sm muted">${S.session.attendees.length} present · started ${ago(S.session.start)}</p><a class="btn s" href="#/activity">Open session</a></div>`:''}
+  ${Object.keys(S.watch||{}).length?`<div class="card"><h3>Watchlist${tip('Players you asked to be told about. You get an Inbox alert when one joins a server.')}</h3><div style="margin-top:8px">${Object.entries(S.watch).slice(0,6).map(([id,w])=>`<a class="pg" href="#/player/${id}" style="color:var(--ink)"><span class="row" style="gap:8px"><span class="dot ${S.players.some(p=>String(p.userId)===id)?'on':''}"></span>${esc(w.name)}</span><span class="xs muted">${S.players.some(p=>String(p.userId)===id)?'Online':'Offline'}</span></a>`).join('')}</div></div>`:''}
+  ${S.staffWeek&&S.staffWeek.length?`<div class="card"><h3>Most active staff</h3><p class="sm muted">Actions in the last 7 days</p><div style="margin-top:8px">${S.staffWeek.map(x=>`<div class="pg"><span>${esc(x.user)}</span><b>${x.n}</b></div>`).join('')}</div></div>`:''}
+  <div class="card"><h3>Needs attention${tip('Things waiting for a person, such as open reports, leave requests and ban appeals.')}</h3><div style="margin-top:8px">${[[S.openCalls,'open reports','#/reports'],[P('loa.review')?S.loa.all.filter(x=>x.status==='pending').length:0,'leave requests','#/leave'],[P('appeals.review')?S.appeals.filter(a=>a.status==='open').length:0,'ban appeals','#/appeals'],[st.activeBans,'active bans','#/players/banned'],[st.activeMutes,'active mutes','#/players/banned']].map(([n,t,h])=>`<a class="pg" href="${h}" style="color:var(--ink)"><span>${t}</span><b>${n}</b></a>`).join('')}</div></div></div></div>`},
+
+players(){
+ const t=route.tab||'online';let b='';
+ if(t==='online')b=S.players.length?`<div class="card p0 tw"><table><thead><tr><th>Player</th><th>Server</th><th>This week${tip('Minutes this player has spent in your game since Monday.')}</th><th>Status</th><th></th></tr></thead><tbody>${S.players.map(p=>{const bd=S.board.find(x=>x.userId===p.userId),mu=S.mutes.some(m=>m.userId===p.userId);
+  return `<tr class="click" data-go="player/${p.userId}"><td><div class="who">${av(p.userId,p.name)}<div><b>${esc(p.displayName||p.name)}</b><small>@${esc(p.name)}</small></div></div></td><td class="mono">${esc(p.server)}</td><td>${bd?dur(bd.week):'—'}</td><td>${mu?'<span class="bdg in">Muted</span>':'<span class="bdg ok">Playing</span>'}</td><td style="text-align:right">${actBtn(p)}</td></tr>`}).join('')}</tbody></table></div>`:`<div class="card">${empty('No one is playing',S.connected?'Players appear here the moment they join.':'Your game is offline right now.','players')}</div>`;
+ else{const li=(x,k)=>`<tr class="click" data-go="player/${x.userId}"><td><div class="who">${av(x.userId,x.name)}<b>${esc(x.name)}</b></div></td><td>${k==='ban'?(x.expires?'<span class="bdg wa">Suspended</span>':'<span class="bdg er">Banned</span>'):'<span class="bdg in">Muted</span>'}</td><td class="sm">${esc(x.reason||'')}</td><td class="muted sm">${x.expires?'until '+dtime(x.expires):'permanent'}</td><td style="text-align:right">${(k==='ban'?P('mod.unban'):P('mod.mute'))?`<button class="btn s" data-a="lift" data-k="${k}" data-uid="${x.userId}" data-n="${esc(x.name)}">${k==='ban'?'Unban':'Unmute'}</button>`:''}</td></tr>`;
+  const rows=[...S.bans.map(x=>li(x,'ban')),...S.mutes.map(x=>li(x,'mute'))];b=rows.length?`<div class="card p0 tw"><table><thead><tr><th>Player</th><th>Status</th><th>Reason</th><th>Ends</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table></div>`:`<div class="card">${empty('Nobody is banned or muted','Bans and mutes you apply show up here.','check')}</div>`}
+ return hd('Players','Everyone in your game right now, and everyone who isn\'t allowed in.',`<form data-f="lookup" class="row"><input class="inp" name="q" placeholder="Find a Roblox username" style="width:240px" required><button class="btn">${ic('search')}Find</button></form>`)+tabs('players',[['online','Online',S.players.length||''],['banned','Banned & muted',(S.bans.length+S.mutes.length)||'']],t)+b},
+
+player(){
+ const back=`<div class="crumb"><a href="#/audit">Player audit</a></div>`;
+ if(!PROF)return back+`<div class="card"><div class="skel" style="width:40%;height:22px"></div><div class="skel" style="width:70%;margin-top:14px"></div><div class="skel" style="width:55%;margin-top:10px"></div></div>`;
+ if(PROF.error)return back+`<div class="card">${empty('Player not found',esc(PROF.error))}</div>`;
+ const p=PROF,pl=p.play||{total:0,week:0,points:0},f=PT.f,H=p.hist||{days:{},joins:[],today:0},now=Date.now(),rng=PT.range==='all'?9999:+PT.range,cut=now-rng*864e5;
+ const lb=p.logbook.filter(e=>!f||(f==='mod'?['Warned','Kicked','Muted','Suspended','Banned'].includes(e.type):e.type===f));
+ const jn=H.joins.filter(x=>x.t>=cut),dayRows=Object.entries(H.days).filter(([k])=>PT.range==='all'||+k>H.today-rng),secs=dayRows.reduce((a,[,v])=>a+v,0);
+ const actions=`${actBtn(p,'')}${P('logbook.note')?`<button class="btn" data-a="note">Add note</button>`:''}${P('points.manage')?`<button class="btn" data-a="points" data-uid="${p.userId}" data-n="${esc(p.name)}">Points</button>`:''}${P('logbook.note')?`<button class="btn" data-a="watch">${ic('eye')}${S.watch[p.userId]?'Watching':'Watch'}</button>`:''}<button class="btn" data-a="widgets">${ic('gear')}Widgets</button>${P('privacy.manage')?`<button class="btn" data-a="pmenu">${ic('chev')}</button>`:''}`;
+ const rangeSeg=`<div class="seg">${[['7','7 days'],['30','30 days'],['90','90 days'],['all','All']].map(([k,t])=>`<button class="${PT.range===k?'on':''}" data-a="range" data-v="${k}">${t}</button>`).join('')}</div>`;
+ const W=[];const card=(t,sub,ctl,inner,cls='')=>`<div class="card ${cls}" style="margin-bottom:16px"><div class="row wrap" style="margin-bottom:12px"><div class="sp"><h3>${t}</h3>${sub?`<div class="sm muted">${sub}</div>`:''}</div>${ctl||''}</div>${inner}</div>`;
+ if(wOn('chat'))W.push(card('Chatlogs','Messages from the last 24 hours. Older chat is only kept when it is flagged or attached to a report.',`<div class="chips">${[['','All'],['flag','Flagged']].map(([k,t])=>`<button class="chip ${(PT.cf||'')===k?'on':''}" data-a="cf" data-v="${k}">${t}</button>`).join('')}</div>`,
+  `<div class="search2">${ic('search')}<input data-flt="[data-r=chat]" placeholder="Search messages…" aria-label="Search messages"></div>`+(()=>{const c=p.chat.filter(m=>PT.cf!=='flag'||m.flagged);return c.length?`<div class="inl">${c.map(m=>`<div class="chatl ${m.flagged?'fl':''}" data-r="chat"><span class="xs muted" style="min-width:64px">${ago(m.t)}</span><span>${esc(m.text)}</span></div>`).join('')}</div>`:empty('No chatlogs recorded','Nothing from this player in the last 24 hours.','info')})()));
+ if(wOn('mod'))W.push(card('Moderation history','Everything staff recorded about this player.',`<div class="chips">${[['','All'],['mod','Punishments'],['Note','Notes'],['Points','Points']].map(([k,t])=>`<button class="chip ${f===k?'on':''}" data-a="pf" data-v="${k}">${t}</button>`).join('')}</div>`,
+  lb.length?`<div class="tw"><table><thead><tr><th>Date</th><th>Entry</th><th>Details</th><th>By</th><th>Status</th><th></th></tr></thead><tbody>${lb.map(e=>`<tr style="${e.status==='reverted'?'opacity:.55':''}"><td class="sm muted" style="white-space:nowrap">${dtime(e.time)}</td><td><span class="bdg ${LTYPE[e.type]||''}">${esc(e.type)}</span></td><td class="sm">${esc(e.reason||'')}${e.minutes?` <span class="muted">· ${fmin(e.minutes)}</span>`:''}</td><td class="sm">${esc(e.by||'—')}</td><td>${e.status==='reverted'?`<span class="bdg" title="by ${esc(e.revertedBy)}">Reverted</span>`:'<span class="bdg ok">Active</span>'}</td><td style="text-align:right">${P('logbook.revert')&&e.status!=='reverted'&&e.type!=='Note'?`<button class="btn s" data-a="revert" data-id="${e.id}" data-t="${esc(e.type)}">Revert</button>`:''}</td></tr>`).join('')}</tbody></table></div>`:empty('No entries','Warnings, bans, points and notes for this player appear here.','book')));
+ if(wOn('byThem')&&p.staff)W.push(card('Actions by this player','Moderation they carried out as a staff member.','',p.byThem.length?`<div class="search2">${ic('search')}<input data-flt="[data-r=bt]" placeholder="Search actions or target username…" aria-label="Search actions"></div><div class="tw"><table><thead><tr><th>Date</th><th>Action</th><th>Target</th><th>Reason</th></tr></thead><tbody>${p.byThem.map(e=>`<tr data-r="bt"><td class="sm muted" style="white-space:nowrap">${dtime(e.time)}</td><td><span class="bdg ${LTYPE[e.type]||''}">${esc(e.type)}</span></td><td><a href="#/player/${e.userId}">${esc(e.name)}</a></td><td class="sm">${esc(e.reason||'')}</td></tr>`).join('')}</tbody></table></div>`:empty('No actions recorded','Nothing logged by this staff member yet.','book')));
+ if(wOn('joins'))W.push(card('Game joins',jn.length?`${jn.length} in this period`:'',rangeSeg,jn.length?`<div class="tw"><table><thead><tr><th>Joined</th><th>Time in game</th><th>Server</th></tr></thead><tbody>${jn.slice(0,40).map(x=>`<tr><td>${dtime(x.t)}</td><td>${x.live?'<span class="bdg ok">In game now</span> ':''}${dur(x.s)}</td><td class="mono muted">${esc(x.sv||'—')}</td></tr>`).join('')}</tbody></table></div>`:`<div class="sm muted" style="padding:14px 0;text-align:center">No game joins in this period</div>`));
+ if(wOn('heat')){const days=H.days,t0=H.today;let s0=t0-26*7+1;s0-=(s0+3)%7;const cols=Math.ceil((t0-s0+1)/7),lv=m=>m<=0?'':m<10?25:m<30?45:m<90?70:100,tot=Object.values(days).reduce((a,v)=>a+v,0),act=Object.values(days).filter(v=>v>=60).length;let cells='',mlab='',last=-1;
+  for(let i=s0;i<=t0;i++){const m=(days[i]||0)/60,l=lv(m),dt=new Date(i*864e5);cells+=`<i title="${dt.toLocaleDateString(undefined,{month:'short',day:'numeric',timeZone:'UTC'})} · ${m<1&&m>0?'<1':Math.round(m)}m" ${l?`style="background:color-mix(in srgb,var(--ac) ${l}%,var(--neb))"`:''}></i>`}
+  for(let c=0;c<cols;c++){const dt=new Date((s0+c*7)*864e5),mo=dt.getUTCMonth();mlab+=`<span>${mo!==last?dt.toLocaleDateString(undefined,{month:'short',timeZone:'UTC'}):''}</span>`;last=mo}
+  W.push(card('Playtime heatmap','Days are in UTC. Shows the last six months.','',`<div class="hmw"><div class="hml" style="margin-left:34px">${mlab}</div><div class="row" style="align-items:flex-start;gap:6px"><div class="hmy"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span></span></div><div class="hm" style="grid-template-columns:none;grid-auto-columns:12px">${cells}</div></div></div><div class="row wrap sm muted" style="margin-top:12px"><span>${dur(tot)} total</span><span>·</span><span>${act} active day${act===1?'':'s'}</span><span class="sp"></span><span class="xs">Less</span>${[0,25,45,70,100].map(l=>`<i class="hmk" style="${l?`background:color-mix(in srgb,var(--ac) ${l}%,var(--neb))`:''}"></i>`).join('')}<span class="xs">More</span></div>`))}
+ if(wOn('mins')){const lg=jn.reduce((a,x)=>Math.max(a,x.s),0),av2=jn.length?jn.reduce((a,x)=>a+x.s,0)/jn.length:0,tile=(l,v)=>`<div class="card" style="box-shadow:inset 0 0 0 .5px var(--line);padding:14px 16px"><div class="sm muted">${l}</div><div style="font-size:24px;font-weight:650;letter-spacing:-.02em;margin-top:2px">${v}</div></div>`;
+  W.push(card('Playtime minutes',PT.range==='all'?'All recorded time':'Last '+PT.range+' days',rangeSeg,`<div class="grid g4">${tile('Total minutes',(secs/60).toFixed(1))}${tile('Active days',dayRows.filter(([,v])=>v>=60).length)}${tile('Avg min / join',(av2/60).toFixed(1))}${tile('Longest session',dur(lg))}</div>`))}
+ if(wOn('reports'))W.push(card('Reports','Reports this player sent with !modcall.','',p.reports.length?`<div class="tw"><table><thead><tr><th>#</th><th>Report</th><th>Status</th><th>When</th></tr></thead><tbody>${p.reports.map(r=>`<tr><td class="mono">${r.id}</td><td>${esc(r.text)}</td><td><span class="bdg ${r.status==='open'?'er':r.status==='claimed'?'wa':'ok'}">${r.status}</span></td><td class="muted sm">${ago(r.t)}</td></tr>`).join('')}</tbody></table></div>`:empty('No reports filed','','flag')));
+ if(wOn('info'))W.push(card('Roblox profile','','',`<dl class="kv2"><dt>User ID</dt><dd class="mono">${p.userId}</dd><dt>Username</dt><dd>@${esc(p.name)}</dd><dt>Display name</dt><dd>${esc(p.displayName||'—')}</dd><dt>On Roblox since</dt><dd>${p.created?date(p.created):'—'}</dd><dt>Sessions attended</dt><dd>${p.sessions}</dd><dt>Points</dt><dd>${pl.points}</dd><dt>Total playtime</dt><dd>${dur(pl.total)}</dd></dl>`));
+ return back+`<div class="hd"><div class="t"><div class="who" style="gap:16px">${av(p.userId,p.name,'xl')}<div><h1>${esc(p.displayName||p.name)}</h1><div class="muted" style="margin-top:2px">@${esc(p.name)} · ${p.staff?esc(p.staff.rank):'Player'}</div>
+  <div class="row wrap" style="margin-top:8px;gap:6px">${p.online?`<span class="bdg ok">Online · ${esc(p.server)}</span>`:`<span class="bdg">${p.lastSeen?'Last seen '+ago(p.lastSeen):'Offline'}</span>`}${S.watch&&S.watch[p.userId]?'<span class="bdg wa">Watched</span>':''}${p.banned?`<span class="bdg er">${p.banned.expires?'Suspended':'Banned'}</span>`:''}${p.muted?'<span class="bdg in">Muted</span>':''}</div></div></div></div><div class="row wrap">${actions}</div></div>${W.join('')||`<div class="card">${empty('All widgets are hidden','Press Widgets to choose what to show.','gear')}</div>`}`},
+audit(){const online=S.players.map(p=>({id:p.userId,name:p.displayName||p.name,s:'Online · server '+p.server})),top=S.board.filter(b=>b.week>0).slice(0,8).map(b=>({id:b.userId,name:b.name,s:dur(b.week)+' this week'})),row=x=>`<a class="ib" href="#/player/${x.id}">${av(x.id,x.name)}<span><b>${esc(x.name)}</b><span class="sm muted">${esc(x.s)}</span></span>${ic('chev').replace('class="ic"','class="ic chv"')}</a>`;
+ return hd('Player audit','Everything your game knows about a player: chat, moderation, joins and playtime.')+`<form data-f="lookup" class="auditq">${ic('search')}<input name="q" placeholder="Look up any Roblox username" aria-label="Roblox username" autocomplete="off" required><button class="btn pri">Open audit</button></form>
+ <div class="grid g2 mt"><div><h3 style="margin-bottom:10px">Online now</h3>${online.length?`<div class="ibl">${online.slice(0,10).map(row).join('')}</div>`:`<div class="card">${empty('Nobody online','Players appear here while they are in your game.','players')}</div>`}</div>
+ <div><h3 style="margin-bottom:10px">Most active this week</h3>${top.length?`<div class="ibl">${top.map(row).join('')}</div>`:`<div class="card">${empty('No playtime yet','Weekly playtime shows here once players have joined.','chart')}</div>`}</div></div>`},
+help(){const t=route.tab==='feedback'?'feedback':'qa';return hd('Help','Answers to common questions, and a way to reach us.')+tabs('help',[['qa','Q&A'],['feedback','Feedback']],t)+(t==='qa'?HELPQA():HELPFB())},
+inbox(){const it=inboxItems();
+ return hd('Inbox','Everything that needs you right now.')+(it.length?`<div class="ibl">${it.map(x=>`<a class="ib" href="${x.h}"><span class="tile ${x.c}">${ic(x.icn)}</span><span><b>${esc(x.t)}</b><span class="sm muted">${esc(x.s)}</span></span>${ic('chev').replace('class="ic"','class="ic chv"')}</a>`).join('')}</div>`:`<div class="card">${empty("You're all caught up",'New reports, appeals and watched players show up here.','check')}</div>`)},
+appeals(){const t=route.tab||'open',link=location.origin+'/appeal/'+S.workspace.id,nopen=S.appeals.filter(a=>a.status==='open').length,list=S.appeals.filter(a=>t==='open'?a.status==='open':a.status!=='open');
+ return hd('Appeals','Players you banned can ask for another chance.',P('automations.manage')?`<span class="sm muted">Accepting appeals</span><button class="tog ${S.appealsOn?'on':''}" role="switch" aria-checked="${S.appealsOn}" aria-label="Accepting appeals" data-a="appeals-toggle"></button>`:'')+
+ `<div class="card"><h3>Appeal link${tip('A public page where banned players can ask to be unbanned. Share it in your game description or Discord.')}</h3><p class="sm muted">Share this in your game's description or Discord. Players type their username and explain why. Only players with an active ban can submit.</p><div class="keybox" style="margin-top:12px"><span class="mono">${esc(link)}</span><button class="btn s" data-a="copy-appeal">${ic('copy')}Copy</button></div></div><div class="mt"></div>`+
+ tabs('appeals',[['open','Open',nopen||''],['reviewed','Reviewed']],t)+(list.length?list.map(a=>`<div class="card" style="margin-bottom:12px"><div class="row wrap"><a href="#/player/${a.uid}" class="who" style="color:var(--ink)">${av(a.uid,a.name)}<b>${esc(a.name)}</b></a><span class="bdg ${a.status==='open'?'wa':a.status==='accepted'?'ok':'er'}">${a.status==='open'?'Waiting':a.status==='accepted'?'Accepted':'Denied'}</span><span class="sp"></span><span class="sm muted">${ago(a.t)}</span></div>
+ <p style="margin:12px 0 4px;font-size:15px;white-space:pre-wrap">${esc(a.text)}</p><div class="sm muted">Banned for: ${esc(a.banReason||'No reason given')}${a.banBy?` · by ${esc(a.banBy)}`:''}</div>
+ ${a.status!=='open'?`<div class="sm muted" style="margin-top:6px">${a.status==='accepted'?'Accepted':'Denied'} by ${esc(a.by||'staff')}${a.note?` · “${esc(a.note)}”`:''}</div>`:P('appeals.review')?`<div class="row" style="margin-top:14px"><button class="btn s pri" data-a="appeal" data-op="accept" data-id="${a.id}" data-n="${esc(a.name)}">Accept and unban</button><button class="btn s" data-a="appeal" data-op="deny" data-id="${a.id}" data-n="${esc(a.name)}">Deny</button></div>`:''}</div>`).join(''):`<div class="card">${empty(t==='open'?'No appeals waiting':'Nothing reviewed yet','Appeals from banned players appear here.','appeal')}</div>`)},
+reports(){
+ const t=route.tab||'open',list=S.calls.filter(c=>t==='all'||c.status===t);let b='';
+ if(t==='chat')b=`<div class="card p0">${S.chat.length?S.chat.map(m=>`<div class="chatl ${m.flagged?'fl':''}"><span class="xs muted" style="min-width:64px">${ago(m.t)}</span><span><a href="#/player/${m.userId}" class="b" style="color:var(--ink)">${esc(m.name)}</a> ${esc(m.text)}</span><span class="acts">${actBtn({userId:m.userId,name:m.name})}</span></div>`).join(''):empty('No chat yet','Messages appear here as players send them.')}</div>`;
+ else b=list.length?list.map(c=>`<div class="card" style="margin-bottom:12px"><div class="row wrap"><span class="mono muted">#${c.id}</span><span class="bdg ${c.status==='open'?'er':c.status==='claimed'?'wa':'ok'}">${c.status==='open'?'Open':c.status==='claimed'?'Claimed':'Resolved'}</span><a href="#/player/${c.from.userId}" class="who" style="color:var(--ink)">${av(c.from.userId,c.from.name)}<b>${esc(c.from.name)}</b></a><span class="sp"></span><span class="sm muted">${ago(c.t)} · server <span class="mono">${esc(c.server)}</span></span></div>
+  <p style="margin:12px 0 0;font-size:15px">${esc(c.text)}</p>${c.by?`<div class="sm muted" style="margin-top:6px">${c.status==='resolved'?'Resolved':'Claimed'} by ${esc(c.by)}${c.note?` · “${esc(c.note)}”`:''}</div>`:''}
+  ${c.chat.length?`<details style="margin-top:10px"><summary class="sm" style="cursor:pointer;color:var(--ac)">Chat around that moment (${c.chat.length})</summary><div class="ctx">${c.chat.map(m=>`<div style="${m.flagged?'color:var(--wa);font-weight:500':''}"><b>${esc(m.name)}</b> ${esc(m.text)}</div>`).join('')}</div></details>`:''}
+  ${P('reports.handle')&&c.status!=='resolved'?`<div class="row" style="margin-top:14px">${c.status==='open'?`<button class="btn s pri" data-a="call" data-op="claim" data-id="${c.id}">Claim</button>`:''}<button class="btn s" data-a="call" data-op="resolve" data-id="${c.id}">Resolve</button></div>`:''}</div>`).join(''):`<div class="card">${empty(t==='open'?'No open reports':'Nothing here','Players type <code>!modcall</code> and a message to reach your team.','flag')}</div>`;
+ return hd('Reports','What players are asking your team for help with.')+tabs('reports',[['open','Open',S.calls.filter(c=>c.status==='open').length||''],['claimed','Claimed'],['resolved','Resolved'],['all','All'],...(P('chat.view')?[['chat','Live chat']]:[])],t)+b},
+
+logbook(){
+ const d=LB;return hd('Logbook','Every warning, kick, mute, ban, point and note across your game.')+
+ `<div class="row wrap" style="margin-bottom:14px"><div class="chips">${[['','All'],['warn','Warnings'],['kick','Kicks'],['mute','Mutes'],['ban','Bans'],['points','Points'],['note','Notes']].map(([k,t])=>`<button class="chip ${LBF.type===k?'on':''}" data-a="lbf" data-v="${k}">${t}</button>`).join('')}</div><span class="sp"></span><form data-f="lbq"><input class="inp" name="q" value="${esc(LBF.q)}" placeholder="Search player, reason or moderator" style="width:280px"></form></div>
+ <div class="card p0 tw">${!d?'<div style="padding:20px"><div class="skel"></div><div class="skel" style="margin-top:12px;width:80%"></div></div>':d.entries&&d.entries.length?`<table><thead><tr><th>When</th><th>Player</th><th>Entry</th><th>Details</th><th>By</th><th>Status</th></tr></thead><tbody>${d.entries.map(e=>`<tr class="click" data-go="player/${e.userId}" style="${e.status==='reverted'?'opacity:.55':''}"><td class="sm muted" style="white-space:nowrap">${dtime(e.time)}</td><td><div class="who">${av(e.userId,e.name)}<b>${esc(e.name)}</b></div></td><td><span class="bdg ${LTYPE[e.type]||''}">${esc(e.type)}</span></td><td class="sm">${esc(e.reason||'')}${e.minutes?` <span class="muted">· ${fmin(e.minutes)}</span>`:''}</td><td class="sm">${esc(e.by||'—')}</td><td>${e.status==='reverted'?'<span class="bdg">Reverted</span>':'<span class="bdg ok">Active</span>'}</td></tr>`).join('')}</tbody></table>${d.total>200?`<div class="sm muted" style="padding:12px 14px">Showing the latest 200 of ${d.total}.</div>`:''}`:empty('No entries yet','Moderation from the dashboard and automations lands here.','book')}</div>`},
+
+team(){
+ const t=route.tab||'members';let b='',a='';
+ if(t==='members'){a=P('team.manage')?`<button class="btn pri" data-a="invite">${ic('plus')}Invite member</button>`:'';
+  b=`<div class="card p0 tw"><table><thead><tr><th>Member</th><th>Rank</th><th>In game this week</th><th>Status</th><th>Joined</th><th></th></tr></thead><tbody>${S.team.map(m=>{const r=rk(m.rank),q=r.quota||0,can=P('team.manage')&&!m.owner&&m.uid!==S.me.uid&&below(r.pos);
+   return `<tr><td><div class="who">${av(m.robloxId,m.name)}<div><b>${esc(m.name)}</b><small>${m.via}${m.owner?' · Owner':''}</small></div></div></td><td>${can?`<select class="inp" style="width:170px;height:30px" data-a="setrank" data-uid="${m.uid}">${S.ranks.filter(x=>below(x.pos)||x.id===m.rank).map(x=>`<option value="${x.id}" ${x.id===m.rank?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`:m.owner?'<span class="rtag"><i style="background:#1a1f36"></i>Owner</span>':rtag(m.rank)}</td>
+   <td>${m.linked?`<div class="sm">${dur(m.week)}${q?` <span class="muted">/ ${dur(q*60)}</span>`:''}</div>${q?`<div class="bar ${m.week>=q*60?'done':''}" style="margin-top:5px"><i style="width:${Math.min(100,m.week/(q*60)*100)}%"></i></div>`:''}`:'<span class="sm muted">Roblox not linked</span>'}</td>
+   <td>${m.onLeave?'<span class="bdg in">On leave</span>':m.online?'<span class="bdg ok">In game</span>':'<span class="sm muted">—</span>'}</td><td class="sm muted">${m.joined?date(m.joined):'—'}</td><td style="text-align:right">${can?`<button class="btn s" data-a="remove" data-uid="${m.uid}" data-n="${esc(m.name)}">Remove</button>`:''}</td></tr>`}).join('')}</tbody></table></div>`}
+ else if(t==='ranks'){a=P('ranks.manage')?`<button class="btn pri" data-a="rank-new">${ic('plus')}New rank</button>`:'';
+  b=`<p class="muted" style="margin:-8px 0 16px">Higher ranks can manage everyone below them. Change the order with the arrows. Nobody can grant a power they don't have.</p><div class="card p0 tw"><table><thead><tr><th>Rank</th><th>Members</th><th>Permissions</th><th>Weekly goal${tip('Minutes in game each week this rank should reach.')}</th><th>Action limit${tip('The most warnings, kicks, mutes and bans a person of this rank may give per hour. Stops mistakes and abuse.')}</th><th></th></tr></thead><tbody>${S.ranks.map((r,i)=>{const ed=P('ranks.manage')&&below(r.pos);
+   return `<tr><td>${rtag(r.id)}</td><td>${r.count}</td><td class="sm">${r.perms.length} of ${S.perms.length}${r.perms.some(x=>S.perms.find(p=>p.id===x&&p.danger))?' <span class="bdg wa" style="margin-left:4px">Elevated</span>':''}</td><td class="sm">${r.quota?dur(r.quota*60):'—'}</td><td class="sm">${r.limit?r.limit+' / hour':'No limit'}</td>
+   <td style="text-align:right;white-space:nowrap">${ed?`<button class="btn s" data-a="rank-move" data-id="${r.id}" data-v="up" ${i===0||!below(S.ranks[i-1].pos)?'disabled':''} aria-label="Move up">${ic('up')}</button> <button class="btn s" data-a="rank-move" data-id="${r.id}" data-v="down" ${i===S.ranks.length-1?'disabled':''} aria-label="Move down">${ic('down')}</button> <button class="btn s" data-a="rank-edit" data-id="${r.id}">Edit</button>`:''}</td></tr>`}).join('')}</tbody></table></div>`}
+ else{a=`<button class="btn pri" data-a="invite">${ic('plus')}New invite</button>`;b=S.invites.length?`<div class="card p0 tw"><table><thead><tr><th>Link</th><th>Rank</th><th>Expires</th><th></th></tr></thead><tbody>${S.invites.map(i=>`<tr><td class="mono" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${location.origin}/#/join/${i.code}</td><td>${rtag(i.rank)}</td><td class="sm muted">${date(i.exp)}</td><td style="text-align:right;white-space:nowrap"><button class="btn s" data-a="inv-copy" data-c="${i.code}">${ic('copy')}Copy</button> <button class="btn s" data-a="inv-revoke" data-c="${i.code}">Revoke</button></td></tr>`).join('')}</tbody></table></div>`:`<div class="card">${empty('No open invites','Each invite link works once and expires after 7 days.','link')}</div>`}
+ return hd('Team',`${S.team.length} member${S.team.length>1?'s':''} · ${S.ranks.length} ranks`,a)+tabs('team',[['members','Members'],['ranks','Ranks'],...(P('team.manage')?[['invites','Invites',S.invites.length||'']]:[])],t)+b},
+
+activity(){
+ const t=route.tab||'sessions';let b='';
+ if(t==='sessions'){const s=S.session;
+  b=(s?`<div class="card"><div class="row wrap"><span class="bdg ok">Live</span><h2>${esc(s.type)}</h2><span class="sp"></span><span class="muted sm">Hosted by ${esc(s.host||'—')} · ${dur((Date.now()-s.start)/1000)}</span></div>${s.notes?`<p class="muted">${esc(s.notes)}</p>`:''}
+   <div class="chips" style="margin:16px 0">${s.attendees.length?s.attendees.map(a=>`<span class="chip">${esc(a.name)}</span>`).join(''):'<span class="muted sm">Players type <code>!attend</code> in chat to check in.</span>'}</div>${P('sessions.host')?`<div class="row"><button class="btn" data-a="sess" data-op="addall">Add everyone in game</button><button class="btn red" data-a="sess" data-op="end">End session</button></div>`:''}</div>`
+   :P('sessions.host')?`<div class="card"><h3>Host a session${tip('Schedule a training or patrol. It is announced in game and attendance is recorded automatically.')}</h3><p class="muted sm">We announce it in game. Players type <code>!attend</code> to check in${S.rules.sessionpoints.enabled?` and earn ${S.rules.sessionpoints.points} points when it ends`:''}.</p><form data-f="sess" class="row wrap mt"><select class="inp" name="type" style="width:160px"><option>Training</option><option>Shift</option><option>Tryout</option><option>Event</option><option>Meeting</option></select><input class="inp" name="notes" placeholder="Notes (optional)" style="flex:1;min-width:180px"><button class="btn pri">Start session</button></form></div>`:'')+
+   `<h3 class="mt2" style="margin-bottom:12px">History</h3><div class="card p0 tw">${S.sessions.length?`<table><thead><tr><th>Session</th><th>Host</th><th>Date</th><th>Length</th><th>Attended</th></tr></thead><tbody>${S.sessions.map(x=>`<tr><td class="b">${esc(x.type)}</td><td class="sm">${esc(x.host||'—')}</td><td class="sm muted">${dtime(x.start)}</td><td class="sm">${dur((x.end-x.start)/1000)}</td><td><span class="bdg ac">${x.attendees.length}</span></td></tr>`).join('')}</tbody></table>`:empty('No sessions yet','Trainings, shifts and events you host are listed here.','leave')}</div>`}
+ else{const q=S.settings.quotaMinutes*60;b=`<div class="card p0 tw">${S.board.length?`<table><thead><tr><th>#</th><th>Player</th><th>This week</th><th>All time</th><th>Points${tip('Earned for time in game and for taking part in sessions.')}</th></tr></thead><tbody>${S.board.map((x,i)=>`<tr class="click" data-go="player/${x.userId}"><td class="muted">${i+1}</td><td><div class="who">${av(x.userId,x.name)}<b>${esc(x.name)}</b></div></td><td style="min-width:170px"><div class="sm">${dur(x.week)} <span class="muted">/ ${dur(q)}</span></div><div class="bar ${x.week>=q?'done':''}" style="margin-top:5px"><i style="width:${Math.min(100,x.week/q*100)}%"></i></div></td><td class="sm">${dur(x.total)}</td><td class="b">${x.points}</td></tr>`).join('')}</tbody></table>`:empty('No activity yet','Playtime is tracked automatically while people play.','chart')}</div>`}
+ return hd('Activity','Sessions, playtime and points.')+tabs('activity',[['sessions','Sessions'],['leaderboard','Leaderboard']],t)+b},
+
+leave(){
+ const st=x=>`<span class="bdg ${x.status==='approved'?'ok':x.status==='pending'?'wa':x.status==='denied'?'er':''}">${x.status[0].toUpperCase()+x.status.slice(1)}</span>`,now=Date.now();
+ const mine=`<div class="card p0 tw">${S.loa.mine.length?`<table><thead><tr><th>Dates</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${S.loa.mine.map(x=>`<tr><td class="sm">${date(x.start)} – ${date(x.end)}</td><td class="sm">${esc(x.reason||'—')}${x.note?`<div class="muted xs">“${esc(x.note)}” · ${esc(x.by)}</div>`:''}</td><td>${st(x)}</td><td style="text-align:right">${['pending','approved'].includes(x.status)&&x.end>now?`<button class="btn s" data-a="loa-cancel" data-id="${x.id}">Cancel</button>`:''}</td></tr>`).join('')}</tbody></table>`:empty('No leave requests','Taking a break? Request leave so your activity goal pauses.','leave')}</div>`;
+ let rev='';if(P('loa.review')){const pend=S.loa.all.filter(x=>x.status==='pending'),act=S.loa.all.filter(x=>x.status==='approved'&&x.start<=now&&x.end>=now);
+  rev=`<h3 class="mt2" style="margin-bottom:12px">Waiting for review</h3><div class="card p0 tw">${pend.length?`<table><thead><tr><th>Member</th><th>Dates</th><th>Reason</th><th></th></tr></thead><tbody>${pend.map(x=>`<tr><td class="b">${esc(x.name)}</td><td class="sm">${date(x.start)} – ${date(x.end)}</td><td class="sm">${esc(x.reason||'—')}</td><td style="text-align:right;white-space:nowrap">${x.uid===S.me.uid&&!S.me.owner?'<span class="xs muted">Needs someone else</span>':`<button class="btn s pri" data-a="loa-ok" data-id="${x.id}">Approve</button> <button class="btn s" data-a="loa-no" data-id="${x.id}">Deny</button>`}</td></tr>`).join('')}</tbody></table>`:empty('All caught up','New requests from your team appear here.','check')}</div>
+  <h3 class="mt2" style="margin-bottom:12px">On leave now</h3><div class="card p0">${act.length?`<table><tbody>${act.map(x=>`<tr><td class="b">${esc(x.name)}</td><td class="sm muted">back ${date(x.end)}</td></tr>`).join('')}</tbody></table>`:empty('Everyone is around')}</div>`}
+ return hd('Leave','Request time off and keep track of who is away.',`<button class="btn pri" data-a="loa-new">${ic('plus')}Request leave</button>`)+`<h3 style="margin-bottom:12px">Your requests</h3>`+mine+rev},
+
+rulebook(){
+ const sev={low:['Low','ok'],medium:['Medium','in'],high:['High','wa'],critical:['Critical','er']},stepT=s=>({warn:'Warn',kick:'Kick',mute:'Mute '+fmin(s.minutes),ban:s.minutes?'Suspend '+fmin(s.minutes):'Ban'})[s.type];
+ return hd('Rulebook','Write your rules once. Moderators pick a rule and Sentinel applies the right punishment for that offense.',P('rulebook.manage')?`<button class="btn pri" data-a="rule-new">${ic('plus')}New rule</button>`:'')+
+ (S.rulebook.length?`<div class="grid g2">${S.rulebook.map(r=>`<div class="card"><div class="row"><h3 class="sp">${esc(r.title)}</h3><span class="bdg ${sev[r.severity][1]}">${sev[r.severity][0]}</span></div>${r.desc?`<p class="sm muted" style="margin:8px 0 0">${esc(r.desc)}</p>`:''}
+  <div class="steps" style="margin-top:14px">${r.steps.map((s,i)=>`${i?`<span class="arr">→</span>`:''}<span class="bdg ${s.type==='ban'?'er':s.type==='warn'?'wa':s.type==='mute'?'in':'wa'}">${i+1}. ${stepT(s)}</span>`).join('')}</div>
+  <div class="row" style="margin-top:14px"><span class="xs muted sp">Edited by ${esc(r.by||'—')} · ${ago(r.updated||0)}</span>${P('rulebook.manage')?`<button class="btn s" data-a="rule-edit" data-id="${r.id}">Edit</button>`:''}</div></div>`).join('')}</div>`
+ :`<div class="card">${empty('No rules yet','Add rules like “Spamming: warn, then kick, then 1 day ban”. Repeat offenses escalate automatically.','rules',P('rulebook.manage')?`<button class="btn pri" data-a="rule-new">${ic('plus')}Write your first rule</button><button class="btn" data-a="rule-starter" style="margin-left:8px">Use starter rules</button>`:'')}</div>`)},
+
+settings(){
+ const tbs=[['general','General',1],['game','Game',S.me.owner],['backups','Backups',S.me.owner],['automations','Automations',P('automations.manage')],['notifications','Notifications',P('webhooks.manage')],['audit','Audit log',P('audit.view')],['legal','Legal',1]].filter(x=>x[2]);
+ const t=tbs.some(x=>x[0]===route.tab)?route.tab:'general';return hd('Settings','')+tabs('settings',tbs.map(x=>[x[0],x[1]]),t)+SET[t]()}
+};
+
+const SET={
+general(){const u=ME.user;return `<div class="grid g2"><div class="card"><h3>Workspace</h3>${S.me.owner?`<form data-f="rename" class="row mt"><input class="inp" name="name" value="${esc(S.workspace.name)}" maxlength="40" required><button class="btn">Save</button></form>`:`<p class="muted">${esc(S.workspace.name)}</p>`}
+ <dl class="kv2 mt"><dt>Your rank</dt><dd>${S.me.owner?'Owner (all permissions)':rtag(S.me.rank)}</dd><dt>Workspace ID${tip('A public label for this workspace. It is not a password and cannot be used to get in.')}</dt><dd class="mono">${S.workspace.id}</dd></dl></div>
+ <div class="card"><h3>Your account</h3><dl class="kv2 mt"><dt>Signed in with</dt><dd>${u.provider==='google'?'Google':'Roblox'}</dd><dt>Roblox account</dt><dd>${u.roblox?`@${esc(u.roblox.name)}${u.roblox.viaLogin?'':` <button class="btn s ghost" data-a="unlink">Unlink</button>`}`:`<button class="btn s" data-a="link">${ic('link')}Link Roblox</button>`}</dd></dl><p class="xs muted" style="margin-top:12px">Linking lets Sentinel count your in-game time toward your rank's weekly goal.</p></div></div>
+ <div class="card mt" style="box-shadow:0 0 0 1px var(--erb)"><h3>${S.me.owner?'Delete workspace':'Leave workspace'}</h3><p class="sm muted">${S.me.owner?'Removes this workspace for everyone: players, logbook, reports, ranks and team. It is kept for 30 days in case it was a mistake, then erased for good.':'You will lose access until someone invites you again.'}</p><button class="btn red" data-a="${S.me.owner?'ws-del':'ws-leave'}">${S.me.owner?'Delete workspace':'Leave workspace'}</button></div>`},
+backups(){const b=BK;if(!b||b.error)return '<div class="card"><div class="skel"></div></div>';
+ const snaps=b.snaps||[];
+ return `<div class="grid g2"><div class="card"><h3>Automatic backups${tip('A nightly copy of your players, logbook, ranks and team, kept for 7 days.')}</h3><p class="sm muted">${b.cron?'A copy of your workspace is saved every night and kept for 7 days.':'Automatic nightly backups are not switched on yet for this site. The site admin needs to add <b>CRON_SECRET</b>.'} If your workspace is ever deleted or tampered with, it can be put back exactly as it was.</p>
+  <div class="row wrap mt"><button class="btn pri" data-a="bk-now">${ic('check')}Back up now</button><a class="btn" href="/api/backup/download">${ic('dl')}Download a copy</a></div><p class="xs muted" style="margin-top:12px">Keep a downloaded copy somewhere safe, like your own computer. It holds your players, logbook, ranks and team, but not your game code.</p></div>
+  <div class="card"><h3>Restore from a file</h3><p class="sm muted">Replace everything in this workspace with a copy you downloaded earlier. A safety copy of the current state is saved first.</p><div class="row mt"><button class="btn red" data-a="bk-import">Choose backup file…</button></div></div></div>
+ <div class="card p0 mt"><div class="tbar"><h3>Saved backups</h3></div>${snaps.length?`<div class="tw"><table><thead><tr><th>Backup</th><th>Taken</th><th></th></tr></thead><tbody>${snaps.map(x=>`<tr><td>${x.safety?'Safety copy':'Nightly backup'}</td><td>${x.safety?ago(x.t):date(x.t)}${x.safety?'':` <span class="xs muted">(start of day)</span>`}</td><td style="text-align:right"><button class="btn s" data-a="bk-restore" data-id="${esc(x.id)}">Restore…</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="sm muted" style="padding:4px 18px 18px">No backups yet. Press <b>Back up now</b> to make the first one.</p>'}</div>`},
+game(){const s=SETUP;if(!s)return '<div class="card"><div class="skel"></div></div>';
+ return `<div class="grid g2"><div class="card"><div class="row"><span class="dot ${S.connected?'on':''}"></span><h3>${S.connected?'Connected':'Not connected right now'}</h3></div><dl class="kv2 mt"><dt>Servers online</dt><dd>${S.serverCount}</dd><dt>Last place seen</dt><dd class="mono">${s.lastPlace??'—'}</dd><dt>First connected</dt><dd>${s.connectedAt?date(s.connectedAt):'Never'}</dd></dl></div>
+ <div class="card"><h3>Place lock${tip('Only accepts data from your game\'s own place ID. If someone steals your code, it will not work in their game.')}</h3><p class="sm muted">Only accept your game's place, so a leaked key is useless elsewhere.</p><form data-f="place" class="mt"><div class="row"><input class="inp" name="placeId" inputmode="numeric" placeholder="Place ID" value="${esc(s.placeId||'')}"><button class="btn">Save</button></div><label class="chk"><input type="checkbox" name="lock" ${s.placeLock?'checked':''}><span class="sm">Reject every other place${s.lastPlace===0?' <span class="muted">(Studio tests use 0)</span>':''}</span></label></form></div></div>
+ <div class="card mt"><h3>Game script${tip('A small Roblox script that sends player activity to Sentinel and receives commands such as bans and kicks.')}</h3><p class="sm muted">Put it in a Script in <b>ServerScriptService</b> and turn on <b>Allow HTTP Requests</b>. Only you can see this.</p><div class="row wrap mt"><button class="btn pri" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn" href="/api/bridge?download=1">${ic('dl')}Download .lua</a><a class="btn ghost" href="#/setup">Open setup guide</a></div>
+ <label class="lab mt">Game code${tip('A secret password that links your Roblox game to this workspace. Shown once, and never put in backups. Keep it private.')}</label>${codeBox()}${NEWCODE?`<div class="row mt"><button class="btn red s" data-a="key-rotate">Replace code…</button><span class="xs muted">Replacing stops the old code immediately.</span></div>`:''}</div>`},
+automations(){const R={autosuspend:['Auto-suspend','Suspend someone after repeated warnings.',[['warns','warnings in a row'],['minutes','minute suspension']]],flaggedmute:['Auto-mute','Mute people who keep using flagged words.',[['count','flagged messages'],['minutes','minute mute']]],sessionpoints:['Session points','Reward everyone who attends a session.',[['points','points each']]],welcome:['Welcome message','Greet every player who joins.',[['text','Message',1]]]};
+ return `<div class="card p0">${Object.entries(R).map(([id,[t,d,f]])=>{const r=S.rules[id];return `<div class="row" style="padding:18px 20px;border-bottom:1px solid var(--line);align-items:flex-start"><div class="sp"><b>${t}</b><div class="sm muted">${d}</div><div class="row wrap" style="margin-top:10px">${f.map(([k,l,tx])=>tx?`<input class="inp" data-a="rp" data-id="${id}" data-k="${k}" value="${esc(r[k])}" maxlength="120" style="max-width:420px">`:`<input class="inp" type="number" min="1" data-a="rp" data-id="${id}" data-k="${k}" value="${r[k]}" style="width:80px;height:30px"><span class="sm muted">${l}</span>`).join('')}</div></div><button class="tog ${r.enabled?'on':''}" role="switch" aria-checked="${r.enabled}" aria-label="${t}" data-a="rt" data-id="${id}"></button></div>`}).join('')}</div>
+ <div class="grid g2 mt"><div class="card"><h3>Flagged words${tip('Chat containing these words is highlighted for your team and can be turned into a report.')}</h3><p class="sm muted">Highlighted in chat and reports. Separate with commas.</p><form data-f="words" class="mt"><textarea class="inp" name="w">${esc(S.flagWords.join(', '))}</textarea><div class="row mt"><span class="sp"></span><button class="btn">Save words</button></div></form></div>
+ <div class="card"><h3>Player weekly goal${tip('The play time target shown on the leaderboard. It is only a goal for players, not a rule.')}</h3><p class="sm muted">The target on the player leaderboard. Staff goals are set per rank in Team, Ranks.</p><form data-f="quota" class="row mt"><input class="inp" type="number" min="1" name="m" value="${S.settings.quotaMinutes}" style="width:110px"><span class="muted sm">minutes</span><span class="sp"></span><button class="btn">Save</button></form></div></div>`},
+notifications(){const w=S.webhook,E=[['reports','New reports'],['bans','Bans, suspensions and unbans'],['kicks','Kicks'],['warns','Warnings'],['loa','Leave requests and decisions'],['sessions','Sessions starting and ending'],['appeals','Ban appeals'],['watch','Watched players joining']];
+ return `<div class="card"><h3>Discord</h3><p class="sm muted">Send updates to a Discord channel. In Discord: channel settings, Integrations, Webhooks, New Webhook, Copy Webhook URL.</p>
+ <form data-f="hook" class="mt"><label class="lab">Webhook URL${tip('A Discord channel link that lets Sentinel post alerts there. Make it in Discord under Channel settings, then Integrations.')}</label><div class="row"><input class="inp" name="url" placeholder="${w.set?'Saved (ends in …'+esc(w.hint)+'). Paste a new one to replace it.':'https://discord.com/api/webhooks/…'}"><button class="btn">Save</button>${w.set?`<button type="button" class="btn" data-a="hook-test">Send test</button>`:''}</div></form>
+ <div class="mt">${E.map(([k,t])=>`<div class="pg"><span>${t}</span><button class="tog ${w.events[k]?'on':''}" role="switch" aria-checked="${!!w.events[k]}" aria-label="${t}" data-a="ht" data-k="${k}"></button></div>`).join('')}</div>${w.set?`<button class="btn ghost s mt" data-a="hook-clear">Disconnect Discord</button>`:''}</div>`},
+audit(){return `<div class="card p0 tw">${S.audit.length?`<table><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${S.audit.map(a=>`<tr><td class="sm muted" style="white-space:nowrap">${dtime(a.t)}</td><td class="b sm">${esc(a.user)}</td><td class="sm">${esc(a.text)}</td></tr>`).join('')}</tbody></table>`:empty('Nothing logged yet')}</div>`},
+legal(){return `<div class="card p0">${[['privacy','Privacy Policy','What we collect and why'],['terms','Terms of Service','The rules for using Sentinel'],['cookies','Cookie Policy','The few cookies we use'],['acceptable-use','Acceptable Use','What staff must not do'],['player-notice','Player Notice','Show this to players in your game']].map(([k,t,d])=>`<a href="/legal/${k}" target="_blank" class="row" style="padding:14px 20px;border-bottom:1px solid var(--line);color:var(--ink)"><div class="sp"><b>${t}</b><div class="sm muted">${d}</div></div>${ic('link')}</a>`).join('')}</div>`}
+};
+
+/* ============ dialogs ============ */
+async function moderate(p){
+ const acts=[['warn','Warn','mod.warn'],['kick','Kick','mod.kick'],['mute','Mute','mod.mute'],['ban','Suspend','mod.ban'],['perm','Ban','mod.permban']].filter(a=>P(a[2]));
+ if(!acts.length)return toast('Your rank cannot moderate players','err');
+ const rules=S.rulebook;let chosen=acts[0][0];
+ const v=await drawer({title:'Moderate '+p.name,sub:'Logged to their logbook and applied in game within seconds.',ok:'Apply',danger:true,
+  html:`${rules.length?`<label class="lab">Rule broken${tip('Pick the rule so the punishment follows your ladder and the logbook shows why.')}</label><select class="inp" name="rule"><option value="">None, I'll choose the action</option>${rules.map(r=>`<option value="${r.id}">${esc(r.title)}</option>`).join('')}</select><div id="escb"></div>`:''}
+  <div id="man"><label class="lab">Action</label><div class="seg" id="aseg">${acts.map((a,i)=>`<button type="button" data-v="${a[0]}" class="${i?'':'on'}">${a[1]}</button>`).join('')}</div>
+  <div id="durw" hidden><label class="lab">Length</label><div class="row"><input class="inp" name="dur" type="number" min="1" value="1" style="width:100px"><select class="inp" name="unit" style="width:120px"><option value="60">hours</option><option value="1440">days</option><option value="1">minutes</option></select></div></div></div>
+  <label class="lab">Details ${rules.length?'<span class="muted">(optional with a rule)</span>':''}</label><textarea class="inp" name="reason" placeholder="What happened?"></textarea>`,
+  mount(f){const seg=$('#aseg',f),dw=$('#durw',f),sel=$('select[name=rule]',f);
+   const upd=()=>{dw.hidden=!['mute','ban'].includes(chosen)};
+   seg.onclick=e=>{const b=e.target.closest('button');if(!b)return;chosen=b.dataset.v;$$('button',seg).forEach(x=>x.classList.toggle('on',x===b));upd()};upd();
+   if(sel)sel.onchange=async()=>{const box=$('#escb',f);$('#man',f).hidden=!!sel.value;if(!sel.value){box.innerHTML='';return}box.innerHTML='<div class="esc">Checking their history…</div>';
+    const r=await api(`/api/escalation?userId=${p.userId}&rule=${sel.value}`);if(r.error){box.innerHTML='';return}
+    const s=r.step,lbl={warn:'a warning',kick:'a kick',mute:'a '+fmin(s.minutes)+' mute',ban:s.minutes?'a '+fmin(s.minutes)+' suspension':'a permanent ban'}[s.type];
+    box.innerHTML=`<div class="esc"><b>Offense #${r.offense}</b> under this rule, so they'll receive <b>${lbl}</b>.</div>`};
+   return()=>({action:chosen})},
+  check:v=>!v.rule&&!String(v.reason||'').trim()?'Add some details so your team knows what happened':''});
+ if(!v)return;
+ const body={userId:p.userId,name:p.name,reason:v.reason};
+ if(v.rule)body.ruleId=v.rule;else{body.action=v.action==='perm'?'ban':v.action;body.minutes=v.action==='perm'?0:['mute','ban'].includes(v.action)?Math.round(+v.dur*+v.unit):0}
+ const r=await api('/api/action',body);if(bad(r))return;
+ const a=r.applied||{action:body.action};toast(({warn:'Warning sent',kick:'Kick sent',mute:'Muted',ban:a.minutes?'Suspended':'Banned'})[a.action]||'Done');refresh()}
+async function rankEditor(r){
+ const groups={};S.perms.forEach(p=>(groups[p.group]||=[]).push(p));const mine=new Set(S.me.perms);const cur=r||{name:'',color:COLORS[2],perms:[],quota:0,limit:0};
+ const v=await drawer({title:r?'Edit '+r.name:'New rank',sub:'Ranks decide what people can do. New ranks start at the bottom.',ok:r?'Save rank':'Create rank',
+  html:`<label class="lab">Name</label><input class="inp" name="name" maxlength="32" value="${esc(cur.name)}" placeholder="Senior Moderator" required>
+  <label class="lab">Color</label><div class="sw">${COLORS.map(c=>`<label style="background:${c}"><input type="radio" name="color" value="${c}" ${c===cur.color?'checked':''}><i></i></label>`).join('')}</div>
+  <div class="grid g2" style="gap:12px"><div><label class="lab">Weekly in-game goal${tip('Minutes in game each week members of this rank should reach. 0 means no goal.')}</label><div class="row"><input class="inp" type="number" min="0" name="quota" value="${cur.quota||0}"><span class="sm muted" style="white-space:nowrap">min</span></div></div><div><label class="lab">Action limit${tip('The most punishments this rank may hand out in an hour. 0 means no limit.')}</label><div class="row"><input class="inp" type="number" min="0" name="limit" value="${cur.limit||0}"><span class="sm muted" style="white-space:nowrap">per hour</span></div></div></div><div class="hint">0 means no goal or no limit. The limit counts warns, kicks, mutes and bans.</div>
+  <label class="lab" style="margin-top:22px">Permissions${tip('Choose exactly what people with this rank are allowed to do.')}</label>${Object.entries(groups).map(([g,ps])=>`<div class="xs muted b" style="text-transform:uppercase;letter-spacing:.05em;margin:14px 0 2px">${g}</div>${ps.map(p=>`<label class="chk" style="${mine.has(p.id)?'':'opacity:.45'}"><input type="checkbox" name="perm" value="${p.id}" ${cur.perms.includes(p.id)?'checked':''} ${mine.has(p.id)?'':'disabled'}><span>${esc(p.label)} ${p.danger?'<span class="bdg wa">Elevated</span>':''}</span></label>`).join('')}`).join('')}
+  ${r?`<div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)"><button type="button" class="btn red s" data-del>Delete rank</button></div>`:''}`,
+  mount(f){const d=$('[data-del]',f);if(d)d.onclick=async()=>{const x=await api('/api/ranks',{op:'delete',id:r.id});if(!bad(x)){$('#dw .scrim').click();toast('Rank deleted');refresh()}}}});
+ if(!v)return;const perms=[].concat(v.perm||[]);
+ const x=await api('/api/ranks',{op:r?'update':'create',id:r&&r.id,name:v.name,color:v.color,quota:+v.quota,limit:+v.limit,perms});if(!bad(x)){toast(r?'Rank saved':'Rank created');refresh()}}
+async function ruleEditor(r){
+ const cur=r||{title:'',desc:'',severity:'medium',steps:[{type:'warn',minutes:0},{type:'kick',minutes:0},{type:'ban',minutes:1440}]};
+ const stepRow=s=>`<div class="row st" style="margin-top:8px"><select class="inp" name="st_type" style="width:130px">${[['warn','Warn'],['kick','Kick'],['mute','Mute'],['ban','Suspend / ban']].map(([k,t])=>`<option value="${k}" ${s.type===k?'selected':''}>${t}</option>`).join('')}</select><input class="inp" type="number" min="0" name="st_min" value="${s.minutes||0}" style="width:100px" title="Minutes (0 = permanent ban)"><span class="xs muted">min</span><button type="button" class="btn s" data-rm aria-label="Remove step">${ic('x')}</button></div>`;
+ const v=await drawer({title:r?'Edit rule':'New rule',sub:'Each offense moves to the next step. The last step repeats.',ok:'Save rule',
+  html:`<label class="lab">Title</label><input class="inp" name="title" maxlength="60" value="${esc(cur.title)}" placeholder="Spamming chat" required>
+  <label class="lab">Description</label><textarea class="inp" name="desc" maxlength="400" placeholder="What counts as breaking this rule?">${esc(cur.desc)}</textarea>
+  <label class="lab">Severity${tip('How serious breaking this rule is. Helps staff decide how strict to be.')}</label><select class="inp" name="severity">${['low','medium','high','critical'].map(s=>`<option value="${s}" ${cur.severity===s?'selected':''}>${s[0].toUpperCase()+s.slice(1)}</option>`).join('')}</select>
+  <label class="lab">Punishment ladder${tip('What happens on a first, second and third offence of this rule.')}</label><div class="hint" style="margin:0 0 4px">For mute and suspend, set the length in minutes (1440 is a day). A ban with 0 minutes is permanent.</div><div id="stl">${cur.steps.map(stepRow).join('')}</div><button type="button" class="btn s" style="margin-top:10px" data-add>${ic('plus')}Add step</button>
+  ${r?`<div style="margin-top:22px;padding-top:16px;border-top:1px solid var(--line)"><button type="button" class="btn red s" data-del>Delete rule</button></div>`:''}`,
+  mount(f){$('[data-add]',f).onclick=()=>{if($$('.st',f).length<8)$('#stl',f).insertAdjacentHTML('beforeend',stepRow({type:'warn',minutes:0}))};$('#stl',f).onclick=e=>{if(e.target.closest('[data-rm]')&&$$('.st',f).length>1)e.target.closest('.st').remove()};
+   const d=$('[data-del]',f);if(d)d.onclick=async()=>{const x=await api('/api/rulebook',{op:'delete',id:r.id});if(!bad(x)){$('#dw .scrim').click();toast('Rule deleted');refresh()}}}});
+ if(!v)return;const types=[].concat(v.st_type||[]),mins=[].concat(v.st_min||[]);
+ const x=await api('/api/rulebook',{op:'save',id:r&&r.id,title:v.title,desc:v.desc,severity:v.severity,steps:types.map((t,i)=>({type:t,minutes:+mins[i]||0}))});if(!bad(x)){toast('Rule saved');refresh()}}
+
+/* ============ command palette ============ */
+let CK=null;
+function cmdItems(q){q=q.trim().toLowerCase();const pages=[['home','Home','home'],['players','Players','players'],['inbox','Inbox','inbox'],['audit','Player audit','audit'],['reports','Reports','flag'],...(P('appeals.review')?[['appeals','Appeals','appeal']]:[]),['logbook','Logbook','book'],['team','Team','team'],['team/ranks','Ranks','team'],['activity','Activity','chart'],['leave','Leave','leave'],['rulebook','Rulebook','rules'],['settings','Settings','gear'],['help','Help and Q&A','help'],['help/feedback','Send feedback','chat'],...(S.me.owner?[['settings/game','Game connection','game']]:[]),['settings/automations','Automations','bolt']];
+ const actions=[P('announce')&&['announce','Send an announcement','bolt'],P('team.manage')&&['invite','Invite a member','plus'],P('rulebook.manage')&&['rule-new','Write a rule','rules'],['loa-new','Request leave','leave'],P('ranks.manage')&&['rank-new','Create a rank','team']].filter(Boolean);
+ const m=s=>!q||s.toLowerCase().includes(q),out=[];
+ const pl=S.players.filter(p=>m(p.name)||m(p.displayName||'')).slice(0,6).map(p=>({sec:'Players online',t:p.displayName||p.name,s:'@'+p.name,icn:'players',run:()=>go('player/'+p.userId)}));
+ out.push(...pl,...actions.filter(a=>m(a[1])).map(a=>({sec:'Actions',t:a[1],icn:a[2],run:()=>act(a[0])})),...pages.filter(p=>m(p[1])).map(p=>({sec:'Go to',t:p[1],icn:p[2],run:()=>go(p[0])})));
+ if(q.length>=3&&/^[\w ]+$/.test(q))out.push({sec:'Roblox',t:`Look up “${q}”`,s:'Find any player',icn:'search',run:()=>lookup(q)});return out}
+function openCk(){if(!S)return;CK={q:'',i:0};renderCk()}
+function renderCk(){const w=$('#ck');if(!CK){w.innerHTML='';w.classList.remove('open');return}const items=cmdItems(CK.q);CK.items=items;CK.i=Math.min(CK.i,Math.max(0,items.length-1));let sec='';
+ const list=items.map((it,i)=>`${it.sec!==sec?(sec=it.sec,`<div class="sec">${esc(sec)}</div>`):''}<button class="${i===CK.i?'on':''}" data-ck="${i}">${ic(it.icn)}${esc(it.t)}${it.s?`<small>${esc(it.s)}</small>`:''}</button>`).join('');
+ const had=$('.ckb input',w);if(had){$('.ckl',w).innerHTML=list||'<div class="empty sm">No matches</div>';return}
+ w.innerHTML=`<div class="scrim"></div><div class="ckb"><input placeholder="Search players, pages and actions…" aria-label="Search"><div class="ckl">${list}</div><div class="ckf"><span>↑↓ to move</span><span>↵ to open</span><span>esc to close</span></div></div>`;w.classList.add('open');
+ const inp=$('input',w);inp.focus();inp.oninput=()=>{CK.q=inp.value;CK.i=0;renderCk()};$('.scrim',w).onclick=closeCk;
+ $('.ckl',w).onclick=e=>{const b=e.target.closest('[data-ck]');if(b){const it=CK.items[+b.dataset.ck];closeCk();it.run()}}}
+function closeCk(){CK=null;renderCk()}
+async function lookup(q){toast('Looking up '+q+'…');const r=await api('/api/lookup?name='+encodeURIComponent(q));if(r._s===404)return toast('No player with that username','err');if(!bad(r)){PROF=r;go('player/'+r.userId)}}
+
+/* ============ actions ============ */
+const codeBox=()=>NEWCODE?`<div class="keybox" style="margin-top:8px"><span class="mono" style="user-select:all;word-break:break-all">${esc(NEWCODE)}</span><button class="btn s" data-a="key-copy">${ic('copy')}Copy</button></div><div class="xs muted" style="margin-top:6px">Shown once. Copy it now: after you leave this page it can't be shown again, only replaced.</div>`:`<div class="muted sm" style="margin-top:8px">Your code is hidden for security. If you lost it, make a new one (this stops the old one working).</div><div class="row mt"><button class="btn s" data-a="key-rotate">Generate a new code</button></div>`;
+async function copyScript(){try{const t=await (await fetch('/api/bridge')).text();await navigator.clipboard.writeText(t);toast('Script copied')}catch{toast('Could not copy. Use Download instead.','err')}}
+let obT=null;async function pollOb(){clearTimeout(obT);if(!OB||OB.step!=='connect'||OB.ok)return;const s=await api('/api/state');if(s.connected){OB.ok=1;SETUP=await api('/api/setup');render();return}obT=setTimeout(pollOb,3000)}
+async function obStep(st){OB.step=st;if(!SETUP||SETUP.error)SETUP=await api('/api/setup');render();if(st==='connect')pollOb()}
+async function act(a,el){const d=el?el.dataset:{};
+ if(a==='announce'){const v=await drawer({center:1,title:'Announce to every server',sub:'Shows a banner to all players right now.',ok:'Send',html:`<textarea class="inp" name="t" maxlength="200" placeholder="Server restarting in 5 minutes" required></textarea>`,check:v=>v.t.trim()?'':'Write a message'});if(v){const r=await api('/api/action',{action:'announce',reason:v.t});if(!bad(r)){toast('Announcement sent');refresh()}}}
+ else if(a==='invite'){const opts=S.ranks.filter(r=>below(r.pos));if(!opts.length)return toast('There are no ranks below yours','err');
+  const v=await drawer({title:'Invite a member',sub:'They sign in with Google or Roblox. The link works once and expires in 7 days.',ok:'Create link',html:`<label class="lab">Rank</label><select class="inp" name="rank">${opts.reverse().map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select>`});
+  if(v){const r=await api('/api/team',{op:'invite',rank:v.rank});if(!bad(r)){try{await navigator.clipboard.writeText(r.link);toast('Invite link copied')}catch{toast('Invite created')}await refresh();if(route.page==='team'&&route.tab!=='invites')go('team/invites')}}}
+ else if(a==='rule-new')ruleEditor(null);else if(a==='rank-new')rankEditor(null);
+ else if(a==='loa-new'){const t=new Date().toISOString().slice(0,10);const v=await drawer({title:'Request leave',sub:'Your activity goal pauses while your leave is approved and active.',ok:'Send request',html:`<div class="grid g2" style="gap:12px"><div><label class="lab">From</label><input class="inp" type="date" name="start" value="${t}" min="${t}" required></div><div><label class="lab">Until</label><input class="inp" type="date" name="end" min="${t}" required></div></div><label class="lab">Reason</label><textarea class="inp" name="reason" maxlength="300" placeholder="Exams, holiday, need a break…"></textarea>`,check:v=>!v.end?'Pick an end date':''});
+  if(v){const r=await api('/api/loa',{op:'request',...v});if(!bad(r)){toast('Leave requested');refresh()}}}
+}
+
+// hover hints: one floating box, kept inside the screen
+(function(){let box=null;const hide=()=>{if(box)box.classList.remove('on')};
+ const show=el=>{if(!box){box=document.createElement('div');box.id='tipbox';box.setAttribute('aria-hidden','true');document.body.append(box)}
+  box.textContent=el.dataset.tip;box.style.left='0px';box.style.top='0px';box.classList.add('on');
+  const r=el.getBoundingClientRect(),w=box.offsetWidth,h=box.offsetHeight;let x=r.left+r.width/2-w/2;x=Math.max(8,Math.min(innerWidth-w-8,x));let y=r.top-h-8;if(y<8)y=r.bottom+8;box.style.left=x+'px';box.style.top=y+'px'};
+ document.addEventListener('mouseover',e=>{const t=e.target.closest&&e.target.closest('.tip');if(t)show(t)});
+ document.addEventListener('mouseout',e=>{if(e.target.closest&&e.target.closest('.tip'))hide()});
+ document.addEventListener('focusin',e=>{const t=e.target.closest&&e.target.closest('.tip');if(t)show(t)});
+ document.addEventListener('focusout',hide);document.addEventListener('scroll',hide,true);document.addEventListener('keydown',e=>{if(e.key==='Escape')hide()});
+ document.addEventListener('click',e=>{if(e.target.closest&&e.target.closest('.tip')){e.preventDefault();e.stopPropagation()}},true)})();
+document.addEventListener('input',e=>{const el=e.target.closest('[data-flt]');if(!el)return;const q=el.value.toLowerCase().trim();document.querySelectorAll(el.dataset.flt).forEach(r=>{r.hidden=!!q&&!r.textContent.toLowerCase().includes(q)})});
+document.addEventListener('click',async e=>{
+ const g=e.target.closest('[data-go]');if(g&&!e.target.closest('button,a,select,input')){go(g.dataset.go);return}
+ const el=e.target.closest('[data-a]');const inMenu=e.target.closest('.menu');if(!inMenu&&!(el&&['wsmenu','memenu','pmenu'].includes(el.dataset.a)))closeMenu();
+ if(!el)return;const a=el.dataset.a,d=el.dataset,pp=()=>({userId:+d.uid,name:d.n});
+ if(a==='cmdk')openCk();else if(a==='side'){sideOpen=!sideOpen;$('.side').classList.toggle('open',sideOpen)}
+ else if(a==='wsmenu')menu(el,`<div class="lab2">Workspaces</div>${ME.workspaces.map(w=>`<button data-a="ws-sw" data-id="${w.id}"><span class="logo" style="width:22px;height:22px;font-size:11px;border-radius:6px">${esc(ini(w.name)[0])}</span><span class="sp">${esc(w.name)}<br><span class="xs muted">${w.owner?'Owner':esc(w.rank)}</span></span>${w.id===S.workspace.id?ic('check'):''}</button>`).join('')}<hr>${ME.workspaces.length<ME.maxPerUser?`<button data-a="ws-new">${ic('plus')}New workspace</button>`:''}`);
+ else if(a==='memenu')menu(el,`<div class="lab2">${esc(ME.user.name)}</div>${ME.user.roblox?`<button disabled>${ic('check')}Roblox: @${esc(ME.user.roblox.name)}</button>`:`<button data-a="link">${ic('link')}Link Roblox account</button>`}<a href="#/settings/general">${ic('gear')}Account settings</a><hr><button data-a="signout">${ic('out')}Sign out</button>`);
+ else if(a==='pmenu')menu(el,`<a href="/api/export?userId=${PROF.userId}">${ic('dl')}Export their data</a><button data-a="erase">${ic('x')}Erase their data…</button>`);
+ else if(a==='ws-sw'){closeMenu();SETUP=null;NEWCODE=null;const r=await api('/api/switch',{id:d.id});if(!bad(r)){await loadMe();location.hash='#/';await refresh();toast('Switched workspace')}}
+ else if(a==='ws-new'){closeMenu();OB={step:'name',creating:1};render()}
+ else if(a==='ob-exit'){OB=null;render()}
+ else if(a==='ob')obStep(d.v);
+ else if(a==='ob-done'){clearTimeout(obT);OB=null;NEWCODE=null;await loadMe();await loadState();location.hash='#/';render(true);setTimeout(tour,900)}
+ else if(a==='signout'){closeMenu();await api('/logout',{});await loadMe();S=null;SETUP=null;OB=null;location.hash='';render()}
+ else if(a==='link'){closeMenu();location.href='/auth/roblox?link=1'}
+ else if(a==='unlink'){const r=await api('/api/me/unlink',{});if(!bad(r)){await loadMe();toast('Roblox account unlinked');refresh()}}
+ else if(a==='copy-script')copyScript();
+ else if(a==='key-copy'){try{await navigator.clipboard.writeText(NEWCODE);toast('Code copied')}catch{toast('Could not copy','err')}}
+  else if(a==='key-rotate'){if(await confirmBox('Make a new game code?','The current code stops working at once. You will need to paste the new one into the script in your game.','Make new code')){const r=await api('/api/workspace',{op:'rotatekey'});if(!bad(r)){NEWCODE=r.code;SETUP=await api('/api/setup');toast('New code ready. Copy it now.');render()}}}
+ else if(a==='mod')moderate(pp());
+ else if(a==='points'){const v=await drawer({center:1,title:'Points for '+d.n,ok:'Apply',html:`<label class="lab">Amount</label><input class="inp" type="number" name="amount" value="5" required><div class="hint">Use a minus to remove points.</div><label class="lab">Reason</label><input class="inp" name="reason" maxlength="200" placeholder="Helped a new player" required>`,check:v=>!+v.amount?'Enter an amount':!v.reason.trim()?'Add a reason':''});if(v){const r=await api('/api/action',{action:'points',userId:+d.uid,name:d.n,amount:+v.amount,reason:v.reason});if(!bad(r)){toast('Points updated');refresh()}}}
+ else if(a==='lift'){const r=await api('/api/action',{action:d.k==='ban'?'unban':'unmute',userId:+d.uid,name:d.n,reason:'Lifted from the dashboard'});if(!bad(r)){toast(d.k==='ban'?'Unbanned':'Unmuted');refresh()}}
+ else if(a==='note'){const v=await drawer({center:1,title:'Note on '+PROF.name,sub:'Only staff can see notes.',ok:'Add note',html:`<textarea class="inp" name="t" maxlength="500" placeholder="What should the team know?" required></textarea>`,check:v=>v.t.trim()?'':'Write a note'});if(v){const r=await api('/api/entry',{op:'note',userId:PROF.userId,name:PROF.name,text:v.t});if(!bad(r)){toast('Note added');refresh()}}}
+ else if(a==='revert'){if(await confirmBox('Revert this '+d.t.toLowerCase()+'?','It stays on the record, marked as reverted. Bans and mutes are lifted and points are taken back.','Revert')){const r=await api('/api/entry',{op:'revert',userId:PROF.userId,id:d.id});if(!bad(r)){toast('Reverted');refresh()}}}
+ else if(a==='erase'){closeMenu();if(await confirmBox('Erase '+PROF.name+"'s data?",'Removes their logbook, playtime, points and reports. An active ban is kept so they cannot return. This cannot be undone.','Erase data')){const r=await api('/api/erase',{userId:PROF.userId});if(!bad(r)){toast('Data erased');location.hash='#/players'}}}
+ else if(a==='rule-starter'){const r=await api('/api/rulebook',{op:'starter'});if(!bad(r)){toast('Added 8 starter rules');refresh()}}
+ else if(a==='range'){PT.range=d.v;render()}
+ else if(a==='cf'){PT.cf=d.v;render()}
+ else if(a==='widgets'){const v=await drawer({center:1,title:'Widgets',sub:'Choose what shows on a player\'s audit page. Saved in this browser.',ok:'Save',html:`<div>${WDEF.map(([k,t,x])=>`<label class="gr sw2" style="padding:11px 0"><div class="gt"><b>${t}</b><div class="sm muted">${x}</div></div><input type="checkbox" class="swc" name="${k}" ${wOn(k)?'checked':''}></label>`).join('')}</div>`});if(v){WG=Object.fromEntries(WDEF.map(([k])=>[k,!!v[k]]));try{localStorage.setItem('sentinel_widgets',JSON.stringify(WG))}catch{}render()}}
+ else if(a==='appeals-toggle'){const r=await api('/api/appeals',{op:'toggle',on:!S.appealsOn});if(!bad(r)){toast(S.appealsOn?'Appeals closed':'Appeals open');refresh()}}
+ else if(a==='copy-appeal'){try{await navigator.clipboard.writeText(location.origin+'/appeal/'+S.workspace.id);toast('Link copied')}catch{toast('Could not copy','err')}}
+ else if(a==='appeal'){const acc=d.op==='accept',v=await drawer({center:1,title:(acc?'Accept appeal from ':'Deny appeal from ')+d.n,sub:acc?'They will be unbanned right away.':'They can appeal again after 7 days.',ok:acc?'Accept and unban':'Deny',danger:!acc,html:`<label class="lab">Note (optional)</label><textarea class="inp" name="n" maxlength="300" placeholder="Visible to staff only"></textarea>`});if(v){const r=await api('/api/appeals',{id:d.id,decision:d.op,note:v.n});if(!bad(r)){toast(acc?'Appeal accepted':'Appeal denied');refresh()}}}
+ else if(a==='watch'){const on=!!S.watch[PROF.userId];let reason='';if(!on){const v=await drawer({center:1,title:'Watch '+PROF.name,sub:'You and your team will be told when they join.',ok:'Add to watchlist',html:`<label class="lab">Why? (optional)</label><input class="inp" name="r" maxlength="200" placeholder="Suspected exploiter">`});if(!v)return;reason=v.r}const r=await api('/api/watch',{userId:PROF.userId,name:PROF.name,on:!on,reason});if(!bad(r)){toast(on?'Removed from watchlist':'On your watchlist');refresh()}}
+ else if(a==='ptab'){PT.tab=d.v;render()}else if(a==='pf'){PT.f=d.v;render()}
+ else if(a==='lbf'){LBF.type=d.v;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
+ else if(a==='call'){let note='';if(d.op==='resolve'){const v=await drawer({center:1,title:'Resolve report #'+d.id,ok:'Resolve',html:`<label class="lab">Message to the player (optional)</label><input class="inp" name="note" maxlength="200" placeholder="Thanks, we've dealt with it.">`});if(!v)return;note=v.note}const r=await api('/api/call',{id:+d.id,op:d.op,note});if(!bad(r)){toast(d.op==='claim'?'Claimed. The player has been told.':'Resolved');refresh()}}
+ else if(a==='sess'){if(d.op==='end'&&!await confirmBox('End this session?',S.rules.sessionpoints.enabled?`Everyone present gets ${S.rules.sessionpoints.points} points.`:'Attendance will be saved.','End session',false))return;const r=await api('/api/session',{op:d.op});if(!bad(r)){toast(d.op==='end'?'Session ended':'Everyone in game added');refresh()}}
+ else if(a==='remove'){if(await confirmBox('Remove '+d.n+'?','They lose access to this workspace immediately.','Remove')){const r=await api('/api/team',{op:'remove',uid:d.uid});if(!bad(r)){toast('Removed');refresh()}}}
+ else if(a==='rank-edit')rankEditor(S.ranks.find(r=>r.id===d.id));
+ else if(a==='rank-move'){const r=await api('/api/ranks',{op:'move',id:d.id,dir:d.v});if(!bad(r))refresh()}
+ else if(a==='rule-edit')ruleEditor(S.rulebook.find(r=>r.id===d.id));
+ else if(a==='inv-copy'){try{await navigator.clipboard.writeText(location.origin+'/#/join/'+d.c);toast('Invite link copied')}catch{toast('Could not copy','err')}}
+ else if(a==='inv-revoke'){const r=await api('/api/team',{op:'revoke',code:d.c});if(!bad(r)){toast('Invite revoked');refresh()}}
+ else if(a==='loa-ok'||a==='loa-no'){const v=await drawer({center:1,title:(a==='loa-ok'?'Approve':'Deny')+' leave',ok:a==='loa-ok'?'Approve':'Deny',danger:a==='loa-no',html:`<label class="lab">Note (optional)</label><input class="inp" name="note" maxlength="200">`});if(v){const r=await api('/api/loa',{op:'decide',id:d.id,approve:a==='loa-ok',note:v.note});if(!bad(r)){toast(a==='loa-ok'?'Approved':'Denied');refresh()}}}
+ else if(a==='loa-cancel'){const r=await api('/api/loa',{op:'cancel',id:d.id});if(!bad(r)){toast('Cancelled');refresh()}}
+ else if(a==='rt'){const r=S.rules[d.id];const x=await api('/api/rules',{id:d.id,enabled:!r.enabled,params:r});if(!bad(x)){toast(r.enabled?'Turned off':'Turned on');refresh()}}
+ else if(a==='ht'){const ev={...S.webhook.events,[d.k]:!S.webhook.events[d.k]};const x=await api('/api/webhook',{op:'save',events:ev});if(!bad(x))refresh()}
+ else if(a==='hook-test'){const x=await api('/api/webhook',{op:'test'});if(!bad(x))toast('Test sent to Discord')}
+ else if(a==='hook-clear'){const x=await api('/api/webhook',{op:'save',url:''});if(!bad(x)){toast('Discord disconnected');refresh()}}
+ else if(a==='ws-leave'){if(await confirmBox('Leave this workspace?','You will lose access until someone invites you again.','Leave')){const r=await api('/api/team',{op:'leave'});if(!bad(r)){S=null;await loadMe();location.hash='#/';await refresh()}}}
+  else if(a==='bk-now'){const r=await api('/api/backups',{op:'now'});if(!bad(r)){toast('Backup saved');refresh()}}
+ else if(a==='bk-restore'){const id=d.id,v=await drawer({center:1,title:'Restore this backup?',sub:'Everything in the workspace goes back to how it was then. Newer changes are lost, but a safety copy is saved first.',ok:'Restore',danger:true,html:`<label class="lab">Type <b>${esc(S.workspace.name)}</b> to confirm</label><input class="inp" name="c" autocomplete="off" required>`,check:v=>v.c!==S.workspace.name?'The name does not match':''});if(v){const r=await api('/api/backups',{op:'restore',id,confirm:v.c});if(!bad(r)){toast('Workspace restored');await loadMe();refresh()}}}
+ else if(a==='bk-import'){const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';inp.onchange=async()=>{const f=inp.files[0];if(!f)return;if(f.size>3.5e6){toast('That file is too big to be a Sentinel backup.','err');return}let data;try{data=JSON.parse(await f.text())}catch{toast('That file could not be read.','err');return}
+  const v=await drawer({center:1,title:'Restore from '+f.name+'?',sub:'This replaces everything in the workspace with the contents of the file. A safety copy is saved first.',ok:'Replace workspace',danger:true,html:`<label class="lab">Type <b>${esc(S.workspace.name)}</b> to confirm</label><input class="inp" name="c" autocomplete="off" required>`,check:v=>v.c!==S.workspace.name?'The name does not match':''});if(v){const r=await api('/api/backup/import',{data,confirm:v.c});if(!bad(r)){toast('Workspace restored');await loadMe();refresh()}}};inp.click()}
+ else if(a==='ws-del'){const v=await drawer({center:1,title:'Delete '+S.workspace.name+'?',sub:'Everyone loses access now. It is kept for 30 days, then erased for good.',ok:'Delete workspace',danger:true,html:`<label class="lab">Type <b>${esc(S.workspace.name)}</b> to confirm</label><input class="inp" name="c" autocomplete="off" required>`,check:v=>v.c!==S.workspace.name?'The name does not match':''});if(v){const r=await api('/api/workspace',{op:'delete',confirm:v.c});if(!bad(r)){S=null;SETUP=null;await loadMe();toast('Workspace deleted. It can be restored for 30 days.');location.hash='#/';await refresh()}}}
+ else if(a==='join-yes'){const r=await api('/api/join',{code:JOIN.code});if(!bad(r)){JOIN=null;history.replaceState(null,'','#/');await loadMe();await refresh();toast('Welcome to the team')}}
+ else if(a==='join-no'){JOIN=null;history.replaceState(null,'','#/');render()}
+ else act(a,el);
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
-const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
+document.addEventListener('change',async e=>{const el=e.target.closest('[data-a]');if(!el)return;const d=el.dataset;
+ if(d.a==='setrank'){const r=await api('/api/team',{op:'setrank',uid:d.uid,rank:el.value});if(!bad(r)){toast('Rank updated')}refresh()}
+ else if(d.a==='rp'){const r={...S.rules[d.id]};r[d.k]=el.type==='number'?+el.value:el.value;const x=await api('/api/rules',{id:d.id,enabled:r.enabled,params:r});if(!bad(x)){toast('Saved');await loadState()}}});
+document.addEventListener('submit',async e=>{const f=e.target.closest('[data-f]');if(!f)return;e.preventDefault();const k=f.dataset.f,v=Object.fromEntries(new FormData(f));
+ if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;NEWCODE=r.code||null;await loadMe();SETUP=null;await loadState();obStep('script')}
+ else if(k==='ob-place'){if(v.placeId){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(bad(r))return}obStep('connect')}
+ else if(k==='lookup'){lookup(v.q.trim())}
+ else if(k==='lbq'){LBF.q=v.q;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
+ else if(k==='sess'){const r=await api('/api/session',{op:'start',type:v.type,notes:v.notes});if(!bad(r)){toast('Session started and announced');refresh()}}
+ else if(k==='feedback'){const b=$('button',f);b.disabled=true;const r=await api('/api/feedback',{type:v.type,text:v.text,page:route.page});b.disabled=false;if(!bad(r)){toast('Thank you. We read every message.');FBL=await api('/api/feedback');render()}}
+ else if(k==='rename'){const r=await api('/api/workspace',{op:'rename',name:v.name});if(!bad(r)){toast('Saved');await loadMe();refresh()}}
+ else if(k==='place'){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(!bad(r)){toast('Place settings saved');refresh()}}
+ else if(k==='words'){const r=await api('/api/flagwords',{words:v.w.split(',')});if(!bad(r)){toast('Words saved');refresh()}}
+ else if(k==='quota'){const r=await api('/api/settings',{quotaMinutes:+v.m});if(!bad(r)){toast('Saved');refresh()}}
+ else if(k==='hook'){if(!v.url.trim())return toast('Paste a webhook URL first','err');const r=await api('/api/webhook',{op:'save',url:v.url.trim()});if(!bad(r)){toast('Discord connected');refresh()}}});
+document.addEventListener('keydown',e=>{
+ if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();CK?closeCk():openCk();return}
+ if(CK){if(e.key==='Escape')closeCk();else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();CK.i=Math.max(0,Math.min(CK.items.length-1,CK.i+(e.key==='ArrowDown'?1:-1)));renderCk();const b=$('.ckl .on');if(b)b.scrollIntoView({block:'nearest'})}else if(e.key==='Enter'){const it=CK.items[CK.i];if(it){closeCk();it.run()}}return}
+ if(e.key==='Escape'){closeMenu();return}
+ const t=e.target,typing=t&&(/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)||t.isContentEditable);if(typing||e.metaKey||e.ctrlKey||e.altKey||!S||OB||dwOpen())return;
+ if(e.key==='?'){e.preventDefault();shortcuts();return}if(e.key==='/'){e.preventDefault();openCk();return}
+ if(GK&&Date.now()-GK<1200){const m={h:'home',i:'inbox',p:'players',r:'reports',a:'appeals',l:'logbook',t:'team',s:'settings',q:'help'}[e.key];GK=0;if(m){e.preventDefault();go(m)}return}
+ if(e.key==='g')GK=Date.now()});
+let GK=0;
+function shortcuts(){const rows=[['⌘ K  or  /','Search anything'],['g then h','Home'],['g then i','Inbox'],['g then p','Players'],['g then r','Reports'],['g then a','Appeals'],['g then l','Logbook'],['g then t','Team'],['g then s','Settings'],['g then q','Help and Q&A'],['?','Show this list']];
+ drawer({center:1,title:'Keyboard shortcuts',sub:'Press these anywhere in the dashboard.',ok:'Done',html:`<div>${rows.map(([k,t])=>`<div class="pg"><span>${t}</span><span>${k.split(/(\sor\s|\sthen\s)/).map(x=>/^\s(or|then)\s$/.test(x)?`<span class="xs muted"> ${x.trim()} </span>`:`<span class="kbd">${esc(x.trim())}</span>`).join('')}</span></div>`).join('')}</div>`})}
+function tour(){let seen=true;try{seen=!!localStorage.getItem('sentinel_tour4')}catch{}if(seen||!S||OB||dwOpen())return;try{localStorage.setItem('sentinel_tour4','1')}catch{}
+ drawer({center:1,title:'Welcome to Sentinel',sub:'Four things worth knowing.',ok:'Start moderating',html:`<div class="col" style="gap:14px">${[['search','Search anything','Press Ctrl K or / to find players, pages and actions.'],['inbox','Check your Inbox','Open reports, appeals, leave and watched players, all in one place.'],['eye','Watch trouble makers','Open a player and press Watch. You will be told when they join.'],['bolt','Jump with the keyboard','Press ? to see every shortcut.']].map(([i,t,x])=>`<div class="row" style="align-items:flex-start;gap:12px"><span class="appi sm">${ic(i)}</span><div><b>${t}</b><div class="sm muted">${x}</div></div></div>`).join('')}</div>`})}
 
-// ---- storage ----
-const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
-  bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {} });
-const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 };
-let FB = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
-const CTX = { uid: null, wid: null };
-const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
-const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
-const save = () => {};
-const pruneCalls = () => { const cut = Date.now() - cfg.callRetentionDays * 864e5; D.calls = D.calls.filter(c => c.t > cut); };
-const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch'];
-const ROWS = {
-  core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
-  logs: { get: () => D.logs, set: v => { D.logs = v; } },
-  calls: { get: () => D.calls, set: v => { D.calls = v; } },
-  play: { get: () => D.play, set: v => { D.play = v; } },
-  live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
-  cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
-  chat: { get: () => ({ chat: R.chat, flagCount: R.flagCount }), set: v => { R.chat = v.chat || []; R.flagCount = v.flagCount || {}; } },
-  user: { get: () => U, set: v => { U = v; } },
-  ...Object.fromEntries([...Array(16).keys()].map(i => ['h' + i, { get: () => (D.hist[i] ||= {}), set: v => { D.hist[i] = v || {}; } }])), // per-player playtime history, split in 16 rows so each save stays small
-  glob: { get: () => G, set: v => { G = v; } },
-  fb: { get: () => FB, set: v => { FB = Array.isArray(v) ? v : []; } }, // feedback and questions from every workspace, answered from the admin page
-};
-const phys = k => k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
-const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
-  '/api/action': ['logs', 'play', 'cmds'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls'], '/api/backup/import': ['logs', 'play', 'calls'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'] };
-const loaded = {};
-const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
-const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
-function resetState() {
-  for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
-  for (const k of Object.keys(loaded)) delete loaded[k];
-}
-async function need(...keys) {
-  const want = [...new Set(keys)].filter(k => !(k in loaded)); if (!want.length) return;
-  const pk = Object.fromEntries(want.map(k => [k, phys(k)]));
-  const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,value,version&key=in.(${Object.values(pk).join(',')})`, { headers: sbHeaders() });
-  if (!r.ok) throw new Error(`Supabase read failed: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
-  const rows = Object.fromEntries((await r.json()).map(x => [x.key, x]));
-  for (const k of want) {
-    const row = rows[pk[k]]; if (row) ROWS[k].set(row.value);
-    loaded[k] = { pk: pk[k], ver: row ? row.version : 0, snap: JSON.stringify(ROWS[k].get()) };
-    if (k === 'calls') pruneCalls();
-    if (k === 'chat') R.chat = R.chat.filter(m => Date.now() - m.t < CHAT_MS);
-    if (k === 'core') migrate();
-  }
-}
-async function commit() {
-  const changes = [];
-  for (const [k, l] of Object.entries(loaded)) { const v = ROWS[k].get(); if (JSON.stringify(v) !== l.snap) changes.push({ key: l.pk, expect: l.ver, value: v }); }
-  if (!changes.length) return true;
-  const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes }) });
-  if (!r.ok) throw new Error(`Supabase save failed: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
-  return (await r.json()) === true;
-}
-async function sendHooks() { // Discord notifications, only after the change was saved
-  await Promise.all(HOOKS.splice(0).map(h => fetch(h.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(h.body), signal: AbortSignal.timeout(3000) }).catch(() => {})));
-}
-function migrate() { // bring older workspaces up to date
-  if (!D.meta) return;
-  if (!D.ranks || !Object.keys(D.ranks).length) D.ranks = defaultRanks();
-  const map = { helper: 'helper', moderator: 'mod', admin: 'admin' };
-  for (const m of Object.values(D.members)) if (!m.rank || !D.ranks[m.rank]) { m.rank = map[m.role] && D.ranks[map[m.role]] ? map[m.role] : Object.keys(D.ranks)[0]; delete m.role; }
-  for (const i of Object.values(D.invites)) if (!i.rank) { i.rank = map[i.role] || 'helper'; delete i.role; }
-  D.appeals ||= []; D.watch ||= {};
-  if (D.webhook && D.webhook.events) for (const k of ['appeals', 'watch']) if (!(k in D.webhook.events)) D.webhook.events[k] = true;
-  if (!D.meta.v4) { D.meta.v4 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('mod.unban') && !r.perms.includes('appeals.review')) r.perms.push('appeals.review'); }
-  D.rulebook ||= []; D.loa ||= []; if (!D.daily || Array.isArray(D.daily)) D.daily = {};
-}
-
-// ---- who is asking, and what may they do? ----
-function who(uid) {
-  const m = D.members[uid]; if (!m) return null;
-  const owner = D.meta.owner === uid, r = D.ranks[m.rank];
-  return { uid, user: m.name, isOwner: owner, rank: m.rank, pos: owner ? 1e9 : (r ? r.pos : 0), perms: new Set(owner ? ALLP : (r ? r.perms : [])), limit: owner ? 0 : (r ? r.limit || 0 : 0) };
-}
-const has = (u, p) => !!u && u.perms.has(p);
-const memberPos = id => id === D.meta.owner ? 1e9 : (D.ranks[(D.members[id] || {}).rank] || { pos: 0 }).pos;
-const above = (u, pos) => u.isOwner || u.pos > pos; // you can only manage ranks and people below you
-const deny = res => send(res, 403, { error: 'Your rank does not allow that.' });
-const ownerOnly = res => send(res, 403, { error: 'Only the workspace owner can do that.' });
-const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(+v) || 0));
-
-// ---- game logic ----
-const live = o => !o.expires || o.expires > Date.now();
-const feed = (text, by) => { D.feed.unshift({ t: Date.now(), text }); D.feed.length = Math.min(D.feed.length, 50); if (by) audit(by, text); };
-const audit = (user, text) => { D.audit.unshift({ t: Date.now(), user, text }); D.audit.length = Math.min(D.audit.length, 300); };
-const DEFAULT_RULES = {
-  autosuspend: { enabled: true, warns: 3, minutes: 5 }, sessionpoints: { enabled: true, points: 5 },
-  flaggedmute: { enabled: false, count: 3, minutes: 5 }, welcome: { enabled: false, text: 'Welcome! Moderators are keeping this game friendly.' },
-};
-const rule = id => ({ ...DEFAULT_RULES[id], ...(D.rules[id] || {}) });
-const weekStart = now => { const d = new Date(now); d.setUTCHours(0, 0, 0, 0); return d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5; };
-const dayKey = t => new Date(t).toISOString().slice(0, 10);
-const daily = () => { const k = dayKey(Date.now()), d = (D.daily[k] ||= { j: 0, p: 0, u: 0, a: 0, r: 0 }), ks = Object.keys(D.daily).sort(); if (ks.length > 35) for (const x of ks.slice(0, ks.length - 35)) delete D.daily[x]; return d; };
-const fmtMin = m => !m ? 'Permanent' : m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m / 144) / 10} ${Math.round(m / 144) / 10 === 1 ? 'day' : 'days'}`;
-const SH = 16, shOf = id => 'h' + (id % SH), phist = id => ((D.hist[id % SH] ||= {})[id] ||= { d: {}, j: [] });
-const closeSession = h => { if (h.cur) { if (h.cur.s >= 5) { h.j.push([h.cur.t, Math.round(h.cur.s), h.cur.sv]); if (h.j.length > 40) h.j.shift(); } h.cur = null; } };
-const playOf = (userId, name) => (D.play[userId] ||= { name, total: 0, week: 0, weekStart: 0, points: 0 });
-function tick(p, dt, now) {
-  const u = playOf(p.userId, p.name), ws = weekStart(now), dk = dayKey(now); u.name = p.name;
-  if (u.weekStart !== ws) { u.weekStart = ws; u.week = 0; }
-  u.total += dt; u.week += dt; if (u.day !== dk) { u.day = dk; daily().u++; }
-  const h = phist(p.userId), di = Math.floor(now / 864e5);
-  if (h.cur && now - h.cur.last > 120000) closeSession(h); // the game stopped reporting this player without a leave event
-  if (!h.cur) h.cur = { t: now, s: 0, sv: p.sv || '', last: now };
-  h.cur.s += dt; h.cur.last = now; h.d[di] = Math.round(((h.d[di] || 0) + dt) * 10) / 10;
-  if (!h.pr || h.pr !== ws) { h.pr = ws; for (const k of Object.keys(h.d)) if (+k < di - 182) delete h.d[k]; }
-}
-const cmd = c => R.cmds.push({ id: R.nextId++, t: Date.now(), seen: {}, ...c });
-const MOD_TYPES = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'];
-function logEntry(userId, name, e) {
-  const list = (D.logs[userId] ||= []), x = { id: rnd(6), name, status: 'active', time: Date.now(), ...e };
-  list.push(x); if (list.length > 500) list.splice(0, list.length - 500);
-  if (MOD_TYPES.includes(x.type)) daily().a++;
-  return x;
-}
-function notify(ev, title, desc, fields = [], color = 0x635bff) {
-  const w = D.webhook; if (!w || !w.url || !w.events || !w.events[ev]) return;
-  HOOKS.push({ url: w.url, body: { username: 'Sentinel', allowed_mentions: { parse: [] }, embeds: [{ title: String(title).slice(0, 250), description: String(desc || '').slice(0, 1000), color,
-    fields: fields.filter(f => f[1]).map(([n, v]) => ({ name: n, value: String(v).slice(0, 200), inline: true })), footer: { text: D.meta ? D.meta.name : 'Sentinel' }, timestamp: new Date().toISOString() }] } });
-}
-function addPoints(userId, name, amount, reason, by, byUid = null) {
-  playOf(userId, name).points += amount;
-  logEntry(userId, name, { type: 'Points', amount, reason: `${amount > 0 ? '+' : ''}${amount}: ${reason}`, by, byUid });
-  feed(`Points ${amount > 0 ? '+' : ''}${amount} for ${name} (${reason})`, by);
-  cmd({ type: 'message', kind: amount > 0 ? 'ok' : undefined, userId, text: `${amount > 0 ? 'You earned' : 'You lost'} ${Math.abs(amount)} points: ${reason}` });
-}
-function allPlayers() {
-  const now = Date.now(), out = [];
-  for (const [j, s] of Object.entries(R.servers)) { if (now - s.last > LIVE_MS) continue; for (const p of s.players) out.push({ ...p, server: j.slice(0, 8) }); }
-  return out;
-}
-function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null }) {
-  const expires = minutes > 0 ? Date.now() + minutes * 60000 : null;
-  const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId }); feed(`${type}: ${name} (${reason})`, by); return e; };
-  if (action === 'ban') {
-    const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
-    cmd({ type: 'ban', userId, reason, seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
-  } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); cmd({ type: 'unban', userId }); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
-  else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id }; }
-  else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
-  else if (action === 'kick') { D.stats.kicks++; log('Kicked'); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
-  else if (action === 'warn') {
-    log('Warned'); cmd({ type: 'message', userId, text: 'Warning: ' + reason }); notify('warns', `Warned ${name}`, reason, [['By', by]], 0xffc53d);
-    let n = 0; // active warnings since the last suspension or ban
-    for (const e of [...D.logs[userId]].reverse()) { if (e.status === 'reverted') continue; if (e.type === 'Suspended' || e.type === 'Banned') break; if (e.type === 'Warned') n++; }
-    const r = rule('autosuspend');
-    if (r.enabled && n >= r.warns) act({ action: 'ban', userId, name, reason: `Automatic: ${r.warns} warnings`, minutes: r.minutes, by: 'Automation' });
-  }
-}
-function sync(b) {
-  const now = Date.now(), id = String(b.jobId || 'studio').slice(0, 64), prev = R.servers[id], dt = prev ? Math.min((now - prev.last) / 1000, 30) : 0;
-  const players = (Array.isArray(b.players) ? b.players : []).slice(0, 200).filter(p => p && Number.isInteger(p.userId) && p.userId > 0)
-    .map(p => ({ userId: p.userId, name: String(p.name || p.userId).slice(0, 40), displayName: String(p.displayName || p.name || '').slice(0, 40) }));
-  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now };
-  for (const [j, sv] of Object.entries(R.servers)) if (now - sv.last > 6e4) delete R.servers[j];
-  for (const p of players) tick({ ...p, sv: id.slice(0, 8) }, dt, now);
-  for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 100)) {
-    if (!e) continue;
-    const text = String(e.text || '').slice(0, 200), name = String(e.name || '?').slice(0, 40), uid = Number.isInteger(e.userId) ? e.userId : 0;
-    if (e.type === 'join') { D.stats.joins++; daily().j++; feed(`${name} joined`); if (D.watch[uid]) { feed(`Watchlist: ${name} joined (${D.watch[uid].reason || 'no reason'})`); notify('watch', `Watched player joined: ${name}`, D.watch[uid].reason || '', [['Server', String(b.jobId || '').slice(0, 8)]], 0xffc53d); } const w = rule('welcome'); if (w.enabled) cmd({ type: 'message', kind: 'info', userId: uid, text: w.text }); if (uid) { const h = phist(uid); if (h.cur && h.cur.s >= 5) { closeSession(h); h.cur = { t: now, s: 0, sv: id.slice(0, 8), last: now }; } } }
-    else if (e.type === 'leave') { feed(`${name} left`); if (uid) closeSession(phist(uid)); }
-    else if (e.type === 'chat') { // rolling buffer: latest 300 messages, at most 24 hours
-      const flagged = D.flagWords.some(w => text.toLowerCase().includes(w));
-      R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged }); if (R.chat.length > 300) R.chat.shift();
-      if (flagged) {
-        feed(`Flagged chat from ${name}: ${text}`);
-        const r = rule('flaggedmute');
-        if (r.enabled && (R.flagCount[uid] = (R.flagCount[uid] || 0) + 1) >= r.count) { R.flagCount[uid] = 0; act({ action: 'mute', userId: uid, name, reason: 'Automatic: repeated flagged chat', minutes: r.minutes, by: 'Automation' }); }
-      }
-    } else if (e.type === 'attend' && D.session) {
-      D.session.attendees[uid] = name; cmd({ type: 'message', kind: 'ok', userId: uid, text: `You are marked present for ${D.session.type}.` });
-    } else if (e.type === 'modcall') {
-      const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || 'No details given', server: id.slice(0, 8), status: 'open', by: null, note: '',
-        chat: R.chat.filter(c => c.jobId === id).slice(-15).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
-      D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
-      feed(`Report #${call.id} from ${name}: ${call.text}`);
-      notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)]], 0x635bff);
-      cmd({ type: 'message', kind: 'ok', userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
-    }
-  }
-  const total = allPlayers().length;
-  if (total > D.stats.peak) D.stats.peak = total;
-  if (total > ((D.daily[dayKey(now)] || {}).p || 0)) daily().p = total;
-  const hist = R.history; if (!hist.length || now - hist[hist.length - 1].t > 6e4) { hist.push({ t: now, n: total }); if (hist.length > 120) hist.shift(); }
-  for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason }); }
-  R.cmds = R.cmds.filter(c => now - c.t < 120000);
-  const out = R.cmds.filter(c => !c.seen[id]); out.forEach(c => c.seen[id] = 1);
-  return { commands: out.map(({ seen, t, ...c }) => c), muted: Object.values(D.mutes).filter(live).map(m => m.userId) };
-}
-
-// ---- Roblox lookups ----
-const AV = new Map(), j = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(4000) }).then(r => r.json());
-async function avatars(ids) {
-  const want = ids.filter(i => !AV.has(i)).slice(0, 100);
-  if (want.length) try { const r = await j(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${want.join(',')}&size=150x150&format=Png`); for (const d of r.data || []) if (d.imageUrl) AV.set(d.targetId, d.imageUrl); } catch {}
-  return Object.fromEntries(ids.filter(i => AV.has(i)).map(i => [i, AV.get(i)]));
-}
-async function findId(name) {
-  try { const r = await j('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [name], excludeBannedUsers: false }) }); const u = r.data && r.data[0]; if (u) return u.id; } catch {}
-  const n = name.toLowerCase(), p = allPlayers().find(p => p.name.toLowerCase() === n); if (p) return p.userId;
-  const k = Object.entries(D.play).find(([, x]) => (x.name || '').toLowerCase() === n); return k ? +k[0] : null;
-}
-function auditExtras(id, online) {
-  const h = (D.hist[id % SH] || {})[id] || { d: {}, j: [] }, now = Date.now(), joins = h.j.slice().reverse().map(([t, s, sv]) => ({ t, s, sv }));
-  if (h.cur && online) joins.unshift({ t: h.cur.t, s: Math.round(h.cur.s), sv: h.cur.sv, live: true });
-  const m = Object.entries(D.members).find(([k, x]) => k === 'r_' + id || String(x.robloxId) === String(id)), muid = m && m[0], r = m && D.ranks[m[1].rank];
-  const byThem = muid ? Object.entries(D.logs).flatMap(([uid, list]) => list.filter(e => e.byUid === muid).map(e => ({ userId: +uid, name: e.name, type: e.type, reason: e.reason, time: e.time, minutes: e.minutes, status: e.status }))).sort((a, b) => b.time - a.time).slice(0, 80) : [];
-  const last = online ? now : joins[0] ? joins[0].t + joins[0].s * 1000 : (D.play[id] && D.play[id].day ? Date.parse(D.play[id].day) : null);
-  return { hist: { days: h.d, joins, today: Math.floor(now / 864e5) }, staff: m ? { rank: D.meta.owner === muid ? 'Owner' : (r ? r.name : 'Staff'), owner: D.meta.owner === muid } : null, byThem, lastSeen: last };
-}
-async function profile(id) {
-  await need(shOf(id));
-  let rb = null; try { const x = await j('https://users.roblox.com/v1/users/' + id); if (x && x.id) rb = x; } catch {}
-  const local = D.play[id], online = allPlayers().find(p => p.userId === id);
-  if (!rb && !local && !online && !D.logs[id]) return null;
-  const ban = D.bans[id], mute = D.mutes[id], ws = weekStart(Date.now());
-  return { userId: id, name: rb ? rb.name : online ? online.name : local ? local.name : 'User ' + id, displayName: rb ? rb.displayName : online ? online.displayName : '', created: rb ? rb.created : null,
-    avatar: (await avatars([id]))[id] || null, online: !!online, server: online ? online.server : null,
-    banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, logbook: (D.logs[id] || []).slice().reverse(),
-    play: local ? { total: Math.round(local.total), week: local.weekStart === ws ? Math.round(local.week) : 0, points: local.points } : null,
-    reports: D.calls.filter(c => c.from.userId === id).slice(0, 20).map(c => ({ id: c.id, t: c.t, text: c.text, status: c.status })),
-    chat: R.chat.filter(m => m.userId === id).slice(-60).reverse(), ...auditExtras(id, online), sessions: D.sessions.filter(s => s.attendees.some(a => a.userId === id)).length };
-}
-
-// ---- backups: daily snapshots, owner downloads, a 30-day recycle bin and a site-admin console ----
-const BK_ROWS = ['core', 'logs', 'play', 'calls'], BK_KEEP_DAYS = 7, TRASH_MS = 30 * 864e5, ADMIN_TOKEN = env.ADMIN_TOKEN || '', CRON_SECRET = env.CRON_SECRET || '';
-const sbGet = async q => { const r = await sbf(`${SB_URL}/rest/v1/panel_kv?${q}`, { headers: sbHeaders() }); if (!r.ok) throw new Error('Supabase read failed: HTTP ' + r.status); return r.json(); };
-const sbUpsert = async rows => { if (!rows.length) return; const r = await sbf(`${SB_URL}/rest/v1/panel_kv?on_conflict=key`, { method: 'POST', headers: { ...sbHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows) }); if (!r.ok) throw new Error('Supabase write failed: HTTP ' + r.status); };
-const sbDel = q => sbf(`${SB_URL}/rest/v1/panel_kv?${q}`, { method: 'DELETE', headers: { ...sbHeaders(), Prefer: 'return=minimal' } });
-const bkDay = (t = Date.now()) => dayKey(t).replace(/-/g, '');
-async function snapshot(wid, label) { // copy the workspace's important rows into backup rows
-  const rows = await sbGet(`select=key,value&key=in.(${BK_ROWS.map(k => `w${wid}:${k}`).join(',')})`);
-  if (!rows.some(r => r.key.endsWith(':core'))) return false;
-  await sbUpsert(rows.map(r => ({ key: `bk:${label}:${wid}:${r.key.split(':')[1]}`, value: r.value, version: 1 }))); return true;
-}
-async function listSnapshots(wid) { return (await sbGet(`select=key&key=like.bk:*:${wid}:core`)).map(r => r.key.split(':')[1]).sort().reverse(); }
-const labelTime = l => /^\d{8}$/.test(l) ? Date.UTC(+l.slice(0, 4), +l.slice(4, 6) - 1, +l.slice(6, 8)) : /^pre\d+$/.test(l) ? +l.slice(3) * 1000 : 0;
-const CORE_FRESH = () => { const f = freshD(); return Object.fromEntries(CORE_KEYS.map(k => [k, f[k]])); };
-async function restoreSnapshot(wid, label, by) {
-  if (!/^(\d{8}|pre\d+)$/.test(label)) return false;
-  const rows = await sbGet(`select=key,value&key=in.(${BK_ROWS.map(k => `bk:${label}:${wid}:${k}`).join(',')})`), snap = Object.fromEntries(rows.map(r => [r.key.split(':')[3], r.value]));
-  if (!snap.core) return false;
-  await snapshot(wid, 'pre' + Math.floor(Date.now() / 1000)); // a way back from this restore
-  setWid(wid); await need(...BK_ROWS); const keepHash = D.meta && D.meta.codeHash;
-  Object.assign(D, CORE_FRESH()); ROWS.core.set(snap.core); if (snap.logs) ROWS.logs.set(snap.logs); if (snap.play) ROWS.play.set(snap.play); if (snap.calls) ROWS.calls.set(snap.calls);
-  migrate(); if (D.meta) { delete D.meta.deleted; if (keepHash) D.meta.codeHash = keepHash; } audit(by, `Restored the workspace from the backup of ${label.startsWith('pre') ? 'a safety copy' : label}`); return true;
-}
-function backupFile() {
-  const core = ROWS.core.get(); if (core.meta) { core.meta = { ...core.meta }; delete core.meta.codeHash; delete core.meta.deleted; }
-  return { format: 'sentinel-backup', v: 1, exportedAt: new Date().toISOString(), workspace: { id: CTX.wid, name: D.meta.name }, rows: { core, logs: D.logs, play: D.play, calls: D.calls } };
-}
-function importBackup(data, uid, name) { // returns an error string, or '' when applied
-  if (!data || data.format !== 'sentinel-backup' || data.v !== 1 || !data.rows || !data.rows.core || typeof data.rows.core !== 'object' || !data.rows.core.meta) return 'That is not a Sentinel backup file.';
-  const fresh = CORE_FRESH(), c = data.rows.core, core = {};
-  for (const k of CORE_KEYS) { if (!(k in c)) { core[k] = fresh[k]; continue; } const a = c[k], f = fresh[k]; if (Array.isArray(f) !== Array.isArray(a) || (f !== null && typeof f === 'object' && (a === null || typeof a !== 'object')) || (f === null && a !== null && typeof a !== 'object')) return `The backup looks damaged (${k}).`; core[k] = a; }
-  if (!core.meta || typeof core.meta !== 'object') return 'The backup looks damaged (meta).';
-  const keepHash = D.meta.codeHash, wid = CTX.wid; delete core.meta.deleted;
-  Object.assign(D, core); D.meta.id = wid; D.meta.name = name; D.meta.owner = uid; if (keepHash) D.meta.codeHash = keepHash; else delete D.meta.codeHash;
-  if (!D.members[uid]) D.members[uid] = { name: U ? U.name : 'Owner', rank: Object.keys(D.ranks)[0] || 'admin', joined: Date.now() };
-  const l = data.rows.logs, pl = data.rows.play, ca = data.rows.calls;
-  D.logs = l && typeof l === 'object' && !Array.isArray(l) ? l : {}; D.play = pl && typeof pl === 'object' && !Array.isArray(pl) ? pl : {}; D.calls = Array.isArray(ca) ? ca : [];
-  migrate(); return '';
-}
-async function cronRun() {
-  const t0 = Date.now(), today = bkDay(), list = await sbGet('select=key,meta:value->meta&key=like.w*:core'); let snap = 0, purged = 0, pruned = 0, partial = false;
-  const live = []; for (const r of list) { const wid = r.key.slice(1, 13); if (r.meta && r.meta.deleted) { if (Date.now() - r.meta.deleted > TRASH_MS) { await sbDel(`key=like.w${wid}:*`); await sbDel(`key=like.bk:*:${wid}:*`); purged++; } } else if (r.meta) live.push(wid); }
-  for (let i = 0; i < live.length; i += 4) { if (Date.now() - t0 > 9000) { partial = true; break; } snap += (await Promise.all(live.slice(i, i + 4).map(w => snapshot(w, today).catch(() => false)))).filter(Boolean).length; }
-  for (const r of await sbGet('select=key&key=like.bk:*:core')) { const [, label, wid] = r.key.split(':'), age = Date.now() - labelTime(label); if ((/^\d{8}$/.test(label) && age > BK_KEEP_DAYS * 864e5 + 36e5) || (/^pre\d+$/.test(label) && age > 14 * 864e5)) { await sbDel(`key=like.bk:${label}:${wid}:*`); pruned++; } }
-  return { ok: true, snapshotted: snap, purged, pruned, partial };
-}
-const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Sentinel admin</title><style>
-:root{--bg:#f5f5f7;--card:#fff;--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.1)}@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--card:#2a2a2d;--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.12)}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;padding:28px 18px}.w{max-width:960px;margin:0 auto}h1{font-size:24px;letter-spacing:-.02em;margin:0 0 4px}p{color:var(--mu);margin:0 0 18px}
-.c{background:var(--card);border-radius:12px;box-shadow:0 0 0 .5px var(--ln);padding:16px 18px;margin-bottom:12px}.r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.sp{flex:1}.mu{color:var(--mu);font-size:13px}
-input{height:34px;border:0;border-radius:8px;padding:0 12px;background:rgba(127,127,127,.14);color:inherit;font:inherit;min-width:260px}button{height:30px;padding:0 12px;border:0;border-radius:8px;background:rgba(127,127,127,.18);color:inherit;font:inherit;font-weight:500;cursor:pointer}button.p{background:var(--ac);color:#fff}button.d{background:#ff3b30;color:#fff}
-.b{display:inline-block;font-size:12px;border-radius:99px;padding:1px 9px;background:rgba(127,127,127,.18)}.b.x{background:rgba(255,59,48,.16);color:#d70015}code{font-size:12px;background:rgba(127,127,127,.16);padding:1px 6px;border-radius:5px}</style></head><body><div class="w"><h1>Sentinel admin</h1><p>Recover workspaces that were deleted or tampered with.</p>
-<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div id="fb"></div><div id="o"></div></div>
-<script>const $=i=>document.getElementById(i);let T=sessionStorage.getItem('adm')||'';const e=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-async function call(b){const r=await fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':T},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error '+r.status);return j}
-async function loadFb(){const j=await call({op:'feedback'});$('fb').innerHTML=j.items.length?'<h2 style="font-size:17px;margin:18px 0 10px">Feedback and questions</h2>'+j.items.map(f=>'<div class="c"><div class="r"><span class="b">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="mu">'+e(f.rank)+' · '+e(f.wsName)+' · '+new Date(f.t).toLocaleString()+'</span></div><p style="color:inherit;margin:8px 0;white-space:pre-wrap">'+e(f.text)+'</p><div class="r"><input data-r="'+f.id+'" placeholder="Write a reply" value="'+e(f.reply||'')+'" style="flex:1"><button class="p" data-o="fr" data-i="'+f.id+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="d" data-o="fd" data-i="'+f.id+'">Delete</button></div></div>').join(''):''}
-async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
-$('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
-$('fb').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;try{if(b.dataset.o==='fr')await call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value});else if(confirm('Delete this message?'))await call({op:'feedbackDelete',id:b.dataset.i});loadFb()}catch(x){$('m').textContent=x.message}};
-$('o').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;const w=b.dataset.w,s=$('s'+w);try{
-if(b.dataset.o==='rd'){if(!confirm('Restore this workspace?'))return;await call({op:'restoreDeleted',wid:w});load()}
-else if(b.dataset.o==='sn'){await call({op:'snapshotNow',wid:w});s.textContent='Backed up.'}
-else if(b.dataset.o==='ls'){const j=await call({op:'snaps',wid:w});s.innerHTML=j.snaps.length?j.snaps.map(d=>'<button data-o="rs" data-w="'+w+'" data-d="'+d+'">'+(d.startsWith('pre')?'Safety copy '+new Date(+d.slice(3)*1000).toLocaleString():d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6))+'</button>').join(' '):'No backups yet.'}
-else if(b.dataset.o==='rs'){if(!confirm('Replace the workspace with the backup of '+b.dataset.d+'? A safety copy is made first.'))return;await call({op:'restoreSnapshot',wid:w,date:b.dataset.d});s.textContent='Restored.'}
-else if(b.dataset.o==='dl'){const j=await call({op:'download',wid:w}),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download='sentinel-backup-'+w+'.json';a.click()}
-}catch(x){(s||$('m')).textContent=x.message}};</script></body></html>`;
-
-// ---- sessions (signed cookies, nothing stored server-side), game keys, helpers ----
-const hash = s => crypto.createHash('sha256').update(String(s)).digest();
-const same = (a, b) => crypto.timingSafeEqual(hash(a), hash(b));
-const SIGN = crypto.createHash('sha256').update('sign:' + APP_SECRET).digest();
-const sign = t => crypto.createHmac('sha256', SIGN).update(t).digest('base64url');
-const pack = o => { const b = Buffer.from(JSON.stringify(o)).toString('base64url'); return b + '.' + sign(b); };
-const unpack = t => { if (!t) return null; const [b, g] = String(t).split('.'); if (!g || !same(g, sign(b))) return null; try { const d = JSON.parse(Buffer.from(b, 'base64url').toString()); return d && d.e > Date.now() ? d : null; } catch { return null; } };
-const cookiesOf = req => Object.fromEntries((req.headers.cookie || '').split(';').map(s => s.trim()).filter(Boolean).map(s => { const i = s.indexOf('='); let v = s.slice(i + 1); try { v = decodeURIComponent(v); } catch {} return [s.slice(0, i), v]; }));
-const mkCookie = (name, val, { maxAge = 604800, sameSite = 'Strict' } = {}) => `${name}=${encodeURIComponent(val)}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}; Secure`;
-const clearCookie = name => `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Secure`;
-const sessionUid = req => { const d = unpack(cookiesOf(req).sid); return d && /^[gr]_\d{1,32}$/.test(d.u || '') ? d.u : null; };
-const ALNUM = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-const randSecret = n => { let o = ''; while (o.length < n) for (const b of crypto.randomBytes(n * 2)) if (b < 228 && o.length < n) o += ALNUM[b % ALNUM.length]; return o; };
-const codeHash = sec => crypto.createHmac('sha256', SIGN).update('code:' + sec).digest('base64url');
-const newCode = wid => { const sec = randSecret(28); return { code: `${wid}-${sec}`, hash: codeHash(sec) }; }; // shown to the owner once; only the hash is stored
-const gameKey = (wid, rot) => `${wid}.${rot}.${crypto.createHmac('sha256', SIGN).update(`gamekey:${wid}:${rot}`).digest('base64url').slice(0, 32)}`;
-const site = req => (env.SITE_URL || `${req.headers['x-forwarded-proto'] === 'http' ? 'http' : 'https'}://${req.headers['x-forwarded-host'] || req.headers.host}`).replace(/\/$/, '');
-const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
-const body = async req => req._body || {};
-const tooMany = (res, s) => { res.setHeader('Retry-After', String(s)); return send(res, 429, { error: `Too many requests. Try again in ${s} seconds.`, retry: s }); };
-const page = (res, code, title, text, href = '/', label = 'Back to Sentinel') => { res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(`<!DOCTYPE html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><body style="font:16px -apple-system,Segoe UI,system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;display:grid;place-items:center;min-height:100vh;margin:0"><div style="background:#fff;border-radius:20px;padding:36px 40px;max-width:380px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.08)"><h2 style="margin:0 0 8px">${esc(title)}</h2><p style="color:#6e6e73;margin:0 0 20px">${esc(text)}</p><a href="${esc(href)}" style="display:inline-block;background:#0071e3;color:#fff;text-decoration:none;font-weight:600;padding:10px 20px;border-radius:10px">${esc(label)}</a></div></body>`); };
-const cleanName = (s, n = 40) => String(s || '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, n);
-const LEGAL = { privacy: 'Privacy Policy', terms: 'Terms of Service', cookies: 'Cookie Policy', 'acceptable-use': 'Acceptable Use Policy', 'player-notice': 'Player Notice' };
-const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-function legalPage(name) {
-  const file = path.join(__dirname, '..', 'legal', name + '.html'), frag = fs.readFileSync(file, 'utf8');
-  const body = frag.replace(/\{\{(\w+)\}\}/g, (_, k) => cfg[k] ? esc(cfg[k]) : `<mark>[set ${ENVNAME[k] || k} in your Vercel environment variables]</mark>`);
-  const mt = fs.statSync(file).mtime, updated = cfg.updated || (mt.getFullYear() > 2020 ? mt.toISOString().slice(0, 10) : '<mark>[set PANEL_LEGAL_UPDATED]</mark>');
-  const links = Object.entries(LEGAL).map(([k, t]) => `<a href="/legal/${k}"${k === name ? ' aria-current="page"' : ''}>${t}</a>`).join(' ');
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${LEGAL[name]}</title><style>
-body{margin:0;background:#f4f6fb;color:#121528;font:16px/1.65 'Segoe UI',system-ui,sans-serif}main{max-width:780px;margin:0 auto;padding:36px 20px 80px}h1{font-size:36px;line-height:1.15;margin:0 0 4px}h2{font-size:21px;margin:32px 0 8px}
-nav{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:28px;font-size:14px}nav a{color:#667085;text-decoration:none;font-weight:600}nav a[aria-current]{color:#2f5bff}a{color:#2f5bff}
-table{border-collapse:collapse;width:100%;font-size:15px;margin:10px 0;background:#fff}td,th{border:1px solid #e6e9f2;padding:8px 10px;text-align:left;vertical-align:top}th{background:#eaefff}
-mark{background:#fdf2dc;border-radius:4px;padding:0 4px}.draft{background:#fdf2dc;border:1px solid #f0d9a8;border-radius:10px;padding:12px 16px;margin:16px 0;font-size:15px}.muted{color:#667085}code{background:#eaefff;border-radius:4px;padding:1px 5px}
-</style></head><body><main><nav>${links}</nav><h1>${LEGAL[name]}</h1><p class="muted">Last updated ${updated}</p>${cfg.legalReviewed ? '' : '<div class="draft"><b>Draft.</b> These documents have not been reviewed by a lawyer. Set LEGAL_REVIEWED to true in your Vercel environment variables once they have, and this notice will disappear.</div>'}${body}</main></body></html>`;
-}
-async function authRoute(req, res, url, p, ip) {
-  const w = limit('auth:' + ip, 20, 60000); if (w) return page(res, 429, 'Too many attempts', `Please wait ${w} seconds and try again.`);
-  const m = /^\/auth\/(google|roblox)(\/callback)?$/.exec(p); if (!m || req.method !== 'GET') return page(res, 404, 'Not found', 'That page does not exist.');
-  const name = m[1], P = PROV[name]; if (!P.id || !P.secret) return page(res, 404, 'Not available', `Sign in with ${name === 'google' ? 'Google' : 'Roblox'} is not set up here.`);
-  const redirect = site(req) + '/auth/' + name + '/callback';
-  if (!m[2]) { // step 1: send the person to Google/Roblox
-    const state = rnd(18), verifier = rnd(40), invite = url.searchParams.get('invite') || '', cur = sessionUid(req), link = name === 'roblox' && url.searchParams.get('link') === '1' && cur && cur[0] === 'g' ? cur : '';
-    const q = new URLSearchParams({ client_id: P.id, redirect_uri: redirect, response_type: 'code', scope: P.scope, state, code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', ...(name === 'google' ? { prompt: 'select_account' } : {}) });
-    res.setHeader('Set-Cookie', mkCookie('oa', pack({ p: name, s: state, v: verifier, i: /^[a-f0-9]{28}$/.test(invite) ? invite : '', l: link, e: Date.now() + 1800000 }), { maxAge: 1800, sameSite: 'Lax' }));
-    res.writeHead(302, { Location: P.auth + '?' + q }); return res.end();
-  }
-  // step 2: they came back with a code
-  const oa = unpack(cookiesOf(req).oa), code = url.searchParams.get('code'), st = url.searchParams.get('state');
-  if (url.searchParams.get('error')) return page(res, 400, 'Sign-in cancelled', 'No problem. You can try again whenever you like.');
-  if (!oa || oa.p !== name || !code || !st || !same(st, oa.s)) return page(res, 400, 'Sign-in expired', 'That sign-in attempt took too long, was already used, or was started in another tab. Click below to start again.', `/auth/${name}`, 'Try again');
-  if (!req._oauth) { // the code works once, so remember the result if this request has to re-run
-    const tr = await fetch(P.token, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' }, body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirect, client_id: P.id, client_secret: P.secret, code_verifier: oa.v }) });
-    const tj = await tr.json().catch(() => ({})); if (!tr.ok || !tj.access_token) { req._oauth = { fail: 1 }; }
-    else { const info = await (await fetch(P.info, { headers: { Authorization: 'Bearer ' + tj.access_token } })).json().catch(() => ({})); req._oauth = /^\d{1,32}$/.test(String(info.sub || '')) ? { sub: String(info.sub), name: cleanName(info.name || info.nickname || info.preferred_username || 'Member'), uname: cleanName(info.preferred_username || info.nickname || info.name || '') } : { fail: 1 }; }
-  }
-  if (req._oauth.fail) return page(res, 400, 'Sign-in failed', 'We could not confirm your account with ' + (name === 'google' ? 'Google' : 'Roblox') + '. Please try again.', `/auth/${name}`, 'Try again');
-  if (oa.l) { // linking a Roblox account to the signed-in Google account, so in-game activity counts for them
-    const cur = sessionUid(req); if (cur !== oa.l) return page(res, 400, 'Sign-in changed', 'Please sign in again and retry linking.');
-    setUid(cur); await need('user'); if (!U) return page(res, 400, 'Account not found', 'Please sign in again.');
-    U.roblox = { id: req._oauth.sub, name: req._oauth.uname || req._oauth.name };
-    res.setHeader('Set-Cookie', clearCookie('oa')); res.writeHead(302, { Location: '/#linked' }); return res.end();
-  }
-  const uid = name[0] + '_' + req._oauth.sub; setUid(uid); await need('user');
-  if (!U) { if (!SIGNUPS_OPEN && !oa.i) return page(res, 403, 'Sign-ups are closed', 'This site is not accepting new accounts right now.'); U = { id: uid, provider: name, workspaces: [], created: Date.now() }; }
-  U.name = req._oauth.name;
-  res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: uid, e: Date.now() + 7 * 864e5 })), clearCookie('oa')]);
-  res.writeHead(302, { Location: '/' + (oa.i ? '#/join/' + oa.i : '') }); return res.end();
-}
-
-const ACT_PERM = { warn: 'mod.warn', kick: 'mod.kick', mute: 'mod.mute', unmute: 'mod.mute', ban: 'mod.ban', unban: 'mod.unban', announce: 'announce', points: 'points.manage' };
-const TYPE_GROUP = { Warned: 'warn', Kicked: 'kick', Muted: 'mute', Unmuted: 'mute', Suspended: 'ban', Banned: 'ban', Unbanned: 'ban', Points: 'points', Note: 'note' };
-const ok = res => send(res, 200, { ok: true });
-const APPEAL_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex"><title>Ban appeal</title><style>
-:root{--bg:#e9eefb;--card:rgba(255,255,255,.82);--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.14)}@media(prefers-color-scheme:dark){:root{--bg:#0d1020;--card:rgba(44,44,48,.8);--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.18)}}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px;background:radial-gradient(40% 45% at 15% 20%,#8ab8ff55,transparent 70%),radial-gradient(40% 45% at 85% 85%,#ffc2a155,transparent 70%),var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif}
-.c{width:100%;max-width:440px;background:var(--card);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border-radius:20px;padding:34px 30px;box-shadow:0 0 0 .5px var(--ln),0 24px 64px rgba(20,24,40,.2)}
-h1{font-size:23px;letter-spacing:-.02em;margin:0 0 6px}p{color:var(--mu);margin:0 0 20px}label{display:block;font-weight:600;font-size:13px;margin:14px 0 6px}
-input,textarea{width:100%;border:0;border-radius:9px;padding:10px 12px;font:inherit;color:inherit;background:rgba(127,127,127,.12);box-shadow:inset 0 0 0 .5px var(--ln);outline:0}input:focus,textarea:focus{box-shadow:0 0 0 3px #0a7aff55}textarea{min-height:120px;resize:vertical}
-button{margin-top:20px;width:100%;height:42px;border:0;border-radius:10px;font:600 15px inherit;color:#fff;background:linear-gradient(180deg,#3d9bff,var(--ac));cursor:pointer}button[disabled]{opacity:.5}
-.m{margin-top:14px;font-size:14px;padding:10px 12px;border-radius:9px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}
-</style></head><body><div class="c" id="c"><h1>Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden><label for="u">Your Roblox username</label><input id="u" maxlength="40" required autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" minlength="20" required placeholder="Explain what happened and what you will do differently."></textarea><button id="b">Send appeal</button></form><div id="m"></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
-<script>const w=location.pathname.split('/')[2]||'',$=i=>document.getElementById(i);
-fetch('/api/appeal/info?w='+encodeURIComponent(w)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}$('s').textContent='Appeal a ban in '+j.name+'. Staff will review it and you will see the result when you try to join.';$('f').hidden=false}).catch(()=>$('s').textContent='Could not load this page.');
-$('f').onsubmit=async e=>{e.preventDefault();$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();if(r.ok){$('f').hidden=true;$('m').innerHTML='<div class="m o">Appeal sent. Staff will review it soon.</div>'}else{$('m').innerHTML='<div class="m e"></div>';$('m').firstChild.textContent=j.error||'Something went wrong.';$('b').disabled=false}}catch{$('m').innerHTML='<div class="m e">No connection. Try again.</div>';$('b').disabled=false}};</script></body></html>`;
-
-
-async function route(req, res, url, p) {
-  try {
-    const ip = ipOf(req);
-    if (req.method === 'GET' && p === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(fs.readFileSync(path.join(__dirname, '..', 'index.html'))); }
-    if (req.method === 'GET' && p.startsWith('/legal/')) { const n = p.slice(7); if (!LEGAL[n]) return send(res, 404, { error: 'not found' }); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(legalPage(n)); }
-    if (req.method === 'GET' && /^\/appeal\/[a-f0-9]{12}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(APPEAL_PAGE); }
-    if (req.method === 'GET' && p === '/api/appeal/info') {
-      const wid = String(url.searchParams.get('w') || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This appeal link is not valid.' });
-      const w0 = limit('appinfo:' + ip, 60, 60000); if (w0) return tooMany(res, w0);
-      setWid(wid); await need('core'); if (!D.meta || D.meta.deleted) return send(res, 404, { error: 'This appeal link is not valid.' });
-      if (D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
-      return send(res, 200, { name: D.meta.name });
-    }
-    if (req.method === 'POST' && p === '/api/appeal') {
-      const A = await body(req), wid = String(A.w || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This appeal link is not valid.' });
-      const w0 = limit('appeal:' + ip, 5, 3600000) || limit('appealw:' + wid, 60, 3600000); if (w0) return tooMany(res, w0);
-      const uname = cleanName(A.username, 40), text = cleanName(A.text, 1000); if (!/^\w{3,20}$/.test(uname)) return send(res, 400, { error: 'Enter your exact Roblox username.' });
-      if (text.length < 20) return send(res, 400, { error: 'Please write at least 20 characters so staff can understand.' });
-      setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
-      const id = await findId(uname), ban = id && D.bans[id];
-      if (!ban || !live(ban)) return send(res, 404, { error: 'We could not find an active ban for that username in this game.' });
-      if (D.appeals.some(x => x.uid === id && x.status === 'open')) return send(res, 409, { error: 'You already have an appeal waiting for review.' });
-      const last = D.appeals.find(x => x.uid === id && x.status === 'denied'); if (last && Date.now() - last.reviewed < 7 * 864e5) return send(res, 429, { error: 'Your last appeal was denied. You can appeal again after 7 days.' });
-      D.appeals.unshift({ id: crypto.randomBytes(4).toString('hex'), uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null }); D.appeals.length = Math.min(D.appeals.length, 200);
-      feed(`Ban appeal from ${ban.name || uname}`); notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
-      return ok(res);
-    }
-    if (p === '/api/cron' && (req.method === 'GET' || req.method === 'POST')) {
-      const w0 = limit('cron:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
-      const auth = String(req.headers.authorization || '').replace(/^Bearer /, ''); if (!(CRON_SECRET.length >= 16 && same(auth, CRON_SECRET)) && !(ADMIN_TOKEN.length >= 16 && same(auth, ADMIN_TOKEN))) return send(res, 403, { error: 'Not allowed' });
-      return send(res, 200, await cronRun());
-    }
-    if (req.method === 'GET' && p === '/admin') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(ADMIN_PAGE); }
-    if (req.method === 'POST' && p === '/admin/api') {
-      if (ADMIN_TOKEN.length < 16) return send(res, 404, { error: 'The admin console is off. Set ADMIN_TOKEN (16+ characters) in Vercel to turn it on.' });
-      const w0 = limit('admtry:' + ip, 40, 900000); if (w0) return tooMany(res, w0);
-      if (!same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
-      const A = await body(req), wid = String(A.wid || '');
-      if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
-      if (A.op === 'feedback') { await need('fb'); return send(res, 200, { items: FB.slice(0, 200) }); }
-      if (A.op === 'feedbackReply' || A.op === 'feedbackDelete') {
-        await need('fb'); const i = FB.findIndex(f => f.id === String(A.id || '')); if (i < 0) return send(res, 404, { error: 'Not found' });
-        if (A.op === 'feedbackDelete') FB.splice(i, 1); else { FB[i].reply = String(A.reply || '').slice(0, 2000).trim() || null; FB[i].repliedAt = FB[i].reply ? Date.now() : null; }
-        return ok(res);
-      }
-      if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 400, { error: 'bad workspace' });
-      if (A.op === 'snaps') return send(res, 200, { snaps: await listSnapshots(wid) });
-      if (A.op === 'snapshotNow') return (await snapshot(wid, bkDay())) ? ok(res) : send(res, 404, { error: 'No such workspace' });
-      if (A.op === 'download') { setWid(wid); await need(...BK_ROWS); if (!D.meta) return send(res, 404, { error: 'No such workspace' }); return send(res, 200, backupFile()); }
-      if (A.op === 'restoreSnapshot') return (await restoreSnapshot(wid, String(A.date || ''), 'Site admin')) ? ok(res) : send(res, 404, { error: 'That backup does not exist' });
-      if (A.op === 'restoreDeleted') {
-        setWid(wid); await need('core', 'glob'); if (!D.meta || !D.meta.deleted) return send(res, 400, { error: 'That workspace is not in the recycle bin' });
-        delete D.meta.deleted; G.workspaces++; audit('Site admin', 'Restored the deleted workspace'); const owner = D.meta.owner;
-        if (/^[gr]_\d{1,32}$/.test(owner)) { setUid(owner); await need('user'); if (U && !U.workspaces.includes(wid)) U.workspaces.push(wid); }
-        return ok(res);
-      }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (p.startsWith('/auth/')) return await authRoute(req, res, url, p, ip);
-
-    if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
-      const b = await body(req), k = String(b.key || '').trim(), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
-      if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
-      const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 40, 60000) || limit('sync:' + wid, 400, 60000); if (w1) return tooMany(res, w1);
-      setWid(wid);
-      const ev = Array.isArray(b.events) ? b.events : [], chatty = ev.some(e => e && (e.type === 'chat' || e.type === 'modcall'));
-      const shards = [...new Set([...(Array.isArray(b.players) ? b.players : []), ...ev].map(x => x && Number.isInteger(x.userId) && x.userId > 0 ? shOf(x.userId) : null).filter(Boolean))];
-      await need('core', 'play', 'live', 'cmds', ...shards, ...(chatty ? ['chat'] : []), ...(ev.some(e => e && e.type === 'modcall') ? ['calls'] : []));
-      if (!D.meta || D.meta.deleted) return send(res, 403, { error: 'bad key' });
-      if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
-      const place = Number.isInteger(b.placeId) ? b.placeId : 0;
-      if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) return send(res, 403, { error: 'This game key is locked to a different place' });
-      if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
-      if (!D.meta.connectedAt) D.meta.connectedAt = Date.now();
-      if (chatty && rule('flaggedmute').enabled) await need('logs');
-      return send(res, 200, sync(b));
-    }
-
-    // ---- the website ----
-    if (!p.startsWith('/api/') && p !== '/logout') return send(res, 404, { error: 'not found' });
-    const w0 = limit('ip:' + ip, 300, 60000); if (w0) return tooMany(res, w0);
-    const ck = cookiesOf(req), uid = sessionUid(req);
-    if (req.method === 'POST' && p === '/logout') { res.setHeader('Set-Cookie', [clearCookie('sid'), clearCookie('ws')]); return ok(res); }
-
-    if (p === '/api/me') {
-      const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER };
-      if (!uid) return send(res, 200, base);
-      setUid(uid); await need('user'); if (!U) return send(res, 200, base);
-      const ids = U.workspaces.filter(w => /^[a-f0-9]{12}$/.test(w)); let list = [], rows0 = [];
-      if (ids.length) {
-        const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,meta:value->meta,members:value->members,ranks:value->ranks&key=in.(${ids.map(w => `w${w}:core`).join(',')})`, { headers: sbHeaders() });
-        if (!r.ok) throw new Error('Supabase read failed: HTTP ' + r.status);
-        rows0 = await r.json(); for (const row of rows0) { const mm = row.members && row.members[uid]; if (row.meta && mm && !row.meta.deleted) list.push({ id: row.key.slice(1, 13), name: row.meta.name, rank: (row.ranks && row.ranks[mm.rank] || {}).name || mm.role || 'Member', owner: row.meta.owner === uid }); }
-        list.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
-      }
-      const keep = new Set([...list.map(x => x.id), ...rows0.filter(r => r.meta && r.meta.deleted && r.members && r.members[uid]).map(r => r.key.slice(1, 13))]); if (U.workspaces.some(w => !keep.has(w))) U.workspaces = U.workspaces.filter(w => keep.has(w)); // deleted workspaces stay on the list for 30 days so they can be restored
-      const cur = list.find(x => x.id === ck.ws) ? ck.ws : (list[0] && list[0].id) || null;
-      if (cur && cur !== ck.ws) res.setHeader('Set-Cookie', mkCookie('ws', cur, { maxAge: 31536000 }));
-      const roblox = uid[0] === 'r' ? { id: uid.slice(2), name: U.name, viaLogin: true } : U.roblox || null;
-      return send(res, 200, { ...base, user: { id: uid, name: U.name, provider: U.provider, roblox }, workspaces: list, current: cur });
-    }
-    if (p === '/api/invite') {
-      const w = limit('invite:' + ip, 20, 60000); if (w) return tooMany(res, w);
-      const code = url.searchParams.get('code') || ''; if (!/^[a-f0-9]{28}$/.test(code)) return send(res, 404, { error: 'This invite link is not valid.' });
-      setWid(code.slice(0, 12)); await need('core'); const inv = D.meta && !D.meta.deleted && D.invites[code];
-      return inv && inv.exp > Date.now() ? send(res, 200, { workspace: D.meta.name, role: (D.ranks[inv.rank] || {}).name || 'Member' }) : send(res, 404, { error: 'This invite has expired or was already used.' });
-    }
-    if (!uid) return send(res, 401, { error: 'Please sign in', code: 'signin' });
-    const w2 = limit('u:' + uid, 180, 60000); if (w2) return tooMany(res, w2);
-    setUid(uid);
-
-    if (req.method === 'POST' && p === '/api/me/unlink') { await need('user'); if (U) U.roblox = null; return ok(res); }
-    if (req.method === 'POST' && p === '/api/workspaces') {
-      const w = limit('create:' + uid, 5, 3600000) || limit('createip:' + ip, 10, 3600000); if (w) return tooMany(res, w);
-      const nm = cleanName((await body(req)).name); if (nm.length < 2) return send(res, 400, { error: 'Give your game a name (at least 2 letters).' });
-      await need('user', 'glob'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' });
-      if (!SIGNUPS_OPEN) return send(res, 403, { error: 'New workspaces are closed right now.' });
-      if (U.workspaces.length >= MAX_PER_USER) return send(res, 400, { error: `You can have up to ${MAX_PER_USER} workspaces.` });
-      if (G.workspaces >= MAX_WORKSPACES) return send(res, 400, { error: 'This site is full right now. Please try again later.' });
-      const wid = crypto.randomBytes(6).toString('hex'); setWid(wid); await need('core');
-      const nc = newCode(wid); D.meta = { id: wid, name: nm, owner: uid, created: Date.now(), rot: 0, codeHash: nc.hash }; D.ranks = defaultRanks(); D.webhook = DEFAULT_WEBHOOK();
-      D.members[uid] = { name: U.name, rank: 'admin', joined: Date.now() }; audit(U.name, 'Created the workspace');
-      G.workspaces++; U.workspaces.push(wid);
-      res.setHeader('Set-Cookie', mkCookie('ws', wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: wid, code: nc.code });
-    }
-    if (req.method === 'POST' && p === '/api/join') {
-      const w = limit('join:' + uid, 10, 3600000); if (w) return tooMany(res, w);
-      const code = String((await body(req)).code || ''); if (!/^[a-f0-9]{28}$/.test(code)) return send(res, 400, { error: 'This invite link is not valid.' });
-      setWid(code.slice(0, 12)); await need('user', 'core'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' });
-      if (D.meta && D.members[uid]) { res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid }); }
-      const inv = D.meta && !D.meta.deleted && D.invites[code]; if (!inv || inv.exp < Date.now()) return send(res, 404, { error: 'This invite has expired or was already used.' });
-      if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full.' });
-      const rk = D.ranks[inv.rank] ? inv.rank : Object.entries(D.ranks).sort((a, b) => a[1].pos - b[1].pos)[0][0];
-      D.members[uid] = { name: U.name, rank: rk, joined: Date.now() }; delete D.invites[code]; audit(U.name, `Joined as ${D.ranks[rk].name}`);
-      if (!U.workspaces.includes(CTX.wid)) U.workspaces.push(CTX.wid);
-      res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid });
-    }
-    if (req.method === 'POST' && p === '/api/switch') {
-      const id = String((await body(req)).id || ''); if (!/^[a-f0-9]{12}$/.test(id)) return send(res, 400, { error: 'bad workspace' });
-      await need('user'); if (!U || !U.workspaces.includes(id)) return send(res, 403, { error: 'You are not a member of that workspace' });
-      res.setHeader('Set-Cookie', mkCookie('ws', id, { maxAge: 31536000 })); return ok(res);
-    }
-
-    // ---- workspace pages: you must be a member of the workspace in the "ws" cookie ----
-    if (!/^[a-f0-9]{12}$/.test(ck.ws || '')) return send(res, 409, { error: 'Choose a workspace', code: 'no_workspace' });
-    setWid(ck.ws); await need('core', 'user', ...(NEEDS[p] || []));
-    if (!D.meta || D.meta.deleted) return send(res, 404, { error: 'That workspace no longer exists', code: 'no_workspace' });
-    const mem = D.members[uid]; if (!mem) return send(res, 403, { error: 'You are not a member of this workspace', code: 'no_workspace' });
-    if (U) { // keep name and linked Roblox account in sync with the person's account
-      if (mem.name !== U.name) mem.name = U.name;
-      const rid = uid[0] === 'r' ? uid.slice(2) : (U.roblox && U.roblox.id) || null; if ((mem.robloxId || null) !== rid) mem.robloxId = rid;
-    }
-    const u = who(uid);
-    for (const [c, i] of Object.entries(D.invites)) if (i.exp < Date.now()) delete D.invites[c];
-    const B = req.method === 'POST' ? await body(req) : {};
-
-    if (p === '/api/state') {
-      const now = Date.now(), players = allPlayers(), bans = Object.values(D.bans).filter(live), mutes = Object.values(D.mutes).filter(live), ws = weekStart(now);
-      const days = [...Array(14)].map((_, i) => dayKey(now - (13 - i) * 864e5)), ser = f => days.map(d => (D.daily[d] || {})[f] || 0);
-      const onLeave = id => D.loa.some(x => x.uid === id && x.status === 'approved' && x.start <= now && x.end >= now);
-      const gm = Object.keys(D.members).filter(id => id[0] === 'g'); // Google members may have linked a Roblox account: pick that up for activity tracking
-      if (gm.length) { const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,roblox:value->roblox&key=in.(${gm.map(id => 'u:' + id).join(',')})`, { headers: sbHeaders() });
-        if (r.ok) for (const row of await r.json()) { const m = D.members[row.key.slice(2)], rid = (row.roblox && row.roblox.id) || null; if (m && (m.robloxId || null) !== rid) m.robloxId = rid; } }
-      const team = Object.entries(D.members).map(([id, m]) => { const rid = m.robloxId || (id[0] === 'r' ? id.slice(2) : null), pl = rid ? D.play[rid] : null;
-        return { uid: id, name: m.name, rank: m.rank, owner: id === D.meta.owner, via: id[0] === 'g' ? 'Google' : 'Roblox', joined: m.joined, linked: !!rid, robloxId: rid,
-          week: pl && pl.weekStart === ws ? Math.round(pl.week) : 0, onLeave: onLeave(id), online: !!rid && players.some(x => String(x.userId) === String(rid)) }; })
-        .sort((a, b) => memberPos(b.uid) - memberPos(a.uid) || a.name.localeCompare(b.name));
-      return send(res, 200, {
-        connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
-        servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now) })),
-        me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos },
-        workspace: { id: CTX.wid, name: D.meta.name, everConnected: !!D.meta.connectedAt, ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
-        ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
-        perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
-        invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by })) : [],
-        audit: has(u, 'audit.view') ? D.audit.slice(0, 150) : [], rulebook: D.rulebook,
-        loa: { mine: D.loa.filter(x => x.uid === uid).slice(0, 20), all: has(u, 'loa.review') ? D.loa.slice(0, 80) : [] },
-        webhook: has(u, 'webhooks.manage') ? { set: !!(D.webhook && D.webhook.url), hint: D.webhook && D.webhook.url ? D.webhook.url.slice(-6) : '', events: (D.webhook || DEFAULT_WEBHOOK()).events } : null,
-        series: { players: ser('u'), peak: ser('p'), actions: ser('a'), reports: ser('r'), joins: ser('j'), days },
-        openCalls: D.calls.filter(c => c.status !== 'resolved').length, calls: D.calls.slice(0, 40),
-        session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
-        board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
-          .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
-        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60) : [], watch: D.watch,
-        staffWeek: Object.entries(D.audit.filter(a => a.t > now - 7 * 864e5 && a.user && a.user !== 'Automation').reduce((m, a) => (m[a.user] = (m[a.user] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([user, n]) => ({ user, n })),
-        rules: Object.fromEntries(Object.keys(DEFAULT_RULES).map(k => [k, rule(k)])), stats: { ...D.stats, activeBans: bans.length, activeMutes: mutes.length } });
-    }
-    if (p === '/api/avatars') return send(res, 200, await avatars((url.searchParams.get('ids') || '').split(',').slice(0, 100).map(Number).filter(n => Number.isInteger(n) && n > 0)));
-    if (p === '/api/lookup') { const id = await findId(cleanName(url.searchParams.get('name'), 40)); const r = id && await profile(id); return r ? send(res, 200, r) : send(res, 404, { error: 'No player with that username' }); }
-    if (p === '/api/player') { const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' }); const r = await profile(id); return r ? send(res, 200, r) : send(res, 404, { error: 'We have no record of that player' }); }
-    if (p === '/api/escalation') {
-      const id = +url.searchParams.get('userId'), r = D.rulebook.find(x => x.id === url.searchParams.get('rule')); if (!r) return send(res, 404, { error: 'No such rule' });
-      const n = (D.logs[id] || []).filter(e => e.ruleId === r.id && e.status !== 'reverted').length;
-      return send(res, 200, { offense: n + 1, step: r.steps[Math.min(n, r.steps.length - 1)] });
-    }
-    if (p === '/api/logbook') {
-      const type = url.searchParams.get('type') || '', q = cleanName(url.searchParams.get('q'), 60).toLowerCase();
-      let all = []; for (const [id, list] of Object.entries(D.logs)) for (const e of list) all.push({ ...e, userId: +id, name: e.name || (D.play[id] || {}).name || 'User ' + id });
-      if (type) all = all.filter(e => TYPE_GROUP[e.type] === type);
-      if (q) all = all.filter(e => `${e.name} ${e.reason} ${e.by}`.toLowerCase().includes(q));
-      all.sort((a, b) => b.time - a.time); return send(res, 200, { entries: all.slice(0, 200), total: all.length });
-    }
-    if (req.method === 'POST' && p === '/api/action') {
-      const reason0 = cleanName(B.reason, 300); let action = B.action, minutes = clampInt(B.minutes, 0, 525600), ruleId = null, reason = reason0 || 'No reason given';
-      if (B.ruleId) {
-        const r = D.rulebook.find(x => x.id === B.ruleId); if (!r) return send(res, 404, { error: 'That rule no longer exists' });
-        const n = (D.logs[B.userId] || []).filter(e => e.ruleId === r.id && e.status !== 'reverted').length, st = r.steps[Math.min(n, r.steps.length - 1)];
-        action = st.type; minutes = st.minutes || 0; ruleId = r.id; reason = `${r.title} (offense ${n + 1})${reason0 ? ': ' + reason0 : ''}`;
-      }
-      if (!ACT_PERM[action]) return send(res, 400, { error: 'bad action' });
-      if (!has(u, action === 'ban' && !(minutes > 0) ? 'mod.permban' : ACT_PERM[action])) return deny(res);
-      if (action === 'announce') { cmd({ type: 'announce', text: reason }); feed('Announcement: ' + reason, u.user); return ok(res); }
-      if (!Number.isInteger(B.userId) || B.userId < 1) return send(res, 400, { error: 'bad userId' });
-      const nm = cleanName(B.name, 40) || String(B.userId);
-      if (['warn', 'kick', 'mute', 'ban'].includes(action) && u.limit > 0) { // per-rank anti-abuse limit, counted from the logbook
-        const since = Date.now() - 36e5; let c = 0; for (const list of Object.values(D.logs)) for (const e of list) if (e.byUid === uid && e.time > since && MOD_TYPES.includes(e.type)) c++;
-        if (c >= u.limit) return send(res, 429, { error: `Your rank allows ${u.limit} moderation actions per hour. Ask a higher rank for help.` });
-      }
-      if (action === 'points') { const amt = clampInt(B.amount, -100000, 100000); if (!amt) return send(res, 400, { error: 'Enter a points amount' }); addPoints(B.userId, nm, amt, reason, u.user, uid); return ok(res); }
-      act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId });
-      return send(res, 200, { ok: true, applied: { action, minutes } });
-    }
-    if (req.method === 'POST' && p === '/api/entry') {
-      const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
-      if (B.op === 'note') { if (!has(u, 'logbook.note')) return deny(res); const t = cleanName(B.text, 500); if (!t) return send(res, 400, { error: 'Write a note first' }); logEntry(id, cleanName(B.name, 40) || 'User ' + id, { type: 'Note', reason: t, by: u.user, byUid: uid }); return ok(res); }
-      if (B.op === 'revert') {
-        if (!has(u, 'logbook.revert')) return deny(res);
-        const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e || e.status === 'reverted') return send(res, 404, { error: 'Entry not found or already reverted' });
-        e.status = 'reverted'; e.revertedBy = u.user; e.revertedAt = Date.now();
-        if ((e.type === 'Banned' || e.type === 'Suspended') && D.bans[id] && D.bans[id].entry === e.id) { delete D.bans[id]; cmd({ type: 'unban', userId: id }); }
-        if (e.type === 'Muted' && D.mutes[id] && D.mutes[id].entry === e.id) delete D.mutes[id];
-        if (e.type === 'Points' && e.amount) playOf(id, e.name).points -= e.amount;
-        audit(u.user, `Reverted ${e.type.toLowerCase()} for ${e.name}`); return ok(res);
-      }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (req.method === 'POST' && p === '/api/session') {
-      if (!has(u, 'sessions.host')) return deny(res);
-      const now = Date.now(), s = D.session;
-      if (B.op === 'start') {
-        if (s) return send(res, 400, { error: 'A session is already running' });
-        const type = cleanName(B.type, 40) || 'Session';
-        D.session = { id: now, type, notes: cleanName(B.notes, 200), start: now, host: u.user, attendees: {} };
-        cmd({ type: 'announce', text: `${type} is starting! Type !attend in chat to be marked present.` }); feed('Session started: ' + type, u.user);
-        notify('sessions', `${type} started`, D.session.notes, [['Host', u.user]], 0x12a594);
-      } else if (!s) return send(res, 400, { error: 'No session is running' });
-      else if (B.op === 'addall') { for (const pl of allPlayers()) s.attendees[pl.userId] = pl.name; }
-      else if (B.op === 'end') {
-        D.sessions.unshift({ ...s, end: now, attendees: Object.entries(s.attendees).map(([userId, name]) => ({ userId: +userId, name })) }); D.sessions.length = Math.min(D.sessions.length, 50);
-        const sp = rule('sessionpoints'); if (sp.enabled) for (const [pid, nm] of Object.entries(s.attendees)) addPoints(+pid, nm, sp.points, 'Attended ' + s.type, 'Automation');
-        D.session = null; cmd({ type: 'announce', text: `${s.type} has ended. Thanks for coming!` }); feed(`Session ended: ${s.type} (${Object.keys(s.attendees).length} present)`, u.user);
-        notify('sessions', `${s.type} ended`, `${Object.keys(s.attendees).length} attended`, [['Host', s.host]], 0x12a594);
-      }
-      return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/call') {
-      if (!has(u, 'reports.handle')) return deny(res);
-      const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
-      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; cmd({ type: 'message', kind: 'info', userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); }
-      else if (B.op === 'resolve' && c.status !== 'resolved') {
-        c.status = 'resolved'; c.by = c.by || u.user; c.note = cleanName(B.note, 200); c.resolved = Date.now();
-        cmd({ type: 'message', kind: 'ok', userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
-      }
-      return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/flagwords') {
-      if (!has(u, 'automations.manage')) return deny(res);
-      D.flagWords = [...new Set((Array.isArray(B.words) ? B.words : []).map(w => String(w).toLowerCase().trim().slice(0, 30)).filter(Boolean))].slice(0, 100);
-      audit(u.user, 'Updated flagged words'); return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/rules') {
-      if (!has(u, 'automations.manage')) return deny(res);
-      const base = DEFAULT_RULES[B.id]; if (!base) return send(res, 400, { error: 'bad rule' });
-      const next = { enabled: !!B.enabled };
-      for (const [k, def] of Object.entries(base)) if (k !== 'enabled') { const v = (B.params || {})[k]; next[k] = typeof def === 'number' ? clampInt(v, 1, 100000) : cleanName(v ?? def, 120); }
-      D.rules[B.id] = next; audit(u.user, `Automation "${B.id}" saved (${next.enabled ? 'on' : 'off'})`); return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/settings') {
-      if (!has(u, 'automations.manage')) return deny(res);
-      D.settings.quotaMinutes = clampInt(B.quotaMinutes, 1, 10080); audit(u.user, `Player weekly goal set to ${D.settings.quotaMinutes} minutes`); return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/ranks') {
-      if (!has(u, 'ranks.manage')) return deny(res);
-      const clean = (x, cur) => ({ name: cleanName(x.name, 32) || cur.name || 'New rank', color: /^#[0-9a-f]{6}$/i.test(x.color || '') ? x.color.toLowerCase() : (cur.color || '#64748b'),
-        perms: (Array.isArray(x.perms) ? x.perms : cur.perms || []).filter(q => ALLP.includes(q) && (u.isOwner || u.perms.has(q))), // you can't hand out powers you don't have
-        quota: clampInt(x.quota ?? cur.quota ?? 0, 0, 10080), limit: clampInt(x.limit ?? cur.limit ?? 0, 0, 1000) });
-      if (B.op === 'create') {
-        if (Object.keys(D.ranks).length >= 25) return send(res, 400, { error: 'You can have up to 25 ranks.' });
-        const id = 'k' + crypto.randomBytes(4).toString('hex'), low = Math.min(...Object.values(D.ranks).map(r => r.pos), u.isOwner ? 1e8 : u.pos);
-        D.ranks[id] = { ...clean(B, {}), pos: low - 10 }; audit(u.user, `Created rank ${D.ranks[id].name}`); return send(res, 200, { ok: true, id });
-      }
-      const r = D.ranks[B.id]; if (!r) return send(res, 404, { error: 'No such rank' });
-      if (!above(u, r.pos)) return send(res, 403, { error: 'You can only change ranks below your own.' });
-      if (B.op === 'update') { Object.assign(r, clean(B, r)); audit(u.user, `Edited rank ${r.name}`); return ok(res); }
-      if (B.op === 'delete') {
-        if (Object.keys(D.ranks).length <= 1) return send(res, 400, { error: 'You need at least one rank.' });
-        if (Object.values(D.members).some(m => m.rank === B.id)) return send(res, 400, { error: 'Move everyone out of this rank first.' });
-        for (const [c, i] of Object.entries(D.invites)) if (i.rank === B.id) delete D.invites[c];
-        audit(u.user, `Deleted rank ${r.name}`); delete D.ranks[B.id]; return ok(res);
-      }
-      if (B.op === 'move') {
-        const list = Object.entries(D.ranks).sort((a, b) => b[1].pos - a[1].pos), i = list.findIndex(([id]) => id === B.id), o = list[B.dir === 'up' ? i - 1 : i + 1];
-        if (!o) return ok(res); if (!above(u, o[1].pos)) return send(res, 403, { error: 'You can only reorder ranks below your own.' });
-        [r.pos, o[1].pos] = [o[1].pos, r.pos]; if (r.pos === o[1].pos) r.pos += B.dir === 'up' ? 1 : -1; audit(u.user, `Moved rank ${r.name} ${B.dir}`); return ok(res);
-      }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (req.method === 'POST' && p === '/api/team') {
-      if (B.op === 'leave') { if (u.isOwner) return send(res, 400, { error: 'The owner cannot leave. Delete the workspace instead.' }); delete D.members[uid]; audit(u.user, 'Left the workspace'); res.setHeader('Set-Cookie', clearCookie('ws')); return ok(res); }
-      if (!has(u, 'team.manage')) return deny(res);
-      if (B.op === 'invite') {
-        const r = D.ranks[B.rank]; if (!r) return send(res, 400, { error: 'Pick a rank' });
-        if (!above(u, r.pos)) return send(res, 403, { error: 'You can only invite people to ranks below your own.' });
-        if (Object.keys(D.invites).length >= 20) return send(res, 400, { error: 'Too many open invites. Revoke some first.' });
-        if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full (50 people).' });
-        const code = CTX.wid + crypto.randomBytes(8).toString('hex'); D.invites[code] = { rank: B.rank, exp: Date.now() + 7 * 864e5, by: u.user }; audit(u.user, `Created an invite for ${r.name}`);
-        return send(res, 200, { ok: true, code, link: `${site(req)}/#/join/${code}` });
-      }
-      if (B.op === 'revoke') { delete D.invites[String(B.code || '')]; audit(u.user, 'Revoked an invite'); return ok(res); }
-      const t = String(B.uid || ''), m = D.members[t];
-      if (!m) return send(res, 404, { error: 'No such member' });
-      if (t === D.meta.owner) return send(res, 400, { error: 'The owner cannot be changed.' });
-      if (!above(u, memberPos(t))) return send(res, 403, { error: 'You can only manage members below your rank.' });
-      if (B.op === 'remove') { audit(u.user, `Removed ${m.name}`); delete D.members[t]; return ok(res); }
-      if (B.op === 'setrank') { const r = D.ranks[B.rank]; if (!r || !above(u, r.pos)) return send(res, 403, { error: 'You can only give ranks below your own.' }); m.rank = B.rank; audit(u.user, `Set ${m.name} to ${r.name}`); return ok(res); }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (req.method === 'POST' && p === '/api/rulebook') {
-      if (!has(u, 'rulebook.manage')) return deny(res);
-      if (B.op === 'delete') { const r = D.rulebook.find(x => x.id === B.id); D.rulebook = D.rulebook.filter(x => x.id !== B.id); if (r) audit(u.user, `Deleted rule ${r.title}`); return ok(res); }
-      if (B.op === 'starter') {
-        if (D.rulebook.length) return send(res, 400, { error: 'Your rulebook already has rules.' });
-        const W = { type: 'warn' }, K = { type: 'kick' }, M = m => ({ type: 'mute', minutes: m }), Bn = m => ({ type: 'ban', minutes: m });
-        const S0 = [['Spamming', 'Repeating messages or flooding chat.', 'low', [W, W, M(30), K]], ['Profanity', 'Swearing or crude language in public chat.', 'medium', [W, M(60), K, Bn(1440)]],
-          ['Trolling or disruption', 'Deliberately ruining the game for others.', 'low', [W, K, Bn(1440)]], ['Ignoring staff', 'Refusing reasonable instructions from staff.', 'medium', [W, K, Bn(1440)]],
-          ['Harassment or bullying', 'Targeting, threatening or demeaning another player.', 'high', [W, Bn(1440), Bn(10080), Bn(0)]], ['Scamming', 'Tricking players out of items or currency.', 'high', [K, Bn(4320), Bn(0)]],
-          ['Inappropriate content', 'Sexual, hateful or otherwise unsuitable content.', 'critical', [Bn(10080), Bn(0)]], ['Exploiting or cheating', 'Using hacks or exploits.', 'critical', [Bn(0)]]];
-        for (const [title, desc, severity, steps] of S0) D.rulebook.push({ id: 'r' + crypto.randomBytes(4).toString('hex'), title, desc, severity, steps: steps.map(x => ({ type: x.type, minutes: x.minutes || 0 })), by: u.user, updated: Date.now() });
-        audit(u.user, 'Added the starter rules'); return ok(res);
-      }
-      const steps = (Array.isArray(B.steps) ? B.steps : []).slice(0, 8).filter(s => s && ['warn', 'kick', 'mute', 'ban'].includes(s.type)).map(s => ({ type: s.type, minutes: ['mute', 'ban'].includes(s.type) ? clampInt(s.minutes, 0, 525600) : 0 }));
-      const title = cleanName(B.title, 60); if (!title) return send(res, 400, { error: 'Give the rule a title' }); if (!steps.length) return send(res, 400, { error: 'Add at least one punishment step' });
-      const r = { title, desc: cleanName(B.desc, 400), severity: ['low', 'medium', 'high', 'critical'].includes(B.severity) ? B.severity : 'medium', steps, by: u.user, updated: Date.now() };
-      if (B.id) { const ex = D.rulebook.find(x => x.id === B.id); if (!ex) return send(res, 404, { error: 'No such rule' }); Object.assign(ex, r); }
-      else { if (D.rulebook.length >= 100) return send(res, 400, { error: 'You can have up to 100 rules.' }); D.rulebook.push({ id: 'r' + crypto.randomBytes(4).toString('hex'), ...r }); }
-      audit(u.user, `Saved rule ${title}`); return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/loa') {
-      if (B.op === 'request') {
-        const s = Date.parse(B.start), e = Date.parse(B.end);
-        if (!s || !e || e < s) return send(res, 400, { error: 'Pick a start date and an end date after it.' });
-        if (e - s > 120 * 864e5) return send(res, 400, { error: 'Leave can be at most 120 days.' });
-        if (D.loa.filter(x => x.uid === uid && x.status === 'pending').length >= 3) return send(res, 400, { error: 'You already have pending requests.' });
-        const x = { id: rnd(6), uid, name: u.user, start: s, end: e + 864e5 - 1, reason: cleanName(B.reason, 300), status: 'pending', created: Date.now() };
-        D.loa.unshift(x); D.loa = D.loa.slice(0, 300); audit(u.user, 'Requested leave');
-        notify('loa', `Leave request from ${u.user}`, x.reason, [['From', dayKey(s)], ['Until', dayKey(e)]], 0x12a594); return ok(res);
-      }
-      const x = D.loa.find(l => l.id === B.id); if (!x) return send(res, 404, { error: 'No such request' });
-      if (B.op === 'cancel') { if (x.uid !== uid) return deny(res); x.status = 'cancelled'; return ok(res); }
-      if (B.op === 'decide') {
-        if (!has(u, 'loa.review')) return deny(res); if (x.status !== 'pending') return send(res, 400, { error: 'Already decided' });
-        if (x.uid === uid && !u.isOwner) return send(res, 403, { error: 'Someone else has to review your own leave.' });
-        x.status = B.approve ? 'approved' : 'denied'; x.by = u.user; x.decided = Date.now(); x.note = cleanName(B.note, 200);
-        audit(u.user, `${B.approve ? 'Approved' : 'Denied'} leave for ${x.name}`); notify('loa', `Leave ${x.status} for ${x.name}`, x.note, [['By', u.user]], 0x12a594); return ok(res);
-      }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (p === '/api/feedback') {
-      if (req.method === 'GET') return send(res, 200, { items: FB.filter(f => f.uid === uid).slice(0, 30).map(f => ({ id: f.id, t: f.t, type: f.type, text: f.text, reply: f.reply || null, repliedAt: f.repliedAt || null })) });
-      const w0 = limit('fb:' + uid, 6, 3600000); if (w0) return tooMany(res, w0);
-      const type = ['question', 'idea', 'bug', 'praise'].includes(B.type) ? B.type : 'idea', text = String(B.text || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f<>]/g, '').trim().slice(0, 2000);
-      if (text.length < 5) return send(res, 400, { error: 'Write a little more so we can help (at least 5 characters).' });
-      FB.unshift({ id: rnd(6), t: Date.now(), type, text, uid, user: mem.name, rank: u.isOwner ? 'Owner' : (D.ranks[mem.rank] || {}).name || 'Member', ws: CTX.wid, wsName: D.meta.name, page: cleanName(B.page, 30) }); FB.length = Math.min(FB.length, 400);
-      return ok(res);
-    }
-    if (p === '/api/backups') {
-      if (!u.isOwner) return ownerOnly(res);
-      if (req.method === 'GET') return send(res, 200, { snaps: (await listSnapshots(CTX.wid)).map(l => ({ id: l, t: labelTime(l), safety: l.startsWith('pre') })), cron: CRON_SECRET.length >= 16 });
-      const w0 = limit('bk:' + CTX.wid, 6, 600000); if (w0) return tooMany(res, w0);
-      if (B.op === 'now') { await snapshot(CTX.wid, bkDay()); audit(u.user, 'Made a backup'); return ok(res); }
-      if (B.op === 'restore') {
-        if (cleanName(B.confirm) !== D.meta.name) return send(res, 400, { error: 'Type the workspace name exactly to confirm' });
-        return (await restoreSnapshot(CTX.wid, String(B.id || ''), u.user)) ? ok(res) : send(res, 404, { error: 'That backup does not exist' });
-      }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (req.method === 'GET' && p === '/api/backup/download') {
-      if (!u.isOwner) return ownerOnly(res); audit(u.user, 'Downloaded a backup file');
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="sentinel-backup-${bkDay()}.json"`, 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(backupFile()));
-    }
-    if (req.method === 'POST' && p === '/api/backup/import') {
-      if (!u.isOwner) return ownerOnly(res); const w0 = limit('bkimp:' + CTX.wid, 4, 600000); if (w0) return tooMany(res, w0);
-      if (cleanName(B.confirm) !== D.meta.name) return send(res, 400, { error: 'Type the workspace name exactly to confirm' });
-      await snapshot(CTX.wid, 'pre' + Math.floor(Date.now() / 1000)).catch(() => {});
-      const err = importBackup(B.data, uid, D.meta.name); if (err) return send(res, 400, { error: err }); audit(u.user, 'Restored the workspace from a backup file'); return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/appeals') {
-      if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.appeals = !!B.on; audit(u.user, B.on ? 'Opened ban appeals' : 'Closed ban appeals'); return ok(res); }
-      if (!has(u, 'appeals.review')) return deny(res);
-      const a = D.appeals.find(x => x.id === B.id && x.status === 'open'); if (!a) return send(res, 404, { error: 'That appeal was already reviewed.' });
-      const note = cleanName(B.note, 300);
-      if (B.decision === 'accept') { if (!has(u, 'mod.unban')) return deny(res); act({ action: 'unban', userId: a.uid, name: a.name, reason: 'Appeal accepted' + (note ? ': ' + note : ''), by: u.user, byUid: uid }); a.status = 'accepted'; }
-      else if (B.decision === 'deny') a.status = 'denied'; else return send(res, 400, { error: 'bad request' });
-      a.by = u.user; a.note = note; a.reviewed = Date.now(); audit(u.user, `${a.status === 'accepted' ? 'Accepted' : 'Denied'} the appeal from ${a.name}`); return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/watch') {
-      if (!has(u, 'logbook.note')) return deny(res); const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
-      if (B.on) { if (Object.keys(D.watch).length >= 200 && !D.watch[id]) return send(res, 400, { error: 'The watchlist is full (200 players).' }); D.watch[id] = { name: cleanName(B.name, 40) || String(id), by: u.user, t: Date.now(), reason: cleanName(B.reason, 200) }; audit(u.user, `Added ${D.watch[id].name} to the watchlist`); }
-      else if (D.watch[id]) { audit(u.user, `Removed ${D.watch[id].name} from the watchlist`); delete D.watch[id]; }
-      return ok(res);
-    }
-    if (req.method === 'POST' && p === '/api/webhook') {
-      if (!has(u, 'webhooks.manage')) return deny(res); D.webhook ||= DEFAULT_WEBHOOK();
-      if (B.op === 'save') {
-        if (B.url !== undefined) { const v = String(B.url || '').trim(); if (v && !HOOK_RE.test(v)) return send(res, 400, { error: 'Paste a Discord webhook URL. It starts with https://discord.com/api/webhooks/' }); D.webhook.url = v; }
-        if (B.events) for (const k of Object.keys(D.webhook.events)) if (k in B.events) D.webhook.events[k] = !!B.events[k];
-        audit(u.user, 'Updated Discord notifications'); return ok(res);
-      }
-      if (B.op === 'test') { if (!D.webhook.url) return send(res, 400, { error: 'Add a webhook URL first' }); HOOKS.push({ url: D.webhook.url, body: { username: 'Sentinel', allowed_mentions: { parse: [] }, embeds: [{ title: 'Sentinel is connected', description: `Notifications for ${D.meta.name} will appear in this channel.`, color: 0x635bff }] } }); return ok(res); }
-      return send(res, 400, { error: 'bad request' });
-    }
-    // ---- owner only: the game connection ----
-    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null }); }
-    if (p === '/api/bridge') {
-      if (!u.isOwner) return ownerOnly(res);
-      let lua; try { lua = fs.readFileSync(path.join(__dirname, '..', 'SentinelBridge.lua'), 'utf8'); } catch { return send(res, 500, { error: 'SentinelBridge.lua is missing from the deployment' }); }
-      lua = lua.replace(/^local URL = ".*"$/m, () => 'local URL = ' + JSON.stringify(site(req))).replace(/^local KEY = ".*"$/m, 'local KEY = "[INPUT CODE HERE]"').replace(/^local INTERVAL = \d+/m, 'local INTERVAL = 10');
-      const h = { 'Content-Type': 'text/plain; charset=utf-8' }; if (url.searchParams.get('download')) h['Content-Disposition'] = 'attachment; filename="Sentinel.server.lua"';
-      res.writeHead(200, h); return res.end(lua);
-    }
-    if (req.method === 'POST' && p === '/api/workspace') {
-      if (!u.isOwner) return ownerOnly(res);
-      if (B.op === 'rename') { const nm = cleanName(B.name); if (nm.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = nm; audit(u.user, 'Renamed the workspace'); return ok(res); }
-      if (B.op === 'rotatekey') { D.meta.rot = (D.meta.rot || 0) + 1; const nc = newCode(CTX.wid); D.meta.codeHash = nc.hash; audit(u.user, 'Made a new game code'); return send(res, 200, { ok: true, code: nc.code }); }
-      if (B.op === 'place') {
-        const pid = B.placeId === '' || B.placeId == null ? null : Number(B.placeId);
-        if (pid !== null && (!Number.isInteger(pid) || pid < 1)) return send(res, 400, { error: "The Place ID is the number in your game's link." });
-        D.meta.placeId = pid; D.meta.placeLock = !!(pid && B.lock); audit(u.user, pid ? `Set Place ID ${pid}${D.meta.placeLock ? ' (locked)' : ''}` : 'Cleared the Place ID'); return ok(res);
-      }
-      if (B.op === 'delete') {
-        if (cleanName(B.confirm) !== D.meta.name) return send(res, 400, { error: 'Type the workspace name exactly to confirm' });
-        await need('glob'); const wid = CTX.wid; G.workspaces = Math.max(0, G.workspaces - 1); if (U) U.workspaces = U.workspaces.filter(w => w !== wid);
-        D.meta.deleted = Date.now(); audit(u.user, 'Deleted the workspace'); // kept for 30 days, so the site admin can bring it back if it was a mistake or a hack
-        res.setHeader('Set-Cookie', clearCookie('ws'));
-        return ok(res);
-      }
-      return send(res, 400, { error: 'bad request' });
-    }
-    if (p === '/api/export') {
-      if (!has(u, 'privacy.manage')) return deny(res);
-      const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
-      await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
-      const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
-        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id) };
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
-    }
-    if (req.method === 'POST' && p === '/api/erase') {
-      if (!has(u, 'privacy.manage')) return deny(res);
-      const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
-      const names = new Set([D.play[id]?.name, D.bans[id]?.name, D.mutes[id]?.name, ...D.calls.filter(c => c.from.userId === id).map(c => c.from.name), ...R.chat.filter(m => m.userId === id).map(m => m.name), ...(D.logs[id] || []).map(e => e.name)].filter(Boolean));
-      await need(shOf(id)); if (D.hist[id % SH]) delete D.hist[id % SH][id];
-      delete D.logs[id]; delete D.play[id]; delete D.mutes[id];
-      if (D.bans[id]) D.bans[id] = { userId: id, name: 'User ' + id, reason: 'Retained for community safety', time: D.bans[id].time, expires: D.bans[id].expires };
-      D.calls = D.calls.filter(c => c.from.userId !== id); D.calls.forEach(c => c.chat = c.chat.filter(m => m.userId !== id)); R.chat = R.chat.filter(m => m.userId !== id);
-      if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
-      const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
-      D.feed.forEach(f => f.text = scrub(f.text)); D.audit.forEach(a => a.text = scrub(a.text));
-      audit(u.user, `Erased stored data for user ${id}`); return ok(res);
-    }
-    send(res, 404, { error: 'not found' });
-  } catch (e) { res.failed = true; send(res, 500, { error: String(e) }); }
-}
-
-// ---- one request: read body, run, save, replay if another request got there first ----
-const makeOut = () => { const o = { code: 200, headers: {}, body: '', failed: false, after: [], setHeader(k, v) { o.headers[k] = v; }, writeHead(c, h) { o.code = c; Object.assign(o.headers, h || {}); }, end(d) { o.body = d === undefined ? '' : d; } }; return o; };
-const flush = (o, res) => { res.statusCode = o.code; for (const [k, v] of Object.entries(o.headers)) res.setHeader(k, v); res.end(o.body); };
-async function readBody(req) {
-  if (req.method === 'GET' || req.method === 'HEAD') return {};
-  try { if (req.body !== undefined && req.body !== null) { if (Buffer.isBuffer(req.body)) return JSON.parse(req.body.toString() || '{}'); return typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body; } } catch { return {}; }
-  return new Promise(r => { let d = ''; req.on('data', c => { d += c; if (d.length > (String(req.url).startsWith('/api/backup/import') ? 4e6 : 1e5)) req.destroy(); }); req.on('end', () => { try { r(JSON.parse(d || '{}')); } catch { r({}); } }); });
-}
-async function handle(req, res) {
-  const url = new URL(req.url, 'http://x'), p = url.pathname;
-  if (CONFIG_ERROR.length) { res.statusCode = 500; res.setHeader('Content-Type', 'text/plain'); return res.end('Sentinel is not configured. Missing Vercel environment variables: ' + CONFIG_ERROR.join(', ')); }
-  req._body = await readBody(req);
-  for (let attempt = 0; attempt < 6; attempt++) {
-    resetState();
-    const out = makeOut();
-    await route(req, out, url, p);
-    if (out.failed || await commit()) { await sendHooks(); for (const f of out.after) await f().catch(() => {}); return flush(out, res); }
-    await new Promise(r => setTimeout(r, 25 + Math.random() * 100)); // lost a race with another request: run again on fresh data
-  }
-  res.statusCode = 503; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'Busy, please try again' }));
-}
-let chain = Promise.resolve(); // one request at a time per instance (state is shared in-process while a request runs)
-const serial = fn => { const run = chain.then(fn); chain = run.catch(() => {}); return run; };
-module.exports = (req, res) => serial(() => handle(req, res)).catch(e => { console.error(e); try { res.statusCode = 500; res.setHeader('Content-Type', 'text/plain'); res.end('Error: ' + e.message); } catch {} });
+/* ============ start ============ */
+setInterval(async()=>{if(document.hidden||!S||!ME||!ME.user||OB||JOIN||dwOpen()||CK||$('#mn .menu'))return;const ae=document.activeElement;if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;await loadState();if(S)render()},6000);
+(async()=>{try{render();route=parse();if(route.page==='join'){await loadMe();await onRoute();LOADED=true;return}
+ await loadMe();if(route.linked){toast('Roblox account linked');history.replaceState(null,'','#/');route={page:'home'}}
+ if(ME.user&&ME.workspaces.length){await loadState();if(route.page==='setup'&&S&&S.me.owner)OB={step:'script'};await pageData()}}catch(e){console.error(e);LASTERR=LASTERR||String(e.message||e)}LOADED=true;render(true);setTimeout(tour,900)})();
+</script>
+</body>
+</html>
