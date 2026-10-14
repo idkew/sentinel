@@ -1,39 +1,122 @@
-<p>{{company}} ("we", "us") provides {{service}}, a moderation and community tool for Roblox experiences. This policy explains what personal information is handled when <b>staff</b> use the dashboard and when <b>players</b> play an experience whose operator has installed {{service}}. Players, see also our short <a href="/legal/player-notice">Player Notice</a>.</p>
-<h2>1. Our role</h2>
-<p>For staff accounts and use of the dashboard, we decide how data is used (we are the "controller"). For player data, the experience operator (the person or team running the game) decides that moderation happens and we process the data on their behalf (we are their "processor"/"service provider"). Operators are responsible for their own legal obligations to their players.</p>
-<h2>2. What we collect</h2>
+<div style="background:#fff;border:1px solid #e6e9f2;border-radius:10px;padding:14px 18px;margin:16px 0">
+<b>The short version</b>
+<ul>
+<li>{{service}} is a moderation tool that Roblox game teams use. It has two kinds of people in it: <b>staff</b>, who sign in to the dashboard, and <b>players</b>, who just play a game whose team uses {{service}}.</li>
+<li>Staff sign in with Google or Roblox. We never see your password and we do not receive your email address.</li>
+<li>For players we keep what moderation needs: Roblox ID and name, join and play times, moderation records, and some recent chat. Chat is deleted within 24 hours unless it was flagged, reported or saved with a moderation record.</li>
+<li>We do not sell personal information, we do not show ads and we do not use advertising or analytics trackers.</li>
+<li>Staff can ask us, and players can ask us or their game's team, to see, export or erase their data. See section 10.</li>
+</ul></div>
+<p>{{company}} ("we", "us", "our") provides {{service}} (the "Service"), a moderation and community-management tool for Roblox experiences. This policy explains what personal information is handled, why, who sees it, how long it is kept, and what choices you have. It covers people who <b>sign in to the dashboard (staff)</b>, people who <b>use a public page</b> such as an appeal or application form, and <b>players</b> of an experience whose operator has installed {{service}}. Players, please also read the shorter <a href="/legal/player-notice">Player Notice</a>. Cookies are explained in the <a href="/legal/cookies">Cookie Policy</a>.</p>
+<p>{{service}} is currently in <b>alpha</b>. It changes often and we are still improving how it works, so please check back here for updates.</p>
+
+<h2>1. Who is responsible for your data</h2>
+<p>There are two roles, and which one applies depends on the data:</p>
+<ul>
+<li><b>We are the controller of staff account data</b> (section 2, "Staff"), of the feedback you send us, and of the technical and security data needed to run the Service. We decide why and how that data is used.</li>
+<li><b>The operator (the owner and team of an experience) is the controller of player data</b> in its workspace, and <b>we are its processor</b> (or "service provider"). The operator decides that moderation happens, who the moderators are, what rules apply and how long records are kept within the limits below. We process player data only to provide the Service to that operator and follow their instructions as built into the Service. Each operator's data is kept separate from every other operator's.</li>
+</ul>
+<p>Operators are responsible for their own legal duties to their players, including telling players that moderation tools are used and getting any consent the law requires. A player who wants to use their rights can contact us or the operator of the experience. If you contact us about player data we will pass the request on to the operator where needed, or deal with it directly where we can.</p>
+
+<h2>2. What we collect and why</h2>
 <table><tr><th>Who</th><th>Information</th><th>Why</th></tr>
-<tr><td>Staff (people who sign in)</td><td>The display name and numeric ID that Google or Roblox shares with us when you sign in (we do not receive your email address or password), which workspaces you belong to and your rank, any leave requests you make (dates and reason), if you link a Roblox account, its ID and username so your in-game time counts toward your rank's activity goal, if you turn on two-step verification, an encrypted authenticator secret and hashed one-time recovery codes (never your phone or the codes in readable form), if you link Discord, your Discord user ID, shifts you sign up for and how many minutes you were in game during them, and a record of actions you take (audit log), and session cookies. Our rate limiter keeps your IP address in memory for a few minutes, and our hosting provider may also log IP addresses.</td><td>Provide accounts, security, accountability</td></tr>
-<tr><td>Players</td><td>Roblox user ID, username and display name; join and leave times; which server they were in; time played (this week and in total); points; moderation records (warnings, kicks, mutes, suspensions and bans, with reason, date and the staff member who issued them); session attendance.</td><td>Moderation, safety, community management</td></tr>
-<tr><td>Players</td><td><b>Chat in the experience's main public chat channel.</b> Recent messages are held in a rolling buffer in our database (the latest 300 messages, never longer than 24 hours) and are then deleted. A message is copied to storage only if it contains a flagged word (it then appears in the recent activity feed, latest 50 kept) if a player files a ModCall (the report keeps up to 15 recent messages for context), or if a staff member saves it with a moderation record such as a warning or ban (up to 15 of that player's own messages from the hour before, kept with that record so appeals can be reviewed fairly). Private and team chat are not monitored.</td><td>Spot abuse, review reports</td></tr>
-<tr><td>People who fill in a form</td><td>The answers they give (for example a staff application or a player report). If a question asks for a Roblox username, we look up that account's public ID. They get a private link to check the result.</td><td>Applications, reports</td></tr>
-<tr><td>Players</td><td><b>Possible alt account hints</b>, shown to staff only: whether a new player's Roblox account is very new (from Roblox's public creation date), whether their name is close to a banned player's, and whether they first joined soon after a ban. These are hints for staff to look at and are never used to punish anyone automatically.</td><td>Spot ban evasion</td></tr>
-<tr><td>Players</td><td>Evidence staff attach to moderation records: links to clips or screenshots, and private staff notes. If a player appeals a ban, their username, appeal text, the staff decision and any reply, plus a private link only they receive to check the result.</td><td>Fair moderation, appeals</td></tr>
-<tr><td>Players</td><td>Public Roblox profile data (account creation date, avatar image) fetched when staff look a player up.</td><td>Identify the right person</td></tr></table>
-<p>We do not collect passwords for Roblox, payment details of players, precise location, or contacts. We do not use advertising or analytics trackers, and we do not sell personal information or share it for cross-context behavioural advertising.</p>
-<h2>3. How we use it</h2>
-<p>To run the service, enforce moderation decisions made by operators, keep the service secure, respond to requests, and meet legal obligations. We do not use player data to profile or market to players.</p>
-<h2>4. Legal bases (EEA/UK)</h2>
-<p>Staff data: performing our contract with you and our legitimate interest in security. Player data: the operator's and our legitimate interest in keeping the community safe, and compliance with legal obligations. Where an operator relies on consent, they are responsible for obtaining it.</p>
+<tr><td>Staff (people who sign in)</td><td>The display name and numeric ID that Google or Roblox shares with us when you sign in. We do not receive your password or your email address. The workspaces you belong to and your rank. Any leave requests you make (dates and reason). If you link a Roblox account, its ID and username, so that your time in game counts toward your rank's activity goal. If you turn on two-step verification: an encrypted authenticator secret and hashed one-time recovery codes (we never keep the codes in readable form). If you link Discord: your Discord user ID. Shifts you sign up for and the minutes you were in game during them. A record of actions you take in the dashboard (the audit log). Session cookies.</td><td>Accounts, security, accountability between staff, and working out activity goals</td></tr>
+<tr><td>Players</td><td>Roblox user ID, username and display name. Join and leave times and which server they were in. Time played (this week and in total) and points. Moderation records: warnings, kicks, mutes, suspensions and bans, each with its reason, date and the staff member who issued it. Session attendance.</td><td>Moderation, safety and running the community</td></tr>
+<tr><td>Players</td><td><b>Chat in the experience's main public chat channel.</b> Recent messages are held in a rolling buffer in our database (the latest 300 messages, never longer than 24 hours) and are then deleted. A message is copied into longer-term storage only in these cases: (1) it contains a word the operator has flagged, and so appears in the recent activity feed (the latest 50 entries are kept); (2) a player files a ModCall, and the report keeps up to 15 recent messages for context; (3) a staff member saves it with a moderation record such as a warning or ban (up to 15 of that player's own messages from the hour before, kept with the record so an appeal can be judged fairly). Private chat and team chat are not monitored.</td><td>Spot abuse, review reports and appeals</td></tr>
+<tr><td>Players</td><td>Evidence staff attach to a moderation record: links to clips or screenshots and private staff notes. If a player appeals a ban: the username they give, their appeal text, the staff decision and any reply, and a private link that only they receive for checking the result.</td><td>Fair moderation and appeals</td></tr>
+<tr><td>Players</td><td><b>Possible alt-account hints</b>, shown to staff only. They are based on: whether a new player's Roblox account is very new (from Roblox's public creation date), whether their name is very close to a banned player's name, and whether they first joined soon after a ban. A hint is only a reason for a person to take a closer look. No decision is made automatically and no one is punished because of a hint alone.</td><td>Spot ban evasion</td></tr>
+<tr><td>People who fill in a form</td><td>The answers they give, for example a staff application or a player report, and the Roblox username if the form asks for one (we look up that account's public ID). They receive a private link to check the result.</td><td>Applications and reports</td></tr>
+<tr><td>Staff and players</td><td>Public Roblox profile data (account creation date, avatar image, group roles) fetched when staff look someone up, when a form asks for a username, or when a workspace owner connects a Roblox group.</td><td>Identify the right person, and match staff to group ranks</td></tr>
+<tr><td>Staff</td><td>Messages you send us through the Feedback tab: the text, the page you were on, your display name, your rank and the workspace name, and our reply.</td><td>Fix bugs and answer questions</td></tr>
+<tr><td>Everyone who uses the site</td><td><b>Technical data.</b> Your IP address and browser details are seen by our hosting provider in its normal server logs. To limit abuse, a one-way hash of your IP address (not the address itself) is stored with a counter for a short time. We also keep a few counts of how much the Service is used overall (for example how many workspaces exist), which do not identify people.</td><td>Security, preventing abuse, keeping the Service running</td></tr>
+<tr><td>The Service administrator</td><td>When the Service has an error, an alert with the page address (without anything after a "?") and an error message is sent to a private channel that the administrator controls. These messages do not contain player or staff content.</td><td>Notice and fix problems</td></tr></table>
+<p><b>What we do not collect.</b> We do not collect Roblox or Google passwords, payment details of players, precise location, or contact lists. We do not use advertising or analytics trackers. We do not sell personal information, and we do not share it for cross-context behavioural advertising.</p>
+
+<h2>3. How we use information</h2>
+<ul>
+<li>To provide the Service: show operators their players and records, carry out bans, mutes and kicks the operator chooses, and deliver notices.</li>
+<li>To keep the Service secure and fair: sign-in checks, two-step verification, rate limits, and detecting misuse.</li>
+<li>To take backups and to restore a workspace if something goes wrong.</li>
+<li>To answer you, including support and feedback.</li>
+<li>To meet legal obligations and to protect people, our rights and the Service.</li>
+</ul>
+<p>We do not use player data to build marketing profiles, to advertise to players, or to train AI models. No decision with legal or similarly significant effect is made about anyone solely by automated means. Staff always make the moderation decision.</p>
+
+<h2>4. Legal bases (EEA, UK and similar laws)</h2>
+<table><tr><th>Data</th><th>Basis</th></tr>
+<tr><td>Staff account data</td><td>Performing our contract with you (running your account), and our legitimate interest in security and preventing abuse</td></tr>
+<tr><td>Player data</td><td>The operator's and our legitimate interest in keeping a community safe and fair. For players who are children we take extra care to keep this proportionate. Where an operator relies on consent instead, the operator is responsible for obtaining it</td></tr>
+<tr><td>Technical and security data</td><td>Legitimate interest in security and preventing abuse</td></tr>
+<tr><td>Legal compliance</td><td>Legal obligation</td></tr></table>
+<p>Where we rely on legitimate interest you may object, see section 10.</p>
+
 <h2>5. Who we share it with</h2>
-<ul><li><b>Infrastructure providers</b> that host the service and store its data for us (for example our web host and database provider), under contract.</li><li><b>Roblox</b>: to look up users and apply bans, the service contacts Roblox's public APIs and ban system. Roblox then handles that information under its own privacy policy. When you view the dashboard, your browser loads avatar images from Roblox's content network.</li><li><b>Google and Roblox</b>: when you sign in with either, they learn that you are using {{service}} and receive your IP address, and they tell us your name and ID. They handle that under their own privacy policies.</li><li><b>Discord</b>: if a workspace admin connects a Discord channel or adds the Sentinel bot, short summaries of events (for example a ban with the player's name, the reason and the staff member, a ban appeal, or a form response) are posted to that server, and staff commands sent from Discord pass through Discord. Discord handles that under its own policies.</li><li><b>Roblox groups</b>: if a workspace owner connects a Roblox group, we read its public role membership to set staff ranks. We never change anything in the group.</li><li><b>Authorities or advisers</b> where required by law or to protect rights and safety, and a successor if our business is transferred.</li></ul>
+<p>We share personal information only with the following, and only as needed:</p>
+<table><tr><th>Recipient</th><th>What and why</th></tr>
+<tr><td><b>Hosting and database providers</b> (currently Vercel, which runs the website, and Supabase, which stores the data)</td><td>They host the Service and store its data for us, as our sub-processors under contract. This includes backups.</td></tr>
+<tr><td><b>Roblox</b></td><td>To look up users and groups and to apply and lift bans, the Service contacts Roblox's public APIs and, where an operator has added an Open Cloud key, Roblox's ban system. When you view the dashboard your browser loads avatar images from Roblox's content network. Roblox handles what it receives under its own privacy policy.</td></tr>
+<tr><td><b>Google and Roblox (sign-in)</b></td><td>When you sign in with either, they learn that you are using {{service}} and receive your IP address, and they tell us your name and ID. They handle that under their own privacy policies.</td></tr>
+<tr><td><b>Discord</b>, only if a workspace owner connects it</td><td>Short summaries of events (for example a ban with the player's name, the reason and the staff member, a ban appeal, a form response, a shift reminder) are posted to the server and channel the owner chose. Staff commands sent from Discord pass through Discord. We store the Discord server ID and, for staff who link, their Discord user ID. Discord handles what it receives under its own policies.</td></tr>
+<tr><td><b>The operator's team</b></td><td>Staff in a workspace can see player data in that workspace according to their rank. Staff can see each other's names, ranks, activity and audit log entries. If an operator lets group staff join automatically, people in the connected Roblox group can join with the rank set for their role.</td></tr>
+<tr><td><b>Authorities and advisers</b></td><td>Where the law requires it, to respond to valid legal requests, or to protect people's safety or our rights. We also share with our professional advisers under confidentiality duties. If our business is sold or transferred, data may pass to the new owner, who must honour this policy.</td></tr></table>
+<p>We do not allow our providers to use your information for their own purposes.</p>
+
 <h2>6. International transfers</h2>
-<p>Data may be processed in countries other than yours. Where required we rely on safeguards such as standard contractual clauses.</p>
+<p>Our providers may process data in countries other than yours, including the United States. Where the law requires it, we rely on safeguards such as the European Commission's standard contractual clauses, the UK addendum, or an adequacy decision. You can ask us for details using the contact address below.</p>
+
 <h2>7. How long we keep it</h2>
 <table><tr><th>Data</th><th>Kept for</th></tr>
-<tr><td>Staff accounts</td><td>Until you leave or are removed from every workspace and ask us to delete the account</td></tr><tr><td>Leave requests</td><td>The latest 300 per workspace</td></tr><tr><td>A whole workspace</td><td>Until its owner deletes it. A deleted workspace is kept for 30 days in case it was a mistake, then erased</td></tr><tr><td>Nightly backups of a workspace</td><td>7 days</td></tr><tr><td>Form responses</td><td>The latest 500 per workspace</td></tr><tr><td>Possible alt account hints</td><td>14 days</td></tr><tr><td>Shifts and attendance</td><td>30 days after the shift</td></tr>
-<tr><td>Audit log</td><td>Most recent 300 actions</td></tr>
-<tr><td>Live chat buffer</td><td>Latest 300 messages, and no longer than 24 hours</td></tr>
+<tr><td>Staff accounts</td><td>Until you leave or are removed from every workspace and ask us to delete the account</td></tr>
+<tr><td>Leave requests</td><td>The latest 300 per workspace</td></tr>
+<tr><td>A whole workspace</td><td>Until its owner deletes it. A deleted workspace is kept for 30 days in case it was a mistake, then erased</td></tr>
+<tr><td>Nightly backups of a workspace</td><td>7 days. A deletion or erasure therefore leaves backups for up to 7 more days, after which it is gone from them too</td></tr>
+<tr><td>Form responses</td><td>The latest 500 per workspace</td></tr>
+<tr><td>Ban appeals</td><td>The latest 200 per workspace</td></tr>
+<tr><td>Possible alt-account hints</td><td>14 days</td></tr>
+<tr><td>Staff invites</td><td>Until they expire (at most the length chosen when they were made) or are used</td></tr>
+<tr><td>Shifts and attendance</td><td>30 days after the shift</td></tr>
+<tr><td>Audit log</td><td>The most recent 300 actions per workspace</td></tr>
+<tr><td>Live chat buffer</td><td>The latest 300 messages, and no longer than 24 hours</td></tr>
 <tr><td>ModCalls and their chat snapshots</td><td>{{callRetentionDays}} days</td></tr>
-<tr><td>Recent activity feed</td><td>Most recent 50 entries</td></tr>
+<tr><td>Recent activity feed</td><td>The most recent 50 entries</td></tr>
+<tr><td>Feedback you send us</td><td>The latest 400 messages across the Service, or until we delete them</td></tr>
 <tr><td>Moderation records, playtime, points</td><td>Until erased on request or by the operator</td></tr>
 <tr><td>Daily playtime and recent game joins (used for the player audit page)</td><td>About six months, then removed automatically, or sooner if erased</td></tr>
-<tr><td>Active bans</td><td>While the ban is in force; a minimal record may remain for community safety after erasure of other data</td></tr></table>
+<tr><td>Active bans</td><td>While the ban is in force. A minimal record may remain for community safety after other data is erased, where the operator has a legitimate need to stop banned players returning</td></tr>
+<tr><td>Anti-abuse counters (hashed IP and a count)</td><td>Removed nightly once their short time window has passed</td></tr></table>
+<p>We may keep information for longer where the law requires it, or where it is needed to deal with a legal claim.</p>
+
 <h2>8. Security</h2>
-<p>We never see your Google or Roblox password. Sessions use secure, HttpOnly cookies; access is limited by role and each game's data is kept separate from every other game's; each game has its own secret key; staff invites expire and can be locked to one Roblox account; staff can protect their account with two-step verification; and requests are rate-limited. No system is perfectly secure, so we cannot guarantee absolute security. Tell us promptly if you suspect a problem.</p>
-<h2>9. Your rights</h2>
-<p>Depending on where you live you may have the right to access, correct, delete, restrict or object to our use of your data, to receive a copy, and to complain to your data protection authority. California residents have the rights to know, delete, correct and opt out of sale or sharing; we do not sell or share personal information. We can export and erase a player's stored data on request and aim to respond within 30 days. Contact us at <a href="mailto:{{email}}">{{email}}</a>. Players may also ask the experience's operator.</p>
-<h2>10. Children</h2>
-<p>Many Roblox players are children. Staff accounts are for people aged 13 or over. We do not knowingly collect personal information from children for any purpose other than the moderation and safety functions described here, which operators enable in their own experiences. Operators must provide any notices and obtain any parental consent that the law requires for their players. A parent or guardian who has a concern can contact us at the address below and we will help locate and delete the data.</p>
-<h2>11. Changes and contact</h2>
-<p>We will update this page when our practices change and change the date above. Questions: {{company}}, <a href="mailto:{{email}}">{{email}}</a>, {{country}}.</p>
+<p>We take reasonable steps to protect personal information:</p>
+<ul>
+<li>We never see your Google or Roblox password.</li>
+<li>Sessions use signed, HttpOnly, secure cookies. Traffic is encrypted in transit.</li>
+<li>Access is limited by role, and each game's data is kept separate from every other game's, with its own secret key that can be replaced at any time.</li>
+<li>Secrets such as authenticator keys and Roblox API keys are stored encrypted. Recovery codes are stored hashed.</li>
+<li>Staff invites expire, are single-use and can be locked to one Roblox account. Staff and owners can turn on two-step verification, and owners can require it for administrators.</li>
+<li>Requests are rate-limited, and every moderation action is recorded in an audit log.</li>
+<li>A copy of each workspace is backed up every night.</li>
+</ul>
+<p>No system is perfectly secure, so we cannot guarantee absolute security. If we become aware of a breach that is likely to harm people, we will notify the affected operators and, where the law requires, the authorities and affected people, without undue delay. Please tell us promptly if you think something is wrong, at the address in section 13.</p>
+
+<h2>9. Cookies and similar technologies</h2>
+<p>We use only the cookies and local storage needed to keep you signed in, remember your workspace, finish two-step sign-in, and remember that you have seen a notice. We do not use advertising or analytics cookies. See the <a href="/legal/cookies">Cookie Policy</a>. We do not respond to "Do Not Track" signals because we do not track you across other sites.</p>
+
+<h2>10. Your rights and how to use them</h2>
+<p>Depending on where you live, you may have the right to: know what we hold about you; get a copy; correct it; delete it; restrict or object to how we use it; move it to another service; withdraw consent you gave; and complain to your data protection authority. People in California, and some other US states, may also have the right to know, delete and correct personal information and to opt out of its sale or sharing. We do not sell or share personal information in those senses, so there is nothing to opt out of.</p>
+<ul>
+<li><b>Staff:</b> use the tools in the dashboard where they exist (for example to turn off two-step verification or unlink Roblox or Discord), or contact us to delete your account. If you are in a workspace, its owner can remove you.</li>
+<li><b>Players:</b> contact us or the operator of the experience. We can export and erase a player's stored data in a workspace on request.</li>
+<li><b>How:</b> email <a href="mailto:{{email}}">{{email}}</a> with your Roblox username or ID and the name of the experience, if you know it. We may ask you to confirm you are who you say you are, for example by showing control of the account, so that we do not give your data to someone else. For a player who is a child, a parent or guardian can make the request.</li>
+<li><b>Time:</b> we aim to answer within 30 days. If we refuse a request we will tell you why and how to complain. In the US you may also appeal our decision by replying to us.</li>
+</ul>
+<p>Some records may need to stay where the law requires it, or where deleting them would stop an operator keeping a ban in force against someone who broke the rules. We will explain this if it applies.</p>
+
+<h2>11. Children</h2>
+<p>Many Roblox players are children, and moderation tools exist partly to protect them. Staff accounts are for people aged 13 or over. We do not knowingly collect personal information from children for any purpose other than the moderation and safety functions described here, which operators enable in their own experiences. We do not market to children or build advertising profiles. Operators must provide any notices and obtain any parental consent that the law requires for their players. A parent or guardian with a concern can contact us at the address below, and we will help find and delete the data.</p>
+
+<h2>12. Changes to this policy</h2>
+<p>We will update this page when our practices change and change the "last updated" date above. If a change is significant, for example a new kind of data or a new recipient, we will also tell staff in the dashboard before it takes effect. Because the Service is in alpha, please check this page from time to time.</p>
+
+<h2>13. Contact</h2>
+<p>{{company}}, <a href="mailto:{{email}}">{{email}}</a>, {{country}}. If you are in the EEA or UK and are not happy with our answer, you can complain to your local data protection authority.</p>
