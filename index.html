@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <meta name="color-scheme" content="light dark">
-<title>Sentinel</title>
+<title>Sentinel</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>
 :root{
  --bg:#fff;--side:#f7f8fa;--ink:#1a1f36;--ink2:#3c4257;--muted:#697386;--faint:#a3acb9;--line:#e3e8ee;--hover:#f6f8fa;--sel:#f0f1f7;
@@ -474,7 +474,7 @@ function render0(anim){
  if(!doAnim&&$('main'))$('main').scrollTop=scroll;fillAv()}
 
 function authView(){const has=k=>ME.providers.includes(k),q=JOIN&&JOIN.code?'?invite='+JOIN.code:'',lk=JOIN&&JOIN.info&&JOIN.info.lock;
- return `<div class="auth"><div style="position:relative;width:100%;max-width:400px"><div class="acard"><div class="appi">S</div><h1>Sign in to Sentinel<span class="alpha">Alpha</span></h1><p class="lead">Moderation and staff tools for your Roblox game.</p>
+ return `<div class="auth"><div style="position:relative;width:100%;max-width:400px"><div class="acard"><img src="/logo.svg" alt="" width="72" height="72" style="display:block;margin:0 auto 20px"><h1>Sign in to Sentinel<span class="alpha">Alpha</span></h1><p class="lead">Moderation and staff tools for your Roblox game.</p>
  ${GJ&&GJ.info?`<div class="inv">Sign in with Roblox to join <b>${esc(GJ.info.workspace)}</b> with your role in <b>${esc(GJ.info.group)}</b>.</div>`:''}${JOIN&&JOIN.info?`<div class="inv">You're invited to join <b>${esc(JOIN.info.workspace)}</b> as ${esc(JOIN.info.role)}.${lk?`<br>This invite is locked to the Roblox account <b>@${esc(lk.name)}</b>, so continue with Roblox.`:''}</div>`:''}
  ${has('roblox')?`<a class="oa dk" href="/auth/roblox${q}">${RBX}Continue with Roblox${has('google')?'<span class="rec">Recommended</span>':''}</a>`:''}${has('google')?`<a class="oa" href="/auth/google${q}">${GOOGLE}Continue with Google</a>`:''}
  ${has('roblox')&&has('google')?`<p class="xs muted" style="margin:14px 0 0">Roblox sign-in proves the account is really yours, and your in-game time counts toward your rank automatically. With Google you can link Roblox later.</p>`:''}
