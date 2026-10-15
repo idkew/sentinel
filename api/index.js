@@ -592,26 +592,143 @@ async function cronRun() {
   for (const r of await sbGet('select=key&key=like.bk:*:core')) { const [, label, wid] = r.key.split(':'), age = Date.now() - labelTime(label); if ((/^\d{8}$/.test(label) && age > BK_KEEP_DAYS * 864e5 + 36e5) || (/^pre\d+$/.test(label) && age > 14 * 864e5)) { await sbDel(`key=like.bk:${label}:${wid}:*`); pruned++; } }
   return { ok: true, snapshotted: snap, purged, pruned, partial };
 }
-const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Sentinel admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
-:root{--bg:#f5f5f7;--card:#fff;--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.1)}@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--card:#2a2a2d;--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.12)}}
-*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;padding:28px 18px}.w{max-width:960px;margin:0 auto}h1{font-size:24px;letter-spacing:-.02em;margin:0 0 4px}p{color:var(--mu);margin:0 0 18px}
-.c{background:var(--card);border-radius:12px;box-shadow:0 0 0 .5px var(--ln);padding:16px 18px;margin-bottom:12px}.r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.sp{flex:1}.mu{color:var(--mu);font-size:13px}
-input{height:34px;border:0;border-radius:8px;padding:0 12px;background:rgba(127,127,127,.14);color:inherit;font:inherit;min-width:260px}button{height:30px;padding:0 12px;border:0;border-radius:8px;background:rgba(127,127,127,.18);color:inherit;font:inherit;font-weight:500;cursor:pointer}button.p{background:var(--ac);color:#fff}button.d{background:#ff3b30;color:#fff}
-.b{display:inline-block;font-size:12px;border-radius:99px;padding:1px 9px;background:rgba(127,127,127,.18)}.b.x{background:rgba(255,59,48,.16);color:#d70015}code{font-size:12px;background:rgba(127,127,127,.16);padding:1px 6px;border-radius:5px}</style></head><body><div class="w"><h1>Sentinel admin</h1><p>Recover workspaces that were deleted or tampered with.</p>
-<div class="c r" id="lg"><input id="t" type="password" placeholder="Admin token" autocomplete="off"><button class="p" id="go">Open</button><span class="mu" id="m"></span></div><div class="c r" id="ex" hidden><b>Off-site copy</b><span class="mu sp">Download every workspace and account in one file. Keep it somewhere outside Supabase, like your own computer.</span><button id="eb">Download everything</button><span class="mu" id="em"></span></div><div class="c r" id="dc" hidden><b>Discord bot</b><span class="mu sp">Register the slash commands after setting the Discord variables. Run it again whenever Sentinel adds commands.</span><button id="dr">Register commands</button><span class="mu" id="dm"></span></div><div class="c r" id="mf" hidden><b>Reset two-step</b><input id="mu" placeholder="User id, like r_123456" autocomplete="off"><button id="mr">Reset</button><span class="mu" id="mm"></span></div><div id="fb"></div><div id="o"></div></div>
-<script>const $=i=>document.getElementById(i);let T=sessionStorage.getItem('adm')||'';const e=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-async function call(b){const r=await fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':T},body:JSON.stringify(b)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Error '+r.status);return j}
-async function loadFb(){const j=await call({op:'feedback'});$('fb').innerHTML=j.items.length?'<h2 style="font-size:17px;margin:18px 0 10px">Feedback and questions</h2>'+j.items.map(f=>'<div class="c"><div class="r"><span class="b">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="mu">'+e(f.rank)+' · '+e(f.wsName)+' · '+new Date(f.t).toLocaleString()+'</span></div><p style="color:inherit;margin:8px 0;white-space:pre-wrap">'+e(f.text)+'</p><div class="r"><input data-r="'+f.id+'" placeholder="Write a reply" value="'+e(f.reply||'')+'" style="flex:1"><button class="p" data-o="fr" data-i="'+f.id+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="d" data-o="fd" data-i="'+f.id+'">Delete</button></div></div>').join(''):''}
-async function load(){try{const j=await call({op:'list'});loadFb().catch(()=>{});sessionStorage.setItem('adm',T);$('lg').hidden=true;$('mf').hidden=false;$('dc').hidden=false;$('ex').hidden=false;$('o').innerHTML=j.workspaces.map(w=>'<div class="c"><div class="r"><b>'+e(w.name)+'</b> <code>'+w.id+'</code>'+(w.deleted?'<span class="b x">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'')+'<span class="sp"></span><span class="mu">owner '+e(w.owner)+' · '+w.members+' member'+(w.members==1?'':'s')+'</span></div><div class="r" style="margin-top:10px">'+(w.deleted?'<button class="p" data-o="rd" data-w="'+w.id+'">Restore workspace</button>':'')+'<button data-o="sn" data-w="'+w.id+'">Back up now</button><button data-o="ls" data-w="'+w.id+'">Backups…</button><button data-o="dl" data-w="'+w.id+'">Download</button><span class="mu" id="s'+w.id+'"></span></div></div>').join('')||'<div class="c mu">No workspaces yet.</div>'}catch(x){$('m').textContent=x.message}}
-$('eb').onclick=async()=>{try{const j=await call({op:'exportAll'}),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j)],{type:'application/json'}));a.download='sentinel-site-'+new Date().toISOString().slice(0,10)+'.json';a.click();$('em').textContent=j.rows.length+' rows saved.'}catch(x){$('em').textContent=x.message}};$('dr').onclick=async()=>{try{const j=await call({op:'discordRegister'});$('dm').textContent='Registered '+j.count+' commands. They can take a minute to appear.'}catch(x){$('dm').textContent=x.message}};$('mr').onclick=async()=>{try{const j=await call({op:'mfaReset',uid:$('mu').value.trim()});$('mm').textContent=j.had?'Two-step removed. They can sign in and set it up again.':'That user did not have two-step on.'}catch(x){$('mm').textContent=x.message}};$('go').onclick=()=>{T=$('t').value.trim();load()};$('t').onkeydown=k=>{if(k.key==='Enter')$('go').click()};if(T)load();
-$('fb').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;try{if(b.dataset.o==='fr')await call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value});else if(confirm('Delete this message?'))await call({op:'feedbackDelete',id:b.dataset.i});loadFb()}catch(x){$('m').textContent=x.message}};
-$('o').onclick=async ev=>{const b=ev.target.closest('button');if(!b)return;const w=b.dataset.w,s=$('s'+w);try{
-if(b.dataset.o==='rd'){if(!confirm('Restore this workspace?'))return;await call({op:'restoreDeleted',wid:w});load()}
-else if(b.dataset.o==='sn'){await call({op:'snapshotNow',wid:w});s.textContent='Backed up.'}
-else if(b.dataset.o==='ls'){const j=await call({op:'snaps',wid:w});s.innerHTML=j.snaps.length?j.snaps.map(d=>'<button data-o="rs" data-w="'+w+'" data-d="'+d+'">'+(d.startsWith('pre')?'Safety copy '+new Date(+d.slice(3)*1000).toLocaleString():d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6))+'</button>').join(' '):'No backups yet.'}
-else if(b.dataset.o==='rs'){if(!confirm('Replace the workspace with the backup of '+b.dataset.d+'? A safety copy is made first.'))return;await call({op:'restoreSnapshot',wid:w,date:b.dataset.d});s.textContent='Restored.'}
-else if(b.dataset.o==='dl'){const j=await call({op:'download',wid:w}),a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download='sentinel-backup-'+w+'.json';a.click()}
-}catch(x){(s||$('m')).textContent=x.message}};</script></body></html>`;
+const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="color-scheme" content="dark"><title>Sentinel Admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
+:root{--bg:#07080c;--bg2:#0b0d13;--card:#10131b;--card2:#151927;--ln:#222637;--ink:#e9ebf3;--mu:#8a8fa6;--ac:#4f8bff;--ac2:#7aa7ff;--red:#ff4d5e;--amb:#f5b942;--grn:#3ddc97}
+*{box-sizing:border-box}[hidden]{display:none!important}html{color-scheme:dark}
+body{margin:0;min-height:100vh;color:var(--ink);font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:radial-gradient(900px 500px at 85% -10%,rgba(79,139,255,.14),transparent 60%),radial-gradient(700px 420px at -10% 110%,rgba(255,77,94,.09),transparent 60%),var(--bg);background-attachment:fixed}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(ellipse at 50% 0,#000 20%,transparent 75%);-webkit-mask-image:radial-gradient(ellipse at 50% 0,#000 20%,transparent 75%)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+button,input{font:inherit;color:inherit}
+.btn{height:34px;padding:0 14px;border:1px solid var(--ln);border-radius:9px;background:var(--card2);color:var(--ink);font-weight:550;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{border-color:#34395a;background:#1b2033}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.5;cursor:default}
+.btn.p{background:linear-gradient(180deg,#5d97ff,#3f78ec);border-color:#4f8bff;color:#fff;box-shadow:0 6px 20px -8px rgba(79,139,255,.8)}.btn.p:hover{filter:brightness(1.08)}
+.btn.d{background:rgba(255,77,94,.12);border-color:rgba(255,77,94,.4);color:#ff8f9a}.btn.d:hover{background:rgba(255,77,94,.2)}
+.btn.s{height:28px;padding:0 10px;font-size:13px;border-radius:8px}
+input.in{height:38px;border:1px solid var(--ln);border-radius:10px;padding:0 13px;background:#0a0c12;width:100%;outline:none;transition:.15s}
+input.in:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(79,139,255,.18)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;padding:3px 10px;border:1px solid var(--ln);color:var(--mu);background:rgba(255,255,255,.03)}
+.pill.red{color:#ff8f9a;border-color:rgba(255,77,94,.4);background:rgba(255,77,94,.08)}.pill.grn{color:var(--grn);border-color:rgba(61,220,151,.35);background:rgba(61,220,151,.07)}.pill.amb{color:var(--amb);border-color:rgba(245,185,66,.4);background:rgba(245,185,66,.08)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;padding:12px 24px;background:rgba(7,8,12,.78);backdrop-filter:blur(14px);border-bottom:1px solid var(--ln)}
+.top:after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:linear-gradient(90deg,transparent,var(--red) 20%,var(--amb) 50%,var(--ac) 80%,transparent);opacity:.7}
+.br{display:flex;align-items:center;gap:11px}.br img{width:30px;height:30px}.br b{font-size:16px;letter-spacing:-.01em}.br small{display:block;color:var(--mu);font-size:11.5px;margin-top:-2px}
+.sp{flex:1}
+.w{max-width:1120px;margin:0 auto;padding:26px 24px 70px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.st{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--ln);border-radius:14px;padding:16px 18px;position:relative;overflow:hidden}
+.st:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--ac))}
+.st small{color:var(--mu);font-size:11.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}.st b{display:block;font-size:30px;letter-spacing:-.03em;margin-top:2px;font-variant-numeric:tabular-nums}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--ln);margin-bottom:18px}
+.tab{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 14px;color:var(--mu);font-weight:600;cursor:pointer;display:flex;gap:8px;align-items:center}
+.tab:hover{color:var(--ink)}.tab.on{color:var(--ink);border-color:var(--ac)}.tab i{font-style:normal;font-size:11px;background:rgba(79,139,255,.18);color:var(--ac2);border-radius:99px;padding:1px 8px}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}.bar .in{max-width:340px}
+.chips{display:flex;gap:6px}.chip{height:30px;padding:0 12px;border-radius:99px;border:1px solid var(--ln);background:none;color:var(--mu);cursor:pointer;font-weight:600;font-size:13px}.chip.on{background:rgba(79,139,255,.15);border-color:rgba(79,139,255,.5);color:var(--ac2)}
+.card{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--ln);border-radius:14px;padding:16px 18px;margin-bottom:10px}
+.ws{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.av{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-weight:750;font-size:17px;background:linear-gradient(135deg,#243a7a,#4f8bff);color:#fff;flex:none}
+.card.del .av{background:linear-gradient(135deg,#5a1d27,#c8374a)}
+.nm{min-width:0}.nm b{font-size:15.5px}.nm .m{color:var(--mu);font-size:12.5px;margin-top:1px;display:flex;gap:10px;flex-wrap:wrap}
+code{font-size:12px;background:#0a0c12;border:1px solid var(--ln);padding:1px 7px;border-radius:6px;color:var(--ac2)}
+.acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--ln);align-items:center}
+.snaps{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.note{color:var(--mu);font-size:13px}
+.empty{text-align:center;color:var(--mu);padding:46px 10px;border:1px dashed var(--ln);border-radius:14px}
+.tg{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px}.tg .card{margin:0;display:flex;flex-direction:column;gap:12px}
+.tg h3{margin:0;font-size:15.5px;display:flex;gap:9px;align-items:center}.tg p{margin:0;color:var(--mu);font-size:13px}
+.ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(79,139,255,.14);color:var(--ac2)}.ic svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.fb p{white-space:pre-wrap;margin:10px 0}.fb .r{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bd{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;border-radius:6px;padding:2px 8px;background:rgba(79,139,255,.16);color:var(--ac2)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);background:#1b2033;border:1px solid #34395a;border-radius:11px;padding:11px 18px;opacity:0;pointer-events:none;transition:.25s;z-index:60;box-shadow:0 20px 50px -20px #000}.toast.on{opacity:1;transform:translate(-50%,0)}.toast.err{border-color:rgba(255,77,94,.6);color:#ff9ba5}
+.scrim{position:fixed;inset:0;background:rgba(3,4,8,.7);backdrop-filter:blur(5px);display:grid;place-items:center;z-index:50;padding:20px;animation:fi .15s}@keyframes fi{from{opacity:0}}
+.md{width:100%;max-width:420px;background:var(--card2);border:1px solid var(--ln);border-radius:16px;padding:22px;box-shadow:0 40px 90px -30px #000}.md h2{margin:0 0 6px;font-size:18px}.md p{margin:0 0 18px;color:var(--mu)}.md .r{display:flex;gap:8px;justify-content:flex-end}
+.skel{height:92px;border-radius:14px;border:1px solid var(--ln);background:linear-gradient(90deg,var(--card),var(--card2),var(--card));background-size:200% 100%;animation:sk 1.2s infinite;margin-bottom:10px}@keyframes sk{to{background-position:-200% 0}}
+@media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}.top{padding:10px 14px}.w{padding:18px 14px 60px}}
+</style></head><body>
+<header class="top"><div class="br"><img src="/favicon.svg" alt=""><div><b>Sentinel Admin</b><small>Site console</small></div></div><span class="pill red"><span class="dot"></span>Restricted</span><span class="sp"></span><span class="pill grn" id="ss"><span class="dot"></span>Session active</span><button class="btn s" id="out">Sign out</button></header>
+<main class="w">
+<section class="stats"><div class="st"><small>Workspaces</small><b id="s1">-</b></div><div class="st" style="--c:var(--red)"><small>In recycle bin</small><b id="s2">-</b></div><div class="st" style="--c:var(--grn)"><small>Total members</small><b id="s3">-</b></div><div class="st" style="--c:var(--amb)"><small>Feedback</small><b id="s4">-</b></div></section>
+<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="tl" role="tab">Tools</button></nav>
+<section id="p-ws"><div class="bar"><input class="in" id="q" placeholder="Search by name, id or owner" aria-label="Search workspaces"><div class="chips"><button class="chip on" data-f="all">All</button><button class="chip" data-f="live">Active</button><button class="chip" data-f="del">Deleted</button></div><span class="sp"></span><button class="btn s" id="rf">Refresh</button></div><div id="o"><div class="skel"></div><div class="skel"></div></div></section>
+<section id="p-fb" hidden><div id="fb"></div></section>
+<section id="p-tl" hidden><div class="tg">
+<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></span>Off-site copy</h3><p>Download every workspace and account in one file. Keep it somewhere outside Supabase, like your own computer.</p><div><button class="btn p" id="eb">Download everything</button> <span class="note" id="em"></span></div></div>
+<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 12h10M5 16h6M3 4h18v16H3z"/></svg></span>Discord bot</h3><p>Register the slash commands after setting the Discord variables. Run it again whenever Sentinel adds commands.</p><div><button class="btn p" id="dr">Register commands</button> <span class="note" id="dm"></span></div></div>
+<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></span>Reset two-step</h3><p>Removes two-step verification from a locked-out account so the person can set it up again.</p><div style="display:flex;gap:8px"><input class="in" id="mu" placeholder="User id, like r_123456" autocomplete="off"><button class="btn d" id="mr">Reset</button></div><span class="note" id="mm"></span></div>
+</div></section>
+</main><div class="toast" id="tt" role="status"></div><div id="md"></div>
+<script>var $=function(i){return document.getElementById(i)},WS=[],FB=[],FL='all';
+function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+var tt=null;function toast(m,bad){var t=$('tt');t.textContent=m;t.className='toast on'+(bad?' err':'');clearTimeout(tt);tt=setTimeout(function(){t.className='toast'},3200)}
+function back(){location.reload()}
+function call(b){return fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){if(r.status===401||r.status===403){back();throw new Error('Session ended')}if(!r.ok)throw new Error(j.error||'Error '+r.status);return j})})}
+function ask(title,text,ok,danger){return new Promise(function(res){var m=$('md');m.innerHTML='<div class="scrim"><div class="md" role="dialog" aria-modal="true"><h2>'+e(title)+'</h2><p>'+e(text)+'</p><div class="r"><button class="btn" id="mn">Cancel</button><button class="btn '+(danger?'d':'p')+'" id="my">'+e(ok)+'</button></div></div></div>';var c=function(v){m.innerHTML='';document.removeEventListener('keydown',k);res(v)},k=function(x){if(x.key==='Escape')c(false)};document.addEventListener('keydown',k);$('mn').onclick=function(){c(false)};$('my').onclick=function(){c(true)};m.firstChild.onclick=function(x){if(x.target===m.firstChild)c(false)};$('my').focus()})}
+function stats(){$('s1').textContent=WS.filter(function(w){return!w.deleted}).length;$('s2').textContent=WS.filter(function(w){return w.deleted}).length;$('s3').textContent=WS.reduce(function(a,w){return a+(w.members||0)},0);$('s4').textContent=FB.length;var n=$('fbn');n.hidden=!FB.length;n.textContent=FB.length}
+function drawWs(){var q=$('q').value.trim().toLowerCase(),l=WS.filter(function(w){return(FL==='all'||(FL==='del')===!!w.deleted)&&(!q||(w.name+' '+w.id+' '+w.owner).toLowerCase().indexOf(q)>=0)});
+$('o').innerHTML=l.length?l.map(function(w){return'<div class="card '+(w.deleted?'del':'')+'"><div class="ws"><div class="av">'+e((w.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(w.name)+'</b> <code>'+e(w.id)+'</code><div class="m"><span>Owner '+e(w.owner)+'</span><span>'+w.members+' member'+(w.members==1?'':'s')+'</span>'+(w.created?'<span>Created '+new Date(w.created).toLocaleDateString()+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(w.deleted?'<span class="pill red">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'<span class="pill grn"><span class="dot"></span>Active</span>')+'</div><div class="acts">'+(w.deleted?'<button class="btn p s" data-o="rd" data-w="'+e(w.id)+'">Restore workspace</button>':'')+'<button class="btn s" data-o="sn" data-w="'+e(w.id)+'">Back up now</button><button class="btn s" data-o="ls" data-w="'+e(w.id)+'">Backups</button><button class="btn s" data-o="dl" data-w="'+e(w.id)+'">Download</button><span class="note" id="s'+e(w.id)+'"></span></div></div>'}).join(''):'<div class="empty">'+(WS.length?'No workspaces match.':'No workspaces yet.')+'</div>'}
+function drawFb(){$('fb').innerHTML=FB.length?FB.map(function(f){return'<div class="card fb"><div class="r"><span class="bd">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="note">'+e(f.rank)+' - '+e(f.wsName)+' - '+new Date(f.t).toLocaleString()+'</span></div><p>'+e(f.text)+'</p><div class="r"><input class="in" style="flex:1;min-width:220px;width:auto" data-r="'+e(f.id)+'" placeholder="Write a reply" value="'+e(f.reply||'')+'"><button class="btn p s" data-o="fr" data-i="'+e(f.id)+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="btn d s" data-o="fd" data-i="'+e(f.id)+'">Delete</button></div></div>'}).join(''):'<div class="empty">No feedback yet.</div>'}
+function load(){return call({op:'list'}).then(function(j){WS=j.workspaces;stats();drawWs();return call({op:'feedback'}).then(function(f){FB=f.items;stats();drawFb()},function(){})}).catch(function(x){$('o').innerHTML='<div class="empty">'+e(x.message)+'</div>'})}
+document.querySelector('.tabs').onclick=function(ev){var b=ev.target.closest('.tab');if(!b)return;document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t===b)});['ws','fb','tl'].forEach(function(k){$('p-'+k).hidden=k!==b.dataset.t})};
+document.querySelector('.chips').onclick=function(ev){var b=ev.target.closest('.chip');if(!b)return;FL=b.dataset.f;document.querySelectorAll('.chip').forEach(function(c){c.classList.toggle('on',c===b)});drawWs()};
+$('q').oninput=drawWs;$('rf').onclick=function(){load().then(function(){toast('Refreshed')})};
+$('out').onclick=function(){fetch('/admin/logout',{method:'POST'}).then(back)};
+$('eb').onclick=function(){call({op:'exportAll'}).then(function(j){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j)],{type:'application/json'}));a.download='sentinel-site-'+new Date().toISOString().slice(0,10)+'.json';a.click();$('em').textContent=j.rows.length+' rows saved.'}).catch(function(x){$('em').textContent=x.message})};
+$('dr').onclick=function(){call({op:'discordRegister'}).then(function(j){$('dm').textContent='Registered '+j.count+' commands. They can take a minute to appear.'}).catch(function(x){$('dm').textContent=x.message})};
+$('mr').onclick=function(){var u=$('mu').value.trim();if(!u)return;call({op:'mfaReset',uid:u}).then(function(j){$('mm').textContent=j.had?'Two-step removed. They can sign in and set it up again.':'That user did not have two-step on.'}).catch(function(x){$('mm').textContent=x.message})};
+$('fb').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var go=function(){return b.dataset.o==='fr'?call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value}).then(function(){toast('Reply saved')}):ask('Delete this message?','It will be removed for good.','Delete',true).then(function(y){if(y)return call({op:'feedbackDelete',id:b.dataset.i}).then(function(){toast('Deleted')})})};go().then(load).catch(function(x){toast(x.message,true)})};
+$('o').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var w=b.dataset.w,s=$('s'+w),o=b.dataset.o;
+var fail=function(x){(s||{}).textContent=x.message;toast(x.message,true)};
+if(o==='rd')ask('Restore this workspace?','It comes back with its team, logs and settings.','Restore').then(function(y){if(y)return call({op:'restoreDeleted',wid:w}).then(function(){toast('Workspace restored');return load()})}).catch(fail);
+else if(o==='sn')call({op:'snapshotNow',wid:w}).then(function(){s.textContent='Backed up.';toast('Backup saved')}).catch(fail);
+else if(o==='ls')call({op:'snaps',wid:w}).then(function(j){s.innerHTML='';var d=s.parentNode,old=d.parentNode.querySelector('.snaps');if(old)old.remove();var x=document.createElement('div');x.className='snaps';x.innerHTML=j.snaps.length?j.snaps.map(function(k){return'<button class="btn s" data-o="rs" data-w="'+e(w)+'" data-d="'+e(k)+'">'+(k.indexOf('pre')===0?'Safety copy '+new Date(+k.slice(3)*1000).toLocaleString():k.slice(0,4)+'-'+k.slice(4,6)+'-'+k.slice(6))+'</button>'}).join(''):'<span class="note">No backups yet.</span>';d.parentNode.appendChild(x)}).catch(fail);
+else if(o==='rs')ask('Restore this backup?','The workspace is replaced with the backup of '+b.dataset.d+'. A safety copy is made first.','Restore',true).then(function(y){if(y)return call({op:'restoreSnapshot',wid:w,date:b.dataset.d}).then(function(){toast('Backup restored')})}).catch(fail);
+else if(o==='dl')call({op:'download',wid:w}).then(function(j){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download='sentinel-backup-'+w+'.json';a.click()}).catch(fail)};
+load();</script></body></html>
+`;
+const ADMIN_GATE = () => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="color-scheme" content="dark"><title>Sentinel Admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
+:root{--bg:#07080c;--bg2:#0b0d13;--card:#10131b;--card2:#151927;--ln:#222637;--ink:#e9ebf3;--mu:#8a8fa6;--ac:#4f8bff;--ac2:#7aa7ff;--red:#ff4d5e;--amb:#f5b942;--grn:#3ddc97}
+*{box-sizing:border-box}[hidden]{display:none!important}html{color-scheme:dark}
+body{margin:0;min-height:100vh;color:var(--ink);font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:radial-gradient(900px 500px at 85% -10%,rgba(79,139,255,.14),transparent 60%),radial-gradient(700px 420px at -10% 110%,rgba(255,77,94,.09),transparent 60%),var(--bg);background-attachment:fixed}
+body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(ellipse at 50% 0,#000 20%,transparent 75%);-webkit-mask-image:radial-gradient(ellipse at 50% 0,#000 20%,transparent 75%)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+button,input{font:inherit;color:inherit}
+.btn{height:34px;padding:0 14px;border:1px solid var(--ln);border-radius:9px;background:var(--card2);color:var(--ink);font-weight:550;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{border-color:#34395a;background:#1b2033}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.5;cursor:default}
+.btn.p{background:linear-gradient(180deg,#5d97ff,#3f78ec);border-color:#4f8bff;color:#fff;box-shadow:0 6px 20px -8px rgba(79,139,255,.8)}.btn.p:hover{filter:brightness(1.08)}
+.btn.d{background:rgba(255,77,94,.12);border-color:rgba(255,77,94,.4);color:#ff8f9a}.btn.d:hover{background:rgba(255,77,94,.2)}
+.btn.s{height:28px;padding:0 10px;font-size:13px;border-radius:8px}
+input.in{height:38px;border:1px solid var(--ln);border-radius:10px;padding:0 13px;background:#0a0c12;width:100%;outline:none;transition:.15s}
+input.in:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(79,139,255,.18)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;padding:3px 10px;border:1px solid var(--ln);color:var(--mu);background:rgba(255,255,255,.03)}
+.pill.red{color:#ff8f9a;border-color:rgba(255,77,94,.4);background:rgba(255,77,94,.08)}.pill.grn{color:var(--grn);border-color:rgba(61,220,151,.35);background:rgba(61,220,151,.07)}.pill.amb{color:var(--amb);border-color:rgba(245,185,66,.4);background:rgba(245,185,66,.08)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+
+body{display:grid;place-items:center;padding:24px}
+.g{position:relative;width:100%;max-width:400px;background:linear-gradient(180deg,rgba(21,25,39,.92),rgba(14,17,26,.92));border:1px solid var(--ln);border-radius:20px;padding:34px 30px 28px;box-shadow:0 30px 80px -30px #000,0 0 0 1px rgba(255,255,255,.02) inset;backdrop-filter:blur(8px);animation:up .5s cubic-bezier(.2,.8,.2,1)}
+.g:before{content:"";position:absolute;left:24px;right:24px;top:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--red),var(--amb),transparent)}
+@keyframes up{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.lg{width:62px;height:62px;border-radius:16px;margin:0 auto 18px;display:grid;place-items:center;background:#0a0c12;border:1px solid var(--ln);box-shadow:0 0 40px -6px rgba(79,139,255,.55)}.lg img{width:38px;height:38px}
+h1{margin:0;text-align:center;font-size:22px;letter-spacing:-.02em}.sub{text-align:center;color:var(--mu);margin:6px 0 22px}
+.row{display:flex;justify-content:center;margin-bottom:18px}
+label{display:block;font-size:12px;color:var(--mu);margin:0 0 7px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.pw{position:relative}.pw button{position:absolute;right:6px;top:5px;height:28px;border:0;background:none;color:var(--mu);cursor:pointer;font-size:12px;font-weight:600}
+.go{width:100%;height:42px;margin-top:16px;justify-content:center;font-size:15px}
+.err{min-height:20px;margin-top:12px;color:#ff8f9a;font-size:13px;text-align:center}
+.foot{margin-top:18px;text-align:center;color:var(--mu);font-size:12px}
+.shake{animation:sh .35s}@keyframes sh{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+</style></head><body><form class="g" id="f" autocomplete="off" novalidate>
+<div class="lg"><img src="/favicon.svg" alt="Sentinel"></div>
+<div class="row"><span class="pill red"><span class="dot"></span>Restricted area</span></div>
+<h1>Sentinel Admin</h1><p class="sub" id="sb">Enter the admin password to continue.</p>
+<label for="t">Admin password</label><div class="pw"><input class="in" id="t" type="password" placeholder="Admin password" autocomplete="current-password" autofocus><button type="button" id="sh">Show</button></div>
+<button class="btn p go" id="go">Unlock</button><div class="err" id="m" role="alert"></div>
+<div class="foot">Sessions end after 8 hours. Attempts are rate limited.</div></form>
+<script>var $=function(i){return document.getElementById(i)};
+if(${ADMIN_TOKEN.length < 16}){$('sb').textContent='The admin console is switched off. Set ADMIN_TOKEN (16+ characters) in Vercel, then redeploy.';$('t').disabled=true;$('go').disabled=true}
+$('sh').onclick=function(){var t=$('t');t.type=t.type==='password'?'text':'password';this.textContent=t.type==='password'?'Show':'Hide'};
+$('f').onsubmit=function(e){e.preventDefault();var b=$('go');if(!$('t').value.trim())return;b.disabled=true;b.textContent='Checking...';$('m').textContent='';
+fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:$('t').value.trim()})}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){return[r,j]})}).then(function(a){if(a[0].ok){b.textContent='Welcome';location.reload()}else{b.disabled=false;b.textContent='Unlock';$('m').textContent=a[1].error||'That did not work.';var g=$('f');g.classList.remove('shake');void g.offsetWidth;g.classList.add('shake');$('t').select()}}).catch(function(){b.disabled=false;b.textContent='Unlock';$('m').textContent='Could not reach the server.'})};</script></body></html>
+`;
 
 // ---- sessions (signed cookies, nothing stored server-side), game keys, helpers ----
 const hash = s => crypto.createHash('sha256').update(String(s)).digest();
@@ -902,11 +1019,20 @@ async function route(req, res, url, p) {
       if (p === '/api/status') { res.writeHead(dbOk ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(st)); }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(STATUS_PAGE);
     }
-    if (req.method === 'GET' && p === '/admin') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(ADMIN_PAGE); }
+    // the admin page itself needs the password: without a valid session cookie only the lock screen is sent
+    const admSession = () => { const d = unpack(cookiesOf(req).adm); return !!(d && d.a === 1); };
+    if (req.method === 'GET' && p === '/admin') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'X-Frame-Options': 'DENY' }); return res.end(ADMIN_TOKEN.length >= 16 && admSession() ? ADMIN_PAGE : ADMIN_GATE()); }
+    if (req.method === 'POST' && p === '/admin/login') {
+      if (ADMIN_TOKEN.length < 16) return send(res, 404, { error: 'The admin console is off. Set ADMIN_TOKEN (16+ characters) in Vercel to turn it on.' });
+      const w1 = limit('admtry:' + ip, 40, 900000); if (w1) return tooMany(res, w1);
+      const L = await body(req); if (!same(String(L.token || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong password' });
+      res.setHeader('Set-Cookie', mkCookie('adm', pack({ a: 1, e: Date.now() + 8 * 3600000 }), { maxAge: 28800 })); return ok(res);
+    }
+    if (req.method === 'POST' && p === '/admin/logout') { res.setHeader('Set-Cookie', clearCookie('adm')); return ok(res); }
     if (req.method === 'POST' && p === '/admin/api') {
       if (ADMIN_TOKEN.length < 16) return send(res, 404, { error: 'The admin console is off. Set ADMIN_TOKEN (16+ characters) in Vercel to turn it on.' });
-      const w0 = limit('admtry:' + ip, 40, 900000); if (w0) return tooMany(res, w0);
-      if (!same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
+      const w0 = admSession() ? 0 : limit('admtry:' + ip, 40, 900000); if (w0) return tooMany(res, w0);
+      if (!admSession() && !same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
       const A = await body(req), wid = String(A.wid || '');
       if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
       if (A.op === 'exportAll') {
