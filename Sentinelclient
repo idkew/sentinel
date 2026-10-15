@@ -1,0 +1,55 @@
+--[[
+	Sentinel chat-bar script (optional, but recommended)
+
+	WHAT IT DOES
+	  When a moderator mutes a player in Sentinel, this hides that player's chat bar completely,
+	  and brings it back when the mute ends. Without it, a muted player's messages are still
+	  stopped by the server, but they can still type.
+
+	HOW TO ADD IT (1 minute)
+	  1. In Roblox Studio, open the Explorer and find StarterPlayer, then StarterPlayerScripts.
+	  2. Hover StarterPlayerScripts, click the +, and choose LocalScript.
+	  3. Delete what is inside it and paste this whole file.
+	  4. Publish your game. You do NOT need to put your game code in this one.
+
+	It only changes the player's own screen. Your main Sentinel script (in ServerScriptService)
+	still does the real muting, so this one is just the visible part.
+]]
+
+local Players = game:GetService("Players")
+local TextChatService = game:GetService("TextChatService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local savedInput = nil -- what the chat bar was set to before we hid it
+local hidden = false
+
+local function hideChat()
+	if hidden then return end
+	hidden = true
+	pcall(function()
+		local cfg = TextChatService:FindFirstChildOfClass("ChatInputBarConfiguration")
+		if cfg then
+			savedInput = cfg.Enabled
+			cfg.Enabled = false
+		end
+	end)
+	pcall(function() StarterGui:SetCore("ChatBarDisabled", true) end) -- the old chat
+end
+
+local function showChat()
+	if not hidden then return end
+	hidden = false
+	pcall(function()
+		local cfg = TextChatService:FindFirstChildOfClass("ChatInputBarConfiguration")
+		if cfg then cfg.Enabled = savedInput ~= false end
+	end)
+	pcall(function() StarterGui:SetCore("ChatBarDisabled", false) end)
+end
+
+local function apply()
+	if player:GetAttribute("SentinelMuted") == true then hideChat() else showChat() end
+end
+
+player:GetAttributeChangedSignal("SentinelMuted"):Connect(apply)
+apply()
