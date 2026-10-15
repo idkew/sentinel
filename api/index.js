@@ -667,7 +667,7 @@ select.in{height:38px}
 <section id="p-fb" hidden><div id="fb"></div></section>
 <section id="p-st" hidden><div class="tg">
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 001 1h3l5 4V6L7 10H4a1 1 0 00-1 1zM16 8a5 5 0 010 8"/></svg></span>Announcement banner <span class="pill" id="anp">Off</span></h3><p>Shows a message at the top of Sentinel for everyone, like planned downtime. People can close it.</p><textarea class="in" id="ant" maxlength="240" placeholder="Sentinel will be briefly down tonight at 9pm Central."></textarea><div class="row"><select class="in" id="ank" style="width:auto"><option value="info">Info (blue)</option><option value="warn">Warning (amber)</option></select><button class="btn p" id="anb">Post</button><button class="btn" id="anr">Remove</button></div></div>
-<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6z"/></svg></span>Maintenance mode <span class="pill" id="mtp">Off</span></h3><p>Pauses the panel for everyone while you fix something. Games keep syncing, so moderation in game is not interrupted. This console always works.</p><input class="in" id="mtm" maxlength="240" placeholder="We are updating Sentinel. Back in a few minutes."><div class="row"><button class="btn d" id="mtb">Turn on</button></div></div>
+<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6z"/></svg></span>Maintenance mode <span class="pill" id="mtp">Off</span></h3><p>Shows a "Back soon" page while you fix something. This console and the status page always work.</p><select class="in" id="mts"><option value="panel">Panel only (games keep syncing, in-game moderation continues)</option><option value="full">Entire website (panel, public pages, appeals, forms and games all pause)</option></select><input class="in" id="mtm" maxlength="240" placeholder="We are updating Sentinel. Back in a few minutes."><div class="row"><button class="btn d" id="mtb">Turn on</button></div></div>
 <div class="card" style="grid-column:1/-1"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>Health <span class="sp" style="flex:1"></span><button class="btn s" id="hb">Run checks</button></h3><div id="ho" class="note">Running checks...</div></div>
 </div></section>
 <section id="p-lg" hidden><div class="bar"><span class="note">Everything done in this console, newest first.</span><span class="sp"></span><button class="btn s" id="lgr">Refresh</button></div><div class="card lg" id="lgo"></div></section>
@@ -739,11 +739,11 @@ else if(t==='ex')call({op:'userExport',uid:id}).then(function(j){saveJson('senti
 else if(t==='mf')ask('Reset two-step for '+id+'?','Removes two-step so they can sign in and set it up again.','Reset',true).then(function(y){if(y)return call({op:'mfaReset',uid:id}).then(function(){toast('Two-step removed');searchUsers()})}).catch(fail);
 else if(t==='dl')ask2('Delete account '+id,'Removes the account and takes them off every team. Workspaces they own must be deleted or handed over first. Type the user id to confirm.','Delete account',{ph:id,must:id,danger:1}).then(function(v){if(v)return call({op:'userDelete',uid:id,confirm:v}).then(function(){toast('Account deleted');searchUsers()})}).catch(fail)};
 /* ---- site ---- */
-function drawSite(j){var a=j.announce,m=j.maint;$('anp').textContent=a?'On':'Off';$('anp').className='pill'+(a?' grn':'');if(a){$('ant').value=a.text;$('ank').value=a.kind}$('mtp').textContent=m&&m.on?'ON':'Off';$('mtp').className='pill'+(m&&m.on?' red':'');$('mtb').textContent=m&&m.on?'Turn off':'Turn on';$('mtb').className='btn '+(m&&m.on?'p':'d');if(m&&m.on)$('mtm').value=m.message||'';$('pill-m').hidden=!(m&&m.on);$('pill-a').hidden=!a}
+function drawSite(j){var a=j.announce,m=j.maint;$('anp').textContent=a?'On':'Off';$('anp').className='pill'+(a?' grn':'');if(a){$('ant').value=a.text;$('ank').value=a.kind}$('mtp').textContent=m&&m.on?(m.full?'ON - whole site':'ON - panel'):'Off';$('mts').value=m&&m.full?'full':'panel';$('mtp').className='pill'+(m&&m.on?' red':'');$('mtb').textContent=m&&m.on?'Turn off':'Turn on';$('mtb').className='btn '+(m&&m.on?'p':'d');if(m&&m.on)$('mtm').value=m.message||'';$('pill-m').hidden=!(m&&m.on);$('pill-m').textContent=m&&m.full?'Maintenance: whole site':'Maintenance: panel';$('pill-a').hidden=!a}
 function loadSite(){return call({op:'site'}).then(drawSite).catch(function(){})}
 $('anb').onclick=function(){call({op:'announce',on:true,text:$('ant').value,kind:$('ank').value}).then(function(){toast('Announcement posted');loadSite()}).catch(function(x){toast(x.message,true)})};
 $('anr').onclick=function(){call({op:'announce',on:false}).then(function(){$('ant').value='';toast('Announcement removed');loadSite()}).catch(function(x){toast(x.message,true)})};
-$('mtb').onclick=function(){var on=$('mtp').textContent!=='ON';(on?ask('Turn on maintenance mode?','Nobody can use the panel until you turn it off. Games keep syncing.','Turn on',true):Promise.resolve(true)).then(function(y){if(y)return call({op:'maintenance',on:on,message:$('mtm').value}).then(function(){toast(on?'Maintenance mode is ON':'Maintenance mode is off');loadSite()})}).catch(function(x){toast(x.message,true)})};
+$('mtb').onclick=function(){var on=$('mtp').textContent==='Off',full=$('mts').value==='full';(on?ask('Turn on maintenance mode?',full?'The ENTIRE website pauses: panel, appeal and form pages, sign-in and game syncing. Moderation actions will not reach games until you turn it off.':'Nobody can use the panel until you turn it off. Games keep syncing.','Turn on',true):Promise.resolve(true)).then(function(y){if(y)return call({op:'maintenance',on:on,full:full,message:$('mtm').value}).then(function(){toast(on?'Maintenance mode is ON':'Maintenance mode is off');loadSite()})}).catch(function(x){toast(x.message,true)})};
 function hrow(n,st,t){return'<div class="hc"><b>'+n+'</b><span class="note">'+e(t||'')+'</span><span class="pill '+(st==='ok'?'grn':st==='warn'?'amb':'red')+'">'+(st==='ok'?'OK':st==='warn'?'Check':'Problem')+'</span></div>'}
 function runHealth(){$('ho').innerHTML='Running checks...';call({op:'health'}).then(function(j){var c=j.config,b=j.backups,h='';
 h+=hrow('Database',j.db.ok?(j.db.ms>1500?'warn':'ok'):'bad',j.db.ok?j.db.ms+' ms':'Cannot reach Supabase');
@@ -1023,9 +1023,29 @@ async function go(){try{const j=await (await fetch('/api/status',{cache:'no-stor
  $('rows').innerHTML=row(true,'Website','Responding')+row(j.database.ok,'Database',j.database.ok?j.database.ms+' ms':'Not reachable')+row(j.backups.ok,'Nightly backups',j.backups.lastRun?'Last run '+new Date(j.backups.lastRun).toLocaleString():'Not run yet')+row(j.discordBot?true:null,'Discord bot',j.discordBot?'Set up':'Not set up on this site')+row(j.signIn.length?true:false,'Sign-in',j.signIn.map(x=>x[0].toUpperCase()+x.slice(1)).join(' and ')||'Not set up')}
  catch{$('bd').className='d r';$('bt').textContent='The website is not responding.';$('rows').innerHTML=''}}go();setInterval(go,30000);</script></body></html>`;
 
+// ---- whole-site maintenance: read at most every 5 seconds per server, and never block on a database hiccup ----
+const MC = { v: null, t: 0 };
+async function maintState() {
+  if (Date.now() - MC.t < 5000) return MC.v;
+  try { const r = await sbGet('select=maint:value->maint&key=in.(g:stats)'); MC.v = (r[0] && r[0].maint) || null; MC.t = Date.now(); } catch { MC.t = Date.now() - 3000; }
+  return MC.v;
+}
+const MAINT_PAGE = msg => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta http-equiv="refresh" content="60"><meta name="color-scheme" content="light dark"><title>Back soon</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><style>
+:root{--bg:#f4f6fb;--card:#fff;--ink:#14161f;--mu:#6b7186;--ln:#e3e6f0}@media(prefers-color-scheme:dark){:root{--bg:#0b0d13;--card:#12151f;--ink:#eceef6;--mu:#8b90a6;--ln:#232738}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:16px/1.55 Inter,-apple-system,system-ui,sans-serif}
+.c{max-width:430px;width:100%;text-align:center;background:var(--card);border:1px solid var(--ln);border-radius:22px;padding:38px 30px;box-shadow:0 30px 70px -40px rgba(0,0,0,.4)}
+img{width:56px;height:56px;margin-bottom:14px}h1{margin:0 0 8px;font-size:24px;letter-spacing:-.02em}p{margin:0;color:var(--mu)}.s{margin-top:22px;font-size:13px;color:var(--mu)}
+.bar{height:5px;border-radius:5px;margin:22px auto 0;width:130px;background:repeating-linear-gradient(45deg,#f5b800 0 10px,#1b1b1f 10px 20px)}
+</style></head><body><div class="c"><img src="/favicon.svg" alt=""><h1>Back soon</h1><p>${esc(msg || 'Sentinel is down for a short maintenance break.')}</p><div class="bar"></div><div class="s">This page checks again by itself.</div></div></body></html>`;
 async function route(req, res, url, p) {
   try {
     const ip = ipOf(req);
+    const MS = await maintState();
+    if (MS && MS.on && MS.full && !/^\/(admin|status|api\/status|api\/cron)(\/|$)/.test(p)) {
+      res.setHeader('Retry-After', '120'); res.setHeader('Cache-Control', 'no-store');
+      if (p.startsWith('/api/') || p.startsWith('/game/') || p === '/logout' || req.method !== 'GET') return send(res, 503, { error: MS.message || 'Sentinel is down for a short maintenance break. Please check back soon.', code: 'maintenance' });
+      res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(MAINT_PAGE(MS.message));
+    }
     if (req.method === 'GET' && p === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(fs.readFileSync(path.join(__dirname, '..', 'index.html'))); }
     if (req.method === 'GET' && p.startsWith('/legal/')) { const n = p.slice(7); if (!LEGAL[n]) return send(res, 404, { error: 'not found' }); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(legalPage(n)); }
     if (req.method === 'GET' && /^\/appeal\/[a-f0-9]{12}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(APPEAL_PAGE); }
@@ -1096,7 +1116,7 @@ async function route(req, res, url, p) {
     if (req.method === 'GET' && (p === '/status' || p === '/api/status')) {
       const w0 = limit('status:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
       const t0 = Date.now(); let dbOk = true; try { await need('glob'); } catch { dbOk = false; }
-      const st = { ok: dbOk, time: new Date().toISOString(), database: { ok: dbOk, ms: Date.now() - t0 }, backups: { lastRun: dbOk && G.lastCron ? new Date(G.lastCron.t).toISOString() : null, ok: dbOk && G.lastCron ? G.lastCron.ok && Date.now() - G.lastCron.t < 36 * 36e5 : null }, discordBot: discordOn(), signIn: providers() };
+      const st = { ok: dbOk, maintenance: !!(dbOk && G.maint && G.maint.on), time: new Date().toISOString(), database: { ok: dbOk, ms: Date.now() - t0 }, backups: { lastRun: dbOk && G.lastCron ? new Date(G.lastCron.t).toISOString() : null, ok: dbOk && G.lastCron ? G.lastCron.ok && Date.now() - G.lastCron.t < 36 * 36e5 : null }, discordBot: discordOn(), signIn: providers() };
       if (p === '/api/status') { res.writeHead(dbOk ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(JSON.stringify(st)); }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(STATUS_PAGE);
     }
@@ -1205,7 +1225,7 @@ async function route(req, res, url, p) {
       }
       // ---- site-wide ----
       if (A.op === 'announce') { if (A.on && !String(A.text || '').trim()) return send(res, 400, { error: 'Write the message first.' }); G.announce = A.on ? { text: String(A.text).replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240), kind: A.kind === 'warn' ? 'warn' : 'info', t: Date.now() } : null; alog(A.on ? 'Posted a site announcement' : 'Removed the site announcement'); return ok(res); }
-      if (A.op === 'maintenance') { G.maint = A.on ? { on: true, message: String(A.message || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240), t: Date.now() } : null; alog(A.on ? 'Turned maintenance mode ON' : 'Turned maintenance mode off'); return ok(res); }
+      if (A.op === 'maintenance') { MC.t = 0; G.maint = A.on ? { on: true, full: !!A.full, message: String(A.message || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240), t: Date.now() } : null; alog(A.on ? 'Turned maintenance mode ON (' + (A.full ? 'whole website' : 'panel only') + ')' : 'Turned maintenance mode off'); return ok(res); }
       if (A.op === 'site') return send(res, 200, { announce: G.announce || null, maint: G.maint || null });
       if (A.op === 'adminLog') return send(res, 200, { items: G.adminLog });
       if (A.op === 'health') {
@@ -1330,7 +1350,7 @@ async function route(req, res, url, p) {
     }
     if (p === '/api/me') {
       await need('glob');
-      const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER, announce: G.announce || null, maint: G.maint && G.maint.on ? { message: G.maint.message || '' } : null };
+      const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER, announce: G.announce || null, maint: G.maint && G.maint.on ? { message: G.maint.message || '', full: !!G.maint.full } : null };
       if (!uid) { const mp = unpack(cookiesOf(req).mp); return send(res, 200, mp && /^[gr]_\d{1,32}$/.test(mp.u || '') ? { ...base, pending2fa: true } : base); }
       setUid(uid); await need('user'); if (!U) return send(res, 200, base);
       if (revoked(U, req)) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 200, base); }
