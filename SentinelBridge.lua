@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 11 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 12 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -358,16 +358,16 @@ local function doBan(userId, reason, seconds)
 	if not ok then
 		warn("[Sentinel] BanAsync failed (" .. tostring(err) .. "). Kicking instead; the panel keeps re-kicking while the ban is active.")
 		local plr = Players:GetPlayerByUserId(userId)
-		if plr then plr:Kick("Banned: " .. reason) end
+		if plr then plr:Kick(reason) end
 	end
 end
 
 local function handle(c)
 	local plr = c.userId and Players:GetPlayerByUserId(c.userId)
 	if c.type == "kick" then
-		if plr then plr:Kick("[Sentinel] " .. tostring(c.reason)) end
+		if plr then plr:Kick(tostring(c.display or ("[Sentinel] " .. tostring(c.reason)))) end
 	elseif c.type == "ban" then
-		doBan(c.userId, tostring(c.reason), c.seconds)
+		doBan(c.userId, tostring(c.display or c.reason), c.seconds)
 	elseif c.type == "unban" then
 		local ok, err
 		for attempt = 1, 4 do
