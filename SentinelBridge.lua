@@ -6,6 +6,7 @@
 	  * Warn/announce  -> on-screen banner
 	  * Chat monitor   -> every chat message is sent to the panel (kept in memory there, never saved)
 	  * Players can type in chat:   !modcall <message>   (report to moderators)   and   !attend   (join a session)
+	  * Report button  -> the optional SentinelClient script adds a Report button (pick a player + details); this script receives it
 
 	SETUP
 	1. Put this in a *Script* in ServerScriptService.
@@ -22,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 12 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 13 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -182,6 +183,28 @@ local function onChat(userId, text)
 	queue({ type = "chat", userId = userId, name = plr.Name, text = text })
 	return false
 end
+
+-- the Report button in SentinelClient sends here. The button can name a player, so staff see who was reported.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local reportEvent = ReplicatedStorage:FindFirstChild("SentinelReport")
+if not reportEvent then
+	reportEvent = Instance.new("RemoteEvent")
+	reportEvent.Name = "SentinelReport"
+	reportEvent.Parent = ReplicatedStorage
+end
+reportEvent.OnServerEvent:Connect(function(plr, targetUserId, text)
+	if typeof(text) ~= "string" then text = "" end
+	text = string.sub(text, 1, 200)
+	local target = typeof(targetUserId) == "number" and Players:GetPlayerByUserId(targetUserId) or nil
+	if target == plr then target = nil end
+	if text == "" and not target then return end
+	if os.clock() - (lastCall[plr.UserId] or -999) < MODCALL_COOLDOWN then
+		banner(plr, "Please wait a moment before sending another report.", "red", "Slow down")
+		return
+	end
+	lastCall[plr.UserId] = os.clock()
+	queue({ type = "modcall", userId = plr.UserId, name = plr.Name, text = text, target = target and { userId = target.UserId, name = target.Name } or nil })
+end)
 
 local mutedNote = {}
 -- every other chat channel (team chat, quick words and so on) also refuses a muted player's messages
