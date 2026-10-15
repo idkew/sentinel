@@ -80,13 +80,14 @@ const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
 const save = () => {};
 const pruneCalls = () => { const cut = Date.now() - cfg.callRetentionDays * 864e5; D.calls = D.calls.filter(c => c.t > cut); };
-const MUTE_SCRIPT = 6; // the first script version that really stops muted players chatting
+const MUTE_SCRIPT = 6, MUTE_HIDE_SCRIPT = 9; // MUTE_HIDE_SCRIPT: the first script version that can let a muted player keep typing // the first script version that really stops muted players chatting
 function unbanWarn() { // Roblox only lifts a ban from a running game server (or the Open Cloud key), and a banned player cannot join to start one
   if (D.meta && D.meta.oc) return null; if (Object.values(R.servers).some(s => Date.now() - s.last < LIVE_MS)) return null;
   return 'Lifted in Sentinel, but nobody is in your game, so Roblox keeps the ban until a game server runs. Ask someone else to join, add a Roblox API key in Settings, Game (best), or lift it in Creator Hub under Moderation.';
 }
-function muteWarn() { // why a mute might not stop chat right now (checked at the moment a mute is made), or null
+function muteWarn(hide = true) { // why a mute might not stop chat right now (checked at the moment a mute is made), or null
   const live = Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS); if (!live.length) return null; // nobody in game: it applies when a server connects
+  if (hide === false) { const o9 = live.find(s => s.sv < MUTE_HIDE_SCRIPT); if (o9) return `Muted, but your game script is out of date (version ${o9.sv}), so it will still take their chat box away instead of letting them type. Update the script in Settings, Game.`; }
   const old = live.find(s => s.sv < MUTE_SCRIPT); if (old) return `Muted, but your game script is out of date (version ${old.sv}), so it will not stop the player chatting. Update the script in Settings, Game.`;
   if (live.some(s => s.chat === 'legacy')) return 'Muted, but your game uses the old Roblox chat, which mutes cannot control. In Studio, set TextChatService, ChatVersion to TextChatService.';
   if (live.some(s => s.chat === 'nochannel')) return 'Muted, but the game has no RBXGeneral chat channel, so mutes cannot be applied. Check TextChatService has CreateDefaultTextChannels on.';
@@ -447,14 +448,14 @@ function allPlayers() {
   for (const [j, s] of Object.entries(R.servers)) { if (now - s.last > LIVE_MS) continue; for (const p of s.players) out.push({ ...p, server: j.slice(0, 8) }); }
   return out;
 }
-function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null, extra = null }) {
+function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null, extra = null, hide = true }) {
   const expires = minutes > 0 ? Date.now() + minutes * 60000 : null;
   const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId, ...(extra || {}) }); feed(`${type}: ${name} (${reason})`, by); return e; };
   if (action === 'ban') {
     const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
     cmd({ type: 'ban', userId, reason, seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
   } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); unbanCmd(userId); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
-  else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id }; const mt = `You can't chat ${expires ? 'for ' + fmtMin(minutes) : 'until a moderator lifts it'}. Reason: ${reason}`; cmd({ type: 'message', kind: 'warn', title: 'You were muted', body: mt, userId, text: mt }); }
+  else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id, hide: hide !== false }; const len = expires ? 'for ' + fmtMin(minutes) : 'until a moderator lifts it'; const mt = hide !== false ? `You can't chat ${len}. Reason: ${reason}` : `You are muted ${len}. You can still type, but nobody can see your messages. Reason: ${reason}`; cmd({ type: 'message', kind: 'warn', title: 'You were muted', body: mt, userId, text: mt }); }
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
   else if (action === 'kick') { D.stats.kicks++; log('Kicked'); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
   else if (action === 'warn') {
@@ -508,7 +509,7 @@ function sync(b) {
   R.cmds = R.cmds.filter(c => now - c.t < (c.keep ? KEEP_MS : 120000) && !(c.type === 'ban' && c.seconds > 0 && now - c.t >= c.seconds * 1000)); if (R.cmds.length > 300) R.cmds = R.cmds.slice(-300);
   if (!prev || now - prev.last > 90000) for (const c of R.cmds) if (c.keep) delete c.seen[id]; // a server that went quiet and came back (or a new Studio test, which always reports the same id) gets bans and unbans again
   const out = R.cmds.filter(c => !c.seen[id]); out.forEach(c => c.seen[id] = 1);
-  return { commands: out.map(({ seen, t, keep, ...c }) => c.type === 'ban' && c.seconds > 0 ? { ...c, seconds: Math.max(1, Math.round(c.seconds - (now - t) / 1000)) } : c), muted: Object.values(D.mutes).filter(live).map(m => m.userId) };
+  return { commands: out.map(({ seen, t, keep, ...c }) => c.type === 'ban' && c.seconds > 0 ? { ...c, seconds: Math.max(1, Math.round(c.seconds - (now - t) / 1000)) } : c), muted: Object.values(D.mutes).filter(live).map(m => m.userId), muteHide: Object.values(D.mutes).filter(m => live(m) && m.hide !== false).map(m => m.userId) };
 }
 
 // ---- Roblox lookups ----
@@ -749,8 +750,8 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   }
   const ev = cleanLinks(B.evidence, 5), pnote = cleanName(B.note, 500);
   const ctx = B.ctx === false || !['warn', 'kick', 'mute', 'ban'].includes(action) ? [] : R.chat.filter(m => m.userId === B.userId && Date.now() - m.t < 36e5).slice(-15).map(m => ({ t: m.t, text: m.text }));
-  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
-  const mw = action === 'mute' ? muteWarn() : action === 'unban' ? unbanWarn() : null;
+  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
+  const mw = action === 'mute' ? muteWarn(B.hideChat !== false) : action === 'unban' ? unbanWarn() : null;
   return [200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) }];
     }
 const ACT_PERM = { warn: 'mod.warn', kick: 'mod.kick', mute: 'mod.mute', unmute: 'mod.mute', ban: 'mod.ban', unban: 'mod.unban', announce: 'announce', points: 'points.manage' };
@@ -1499,6 +1500,11 @@ async function route(req, res, url, p) {
     if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null, oc: D.meta.oc ? { universe: D.meta.oc.universe || '', last: D.meta.oc.last || null } : null }); }
     if (p === '/api/bridge') {
       if (!u.isOwner) return ownerOnly(res);
+      if (url.searchParams.get('client')) { // the small optional LocalScript that hides a muted player's chat bar
+        let cl; try { cl = fs.readFileSync(path.join(__dirname, '..', 'SentinelClient.lua'), 'utf8'); } catch { return send(res, 500, { error: 'SentinelClient.lua is missing from the deployment' }); }
+        const ch = { 'Content-Type': 'text/plain; charset=utf-8' }; if (url.searchParams.get('download')) ch['Content-Disposition'] = 'attachment; filename="Sentinel.client.lua"';
+        res.writeHead(200, ch); return res.end(cl);
+      }
       let lua; try { lua = fs.readFileSync(path.join(__dirname, '..', 'SentinelBridge.lua'), 'utf8'); } catch { return send(res, 500, { error: 'SentinelBridge.lua is missing from the deployment' }); }
       lua = lua.replace(/^local URL = ".*"$/m, () => 'local URL = ' + JSON.stringify(site(req))).replace(/^local KEY = ".*"$/m, 'local KEY = "[INPUT CODE HERE]"').replace(/^local INTERVAL = \d+/m, 'local INTERVAL = 10');
       const h = { 'Content-Type': 'text/plain; charset=utf-8' }; if (url.searchParams.get('download')) h['Content-Disposition'] = 'attachment; filename="Sentinel.server.lua"';
