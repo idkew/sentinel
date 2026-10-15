@@ -22,13 +22,14 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 7 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 9 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
 local MODCALL_COOLDOWN = 30 -- seconds between ModCalls per player
 
 local pending, muted, busy = {}, {}, false
+local chatOff = {} -- muted players whose chat box is taken away (the rest of the muted can type, but nobody sees it)
 local seen, hidden, seenCount, lastCall = {}, {}, 0, {}
 local COLORS = {
 	red = Color3.fromRGB(229, 56, 79),
@@ -196,11 +197,17 @@ local function setupChat()
 			local src = message.TextSource
 			if not src then return true end
 			if muted[src.UserId] then
-				-- tell them why nothing happens, at most every 8 seconds
+				-- tell them why, at most every 8 seconds
 				if os.clock() - (mutedNote[src.UserId] or -999) > 8 then
 					mutedNote[src.UserId] = os.clock()
 					local mp = Players:GetPlayerByUserId(src.UserId)
-					if mp then banner(mp, "You are muted and can't chat right now.", "red", "Muted") end
+					if mp then
+						if chatOff[src.UserId] then
+							banner(mp, "You are muted and can't chat right now.", "red", "Muted")
+						else
+							banner(mp, "You are muted. You can still type, but nobody can see your messages.", "red", "Muted")
+						end
+					end
 				end
 				return false
 			end
@@ -233,6 +240,11 @@ local lastMuteErr, lastMuteSig = "", nil
 -- takes chat privileges away from muted players (and gives them back when the mute ends).
 -- CanSend = false on the player's TextSource is what Roblox itself uses to stop a player chatting.
 local function applyMutes()
+	-- lets the optional Sentinel client script hide a muted player's chat bar
+	for _, p in Players:GetPlayers() do
+		local isOff = chatOff[p.UserId] == true
+		if p:GetAttribute("SentinelMuted") ~= (isOff or nil) then p:SetAttribute("SentinelMuted", isOff or nil) end
+	end
 	if TextChatService.ChatVersion ~= Enum.ChatVersion.TextChatService then
 		lastMuteErr = next(muted) and "legacy chat: mutes need TextChatService" or ""
 		return
@@ -241,7 +253,7 @@ local function applyMutes()
 	if not channels then lastMuteErr = "no TextChannels"; return end
 	local missing, failed
 	for _, p in Players:GetPlayers() do
-		local isMuted = muted[p.UserId] == true
+		local isMuted = chatOff[p.UserId] == true -- only players whose chat box is taken away need their chat source switched off
 		local found = false
 		for _, ch in channels:GetChildren() do
 			if ch:IsA("TextChannel") then
@@ -293,16 +305,18 @@ diagText = function(plr)
 			end
 		end
 	end
+	local off = 0
 	for _ in muted do n += 1 end
-	return string.format("Script v%d. Chat: %s. Your chat sources: %d (can send: %s). Muted players now: %d.%s",
-		SCRIPT_VERSION, mode, mine, canSend, n, lastMuteErr ~= "" and (" Problem: " .. lastMuteErr) or "")
+	for _ in chatOff do off += 1 end
+	return string.format("Script v%d. Chat: %s. Your chat sources: %d (can send: %s). Muted players now: %d (chat box removed for %d).%s",
+		SCRIPT_VERSION, mode, mine, canSend, n, off, lastMuteErr ~= "" and (" Problem: " .. lastMuteErr) or "")
 end
 
 -- a player who joins (or a channel that appears) while muted is silenced straight away
 local function watchChannel(ch)
 	if not ch:IsA("TextChannel") then return end
 	ch.ChildAdded:Connect(function(src)
-		if src:IsA("TextSource") and muted[src.UserId] then src.CanSend = false end
+		if src:IsA("TextSource") and chatOff[src.UserId] then src.CanSend = false end
 	end)
 end
 task.spawn(function()
@@ -374,6 +388,12 @@ local function sync()
 	for _, c in data.commands or {} do task.spawn(handle, c) end
 	muted = {}
 	for _, id in data.muted or {} do muted[id] = true end
+	chatOff = {}
+	if data.muteHide then
+		for _, id in data.muteHide do chatOff[id] = true end
+	else
+		for id in muted do chatOff[id] = true end -- an older panel: every mute takes the chat box away
+	end
 	local okMute, muteErr = pcall(applyMutes)
 	if not okMute then warn("[Sentinel] Mute error: " .. tostring(muteErr)) end
 end
