@@ -59,6 +59,7 @@ const PERMS = [
   ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
   ['webhooks.manage', 'Manage Discord notifications', 'Settings', 1], ['privacy.manage', 'Export and erase player data', 'Settings', 1],
   ['forms.review', 'Review form responses and applications', 'Team'], ['forms.manage', 'Create and edit forms', 'Settings'],
+  ['servers.manage', 'Close live servers', 'Game', 1], ['staff.review', 'See staff performance and give staff strikes', 'Team', 1],
 ];
 const ALLP = PERMS.map(p => p[0]);
 const defaultRanks = () => ({
@@ -72,8 +73,8 @@ const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhoo
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, discord: null, discordCodes: {}, pending: [], syncSeen: {} });
-const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 };
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
+const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
@@ -101,7 +102,7 @@ function banText(x) { // what the banned player reads on Roblox's ban screen (Ro
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -109,7 +110,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
-  chat: { get: () => ({ chat: R.chat, flagCount: R.flagCount }), set: v => { R.chat = v.chat || []; R.flagCount = v.flagCount || {}; } },
+  chat: { get: () => ({ chat: R.chat, flagCount: R.flagCount, am: R.am }), set: v => { R.chat = v.chat || []; R.flagCount = v.flagCount || {}; R.am = v.am || {}; } },
   user: { get: () => U, set: v => { U = v; } },
   ...Object.fromEntries([...Array(16).keys()].map(i => ['h' + i, { get: () => (D.hist[i] ||= {}), set: v => { D.hist[i] = v || {}; } }])), // per-player playtime history, split in 16 rows so each save stays small
   glob: { get: () => G, set: v => { G = v; } },
@@ -120,7 +121,7 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
@@ -170,6 +171,8 @@ function migrate() { // bring older workspaces up to date
   if (!D.meta.v6) { D.meta.v6 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage') && !r.perms.includes('shifts.manage')) r.perms.push('shifts.manage'); }
   D.forms ||= []; D.formsNew ||= 0; if (D.webhook && D.webhook.events && !('forms' in D.webhook.events)) D.webhook.events.forms = true;
   if (!D.meta.v5) { D.meta.v5 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage')) for (const x of ['forms.manage', 'forms.review']) if (!r.perms.includes(x)) r.perms.push(x); }
+  D.strikes ||= [];
+  if (!D.meta.v7) { D.meta.v7 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage')) for (const x of ['staff.review', 'servers.manage']) if (!r.perms.includes(x)) r.perms.push(x); }
 }
 
 // ---- who is asking, and what may they do? ----
@@ -192,7 +195,19 @@ const audit = (user, text) => { D.audit.unshift({ t: Date.now(), user, text }); 
 const DEFAULT_RULES = {
   autosuspend: { enabled: true, warns: 3, minutes: 5 }, sessionpoints: { enabled: true, points: 5 },
   flaggedmute: { enabled: false, count: 3, minutes: 5 }, welcome: { enabled: false, text: 'Welcome! Moderators are keeping this game friendly.' },
+  spam: { enabled: false, messages: 6, seconds: 8, action: 'mute', minutes: 10 }, repeat: { enabled: false, times: 3, action: 'warn', minutes: 10 },
+  links: { enabled: false, action: 'warn', minutes: 10 }, caps: { enabled: false, percent: 80, action: 'warn', minutes: 10 },
+  rapidjoin: { enabled: false, joins: 5, seconds: 60, action: 'kick', minutes: 10 },
 };
+const AM_RULES = ['spam', 'repeat', 'links', 'caps']; // rules that read chat; rapidjoin reads joins
+const DEFAULT_PRESETS = [
+  { id: 'spam', name: 'Spamming', action: 'mute', minutes: 30, reason: 'Spamming chat' },
+  { id: 'lang', name: 'Bad language', action: 'warn', minutes: 0, reason: 'Inappropriate language' },
+  { id: 'harass', name: 'Harassment', action: 'ban', minutes: 1440, reason: 'Harassing other players' },
+  { id: 'exploit', name: 'Exploiting', action: 'ban', minutes: 0, reason: 'Using exploits or cheats' },
+];
+const presets = () => Array.isArray(D.settings.presets) ? D.settings.presets : DEFAULT_PRESETS;
+const CLOSED_MSG = 'This server was closed by a moderator. Rejoin to play in a new one.';
 const rule = id => ({ ...DEFAULT_RULES[id], ...(D.rules[id] || {}) });
 const weekStart = now => { const d = new Date(now); d.setUTCHours(0, 0, 0, 0); return d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5; };
 const dayKey = t => new Date(t).toISOString().slice(0, 10);
@@ -507,16 +522,36 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
     if (r.enabled && n >= r.warns) act({ action: 'ban', userId, name, reason: `Automatic: ${r.warns} warnings`, minutes: r.minutes, by: 'Automation' });
   }
 }
+const isStaffId = uid => !!D.members['r_' + uid] || Object.values(D.members).some(m => m.robloxId && String(m.robloxId) === String(uid));
+function amPrune(now) { for (const [k, v] of Object.entries(R.am)) { if (Array.isArray(v)) { const f = v.filter(t => t > now - 36e5); if (f.length) R.am[k] = f; else delete R.am[k]; } else if (!(v > now - 6e5)) delete R.am[k]; } }
+function amHit(id, uid, name, why, now) { // apply an automatic rule's action once per player per 30 seconds
+  const r = rule(id), k = `c:${id}:${uid}`; if ((R.am[k] || 0) > now - 30000) return false; R.am[k] = now;
+  act({ action: r.action, userId: uid, name, reason: 'Automatic: ' + why, minutes: r.action === 'mute' ? r.minutes : 0, by: 'Automation' }); return true;
+}
+function autoMod(uid, name, text, now) { // spam, repeats, links and shouting; staff and already-muted players are left alone
+  if (!uid || isStaffId(uid) || (D.mutes[uid] && live(D.mutes[uid]))) return;
+  amPrune(now);
+  const sp = rule('spam'); if (sp.enabled && R.chat.filter(m => m.userId === uid && m.t > now - sp.seconds * 1000).length >= sp.messages && amHit('spam', uid, name, `spam (${sp.messages} messages in ${sp.seconds} seconds)`, now)) return;
+  const rp = rule('repeat'); if (rp.enabled) { const nz = x => String(x).toLowerCase().replace(/\s+/g, ' ').trim(), mine = R.chat.filter(m => m.userId === uid && m.t > now - 6e4).slice(-rp.times); if (mine.length >= rp.times && mine.every(m => nz(m.text) === nz(text)) && amHit('repeat', uid, name, `repeated the same message ${rp.times} times`, now)) return; }
+  const lk = rule('links'); if (lk.enabled && /(https?:\/\/|www\.|\b[a-z0-9-]{2,}\.(com|net|org|gg|io|co|xyz|ru|tk|ly|me)\b)/i.test(text) && amHit('links', uid, name, 'posted a link', now)) return;
+  const cp = rule('caps'); if (cp.enabled) { const l = String(text).replace(/[^a-z]/gi, ''); if (l.length >= 12 && l.replace(/[^A-Z]/g, '').length * 100 / l.length >= cp.percent && amHit('caps', uid, name, 'shouting in capital letters', now)) return; }
+}
+function autoJoin(uid, name, now) { // someone joining again and again in a short time
+  const rj = rule('rapidjoin'); if (!rj.enabled || !uid || isStaffId(uid)) return;
+  amPrune(now); const k = 'j:' + uid, arr = (R.am[k] = (R.am[k] || []).filter(t => t > now - rj.seconds * 1000)); arr.push(now);
+  if (arr.length >= rj.joins) { R.am[k] = []; amHit('rapidjoin', uid, name, `joined ${rj.joins} times in ${rj.seconds} seconds`, now); }
+}
 function sync(b) {
   const now = Date.now(), id = String(b.jobId || 'studio').slice(0, 64), prev = R.servers[id], dt = prev ? Math.min((now - prev.last) / 1000, 30) : 0;
   const players = (Array.isArray(b.players) ? b.players : []).slice(0, 200).filter(p => p && Number.isInteger(p.userId) && p.userId > 0)
     .map(p => ({ userId: p.userId, name: String(p.name || p.userId).slice(0, 40), displayName: String(p.displayName || p.name || '').slice(0, 40) }));
-  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160) };
+  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160), closed: (prev && prev.closed) || 0, closeMsg: (prev && prev.closeMsg) || '' };
   for (const [j, sv] of Object.entries(R.servers)) if (now - sv.last > 6e4) delete R.servers[j];
   for (const p of players) tick({ ...p, sv: id.slice(0, 8) }, dt, now);
   for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 100)) {
     if (!e) continue;
     const text = String(e.text || '').slice(0, 200), name = String(e.name || '?').slice(0, 40), uid = Number.isInteger(e.userId) ? e.userId : 0;
+    if (e.type === 'join') autoJoin(uid, name, now);
     if (e.type === 'join' && D.meta && scriptInfo().outdated && Date.now() - (D.meta.scriptAlertAt || 0) > 6 * 36e5) { // tell the owner and anyone who can change settings, in game
       const dev = Object.entries(D.members).some(([mid, m]) => m.robloxId && String(m.robloxId) === String(uid) && (mid === D.meta.owner || has(who(mid), 'automations.manage')));
       if (dev) { D.meta.scriptAlertAt = Date.now(); const msg = 'Your Sentinel game script is out of date. Open Settings, then Game on the website, download the new script and paste it into your game.'; cmd({ type: 'message', kind: 'warn', title: 'Sentinel update available', body: msg, text: 'Sentinel update: ' + msg, userId: uid }); }
@@ -525,7 +560,7 @@ function sync(b) {
     else if (e.type === 'leave') { feed(`${name} left`); if (uid) closeSession(phist(uid)); }
     else if (e.type === 'chat') { // rolling buffer: latest 300 messages, at most 24 hours
       const flagged = D.flagWords.some(w => text.toLowerCase().includes(w));
-      R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged }); if (R.chat.length > 300) R.chat.shift();
+      R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged }); if (R.chat.length > 300) R.chat.shift(); autoMod(uid, name, text, now);
       if (flagged) {
         feed(`Flagged chat from ${name}: ${text}`);
         const r = rule('flaggedmute');
@@ -534,11 +569,13 @@ function sync(b) {
     } else if (e.type === 'attend' && D.session) {
       D.session.attendees[uid] = name; cmd({ type: 'message', kind: 'ok', title: 'Session', body: `You are marked present for ${D.session.type}.`, userId: uid, text: `You are marked present for ${D.session.type}.` });
     } else if (e.type === 'modcall') {
-      const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || 'No details given', server: id.slice(0, 8), status: 'open', by: null, note: '',
-        chat: R.chat.filter(c => c.jobId === id).slice(-15).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
+      const tg = e.target && Number.isInteger(e.target.userId) && e.target.userId > 0 && e.target.userId !== uid ? { userId: e.target.userId, name: String(e.target.name || e.target.userId).slice(0, 40) } : null;
+      const near = R.chat.filter(c => c.jobId === id), pick = new Set([...near.slice(-15), ...(tg ? near.filter(c => c.userId === tg.userId).slice(-10) : [])]);
+      const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || (tg ? 'Reported ' + tg.name : 'No details given'), server: id.slice(0, 8), status: 'open', by: null, note: '', ...(tg ? { target: tg } : {}),
+        chat: near.filter(c => pick.has(c)).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
       D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
       feed(`Report #${call.id} from ${name}: ${call.text}`);
-      notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)]], 0x635bff);
+      notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)], ...(tg ? [['Reported player', tg.name]] : [])], 0x635bff);
       cmd({ type: 'message', kind: 'ok', title: 'Report sent', body: `Report #${call.id} sent. A moderator will respond soon.`, userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
     }
   }
@@ -549,8 +586,9 @@ function sync(b) {
   for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason, display: banText(x) }); }
   R.cmds = R.cmds.filter(c => now - c.t < (c.keep ? KEEP_MS : 120000) && !(c.type === 'ban' && c.seconds > 0 && now - c.t >= c.seconds * 1000)); if (R.cmds.length > 300) R.cmds = R.cmds.slice(-300);
   if (!prev || now - prev.last > 90000) for (const c of R.cmds) if (c.keep) delete c.seen[id]; // a server that went quiet and came back (or a new Studio test, which always reports the same id) gets bans and unbans again
-  const out = R.cmds.filter(c => !c.seen[id]); out.forEach(c => c.seen[id] = 1);
-  return { commands: out.map(({ seen, t, keep, ...c }) => c.type === 'ban' && c.seconds > 0 ? { ...c, seconds: Math.max(1, Math.round(c.seconds - (now - t) / 1000)) } : c), muted: Object.values(D.mutes).filter(live).map(m => m.userId), muteHide: Object.values(D.mutes).filter(m => live(m) && m.hide !== false).map(m => m.userId) };
+  if (R.servers[id].closed && now - R.servers[id].closed < 180000) for (const p of players) if (!R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && c.target === id && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, target: id, reason: 'Server closed', display: R.servers[id].closeMsg || CLOSED_MSG });
+  const out = R.cmds.filter(c => !c.seen[id] && (!c.target || c.target === id)); out.forEach(c => c.seen[id] = 1);
+  return { commands: out.map(({ seen, t, keep, target, ...c }) => c.type === 'ban' && c.seconds > 0 ? { ...c, seconds: Math.max(1, Math.round(c.seconds - (now - t) / 1000)) } : c), muted: Object.values(D.mutes).filter(live).map(m => m.userId), muteHide: Object.values(D.mutes).filter(m => live(m) && m.hide !== false).map(m => m.userId) };
 }
 
 // ---- Roblox lookups ----
@@ -584,6 +622,7 @@ async function profile(id) {
     banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, signal: D.signals[id] || null, logbook: (D.logs[id] || []).slice().reverse(),
     play: local ? { total: Math.round(local.total), week: local.weekStart === ws ? Math.round(local.week) : 0, points: local.points } : null,
     reports: D.calls.filter(c => c.from.userId === id).slice(0, 20).map(c => ({ id: c.id, t: c.t, text: c.text, status: c.status })),
+    against: D.calls.filter(c => c.target && c.target.userId === id && c.status !== 'resolved').length,
     chat: R.chat.filter(m => m.userId === id).slice(-60).reverse(), ...auditExtras(id, online), sessions: D.sessions.filter(s => s.attendees.some(a => a.userId === id)).length };
 }
 
@@ -973,7 +1012,10 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   }
   if (!ACT_PERM[action]) return [400, { error: 'bad action' }];
   if (!has(u, action === 'ban' && !(minutes > 0) ? 'mod.permban' : ACT_PERM[action])) return [403, { error: 'Your rank does not allow that.' }];
-  if (action === 'announce') { cmd({ type: 'announce', text: reason }); feed('Announcement: ' + reason, u.user); return [200, { ok: true }]; }
+  if (action === 'announce') {
+    let target = null; if (B.server) { target = Object.keys(R.servers).find(k => k.slice(0, 8) === String(B.server) && Date.now() - R.servers[k].last < LIVE_MS); if (!target) return [404, { error: 'That server has already closed.' }]; }
+    cmd({ type: 'announce', text: reason, ...(target ? { target } : {}) }); feed((target ? `Announcement to server ${target.slice(0, 8)}: ` : 'Announcement: ') + reason, u.user); return [200, { ok: true }];
+  }
   if (!Number.isInteger(B.userId) || B.userId < 1) return [400, { error: 'bad userId' }];
   const nm = cleanName(B.name, 40) || String(B.userId);
   if (['warn', 'kick', 'mute', 'ban'].includes(action) && u.limit > 0) { // per-rank anti-abuse limit, counted from the logbook
@@ -1442,7 +1484,9 @@ async function route(req, res, url, p) {
       if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
       const sv = Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1; if (sv > (D.meta.scriptV || 0)) D.meta.scriptV = sv; // the highest version seen, so old servers that are still shutting down don't matter
       if (!D.meta.connectedAt) D.meta.connectedAt = Date.now();
-      if (chatty && rule('flaggedmute').enabled) await need('logs');
+      const rjOn = rule('rapidjoin').enabled && ev.some(e => e && e.type === 'join');
+      if ((chatty && (rule('flaggedmute').enabled || AM_RULES.some(k => rule(k).enabled))) || rjOn) await need('logs');
+      if (rjOn) await need('chat');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
       const out = sync(b); await signalCheck(req, fresh, joined); await banSyncPull();
@@ -1605,7 +1649,8 @@ async function route(req, res, url, p) {
         .sort((a, b) => memberPos(b.uid) - memberPos(a.uid) || a.name.localeCompare(b.name));
       return send(res, 200, {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
-        servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now) })),
+        servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000) })),
+        presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
         workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
@@ -1657,7 +1702,8 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'POST' && p === '/api/entry') {
       const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
-      if (B.op === 'note') { if (!has(u, 'logbook.note')) return deny(res); const t = cleanName(B.text, 500); if (!t) return send(res, 400, { error: 'Write a note first' }); logEntry(id, cleanName(B.name, 40) || 'User ' + id, { type: 'Note', reason: t, by: u.user, byUid: uid }); return ok(res); }
+      if (B.op === 'note') { if (!has(u, 'logbook.note')) return deny(res); const t = cleanName(B.text, 500); if (!t) return send(res, 400, { error: 'Write a note first' }); logEntry(id, cleanName(B.name, 40) || 'User ' + id, { type: 'Note', reason: t, by: u.user, byUid: uid, ...(B.pin ? { pin: true } : {}) }); return ok(res); }
+      if (B.op === 'pin') { if (!has(u, 'logbook.note')) return deny(res); const e = (D.logs[id] || []).find(x => x.id === B.id && x.type === 'Note'); if (!e) return send(res, 404, { error: 'That note no longer exists.' }); e.pin = !!B.on; audit(u.user, `${e.pin ? 'Pinned' : 'Unpinned'} a note on ${e.name}`); return ok(res); }
       if (B.op === 'evidence') {
         if (!has(u, 'logbook.note')) return deny(res);
         const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e) return send(res, 404, { error: 'That entry no longer exists.' });
@@ -1716,7 +1762,7 @@ async function route(req, res, url, p) {
       if (!has(u, 'automations.manage')) return deny(res);
       const base = DEFAULT_RULES[B.id]; if (!base) return send(res, 400, { error: 'bad rule' });
       const next = { enabled: !!B.enabled };
-      for (const [k, def] of Object.entries(base)) if (k !== 'enabled') { const v = (B.params || {})[k]; next[k] = typeof def === 'number' ? clampInt(v, 1, 100000) : cleanName(v ?? def, 120); }
+      for (const [k, def] of Object.entries(base)) if (k !== 'enabled') { const v = (B.params || {})[k]; next[k] = typeof def === 'number' ? (k === 'percent' ? clampInt(v, 50, 100) : clampInt(v, 1, 100000)) : k === 'action' ? (['warn', 'mute', 'kick'].includes(v) ? v : def) : cleanName(v ?? def, 120); }
       D.rules[B.id] = next; audit(u.user, `Automation "${B.id}" saved (${next.enabled ? 'on' : 'off'})`); return ok(res);
     }
     if (req.method === 'POST' && p === '/api/settings') {
@@ -1963,6 +2009,59 @@ async function route(req, res, url, p) {
         const list = (Array.isArray(B.replies) ? B.replies : []).map(x => cleanName(x, 300)).filter(Boolean).slice(0, 12); D.settings.replies = list; audit(u.user, 'Edited the appeal quick replies'); return ok(res);
       }
       const [c, o] = reviewAppeal(u, uid, B); return send(res, c, o);
+    }
+    if (req.method === 'POST' && p === '/api/presets') { // saved reasons and lengths staff can pick when moderating
+      if (!has(u, 'automations.manage')) return deny(res);
+      if (B.reset) { delete D.settings.presets; audit(u.user, 'Reset reason presets'); return ok(res); }
+      const raw = Array.isArray(B.presets) ? B.presets : []; if (raw.length > 20) return send(res, 400, { error: 'You can save up to 20 presets.' });
+      const list = []; for (const x of raw) {
+        const action = ['warn', 'kick', 'mute', 'ban'].includes(x && x.action) ? x.action : '', name = cleanName(x && x.name, 30), reason = cleanName(x && x.reason, 200);
+        if (!action || !name || !reason) return send(res, 400, { error: 'Each preset needs a name, an action and a reason.' });
+        list.push({ id: typeof x.id === 'string' && /^[A-Za-z0-9_-]{1,8}$/.test(x.id) && !list.some(y => y.id === x.id) ? x.id : rnd(4), name, action, minutes: action === 'mute' || action === 'ban' ? clampInt(x.minutes, 0, 525600) : 0, reason });
+      }
+      D.settings.presets = list; audit(u.user, `Saved ${list.length} reason preset${list.length === 1 ? '' : 's'}`); return ok(res);
+    }
+    if (req.method === 'POST' && p === '/api/server') { // close one live server: everyone in it is removed, and it cannot be rejoined while it empties
+      if (!has(u, 'servers.manage')) return deny(res);
+      const w = limit('close:' + uid, 10, 600000); if (w) return tooMany(res, w);
+      const full = Object.keys(R.servers).find(k => k.slice(0, 8) === String(B.id)), sv = full && R.servers[full];
+      if (!sv || Date.now() - sv.last > LIVE_MS) return send(res, 404, { error: 'That server has already closed.' });
+      if (B.op !== 'close') return send(res, 400, { error: 'bad request' });
+      const why = cleanName(B.reason, 120), msg = `This server was closed by a moderator${why ? ': ' + why : ''}. Rejoin to play in a new one.`.slice(0, 300);
+      sv.closed = Date.now(); sv.closeMsg = msg; for (const pl of sv.players) cmd({ type: 'kick', userId: pl.userId, target: full, reason: 'Server closed', display: msg });
+      feed(`Closed server ${String(B.id)} (${sv.players.length} player${sv.players.length === 1 ? '' : 's'} removed)${why ? ': ' + why : ''}`, u.user);
+      return send(res, 200, { ok: true, removed: sv.players.length });
+    }
+    if (req.method === 'POST' && p === '/api/strikes') { // staff warnings and strikes
+      if (!has(u, 'staff.review')) return deny(res);
+      D.strikes ||= []; const now = Date.now(), liveS = x => x.status === 'active' && (!x.expires || x.expires > now);
+      if (B.op === 'add') {
+        const m = D.members[B.uid]; if (!m) return send(res, 404, { error: 'That person is not on your team.' });
+        if (B.uid === uid) return send(res, 400, { error: 'You cannot give yourself a strike.' });
+        if (B.uid === D.meta.owner || !above(u, memberPos(B.uid))) return send(res, 403, { error: 'You can only do this for people ranked below you.' });
+        const reason = cleanName(B.reason, 300); if (!reason) return send(res, 400, { error: 'Write what happened.' });
+        if (D.strikes.filter(liveS).length >= 300) return send(res, 400, { error: 'Too many active strikes. Remove old ones first.' });
+        const level = B.level === 'warning' ? 'warning' : 'strike', days = clampInt(B.days, 0, 3650);
+        D.strikes.unshift({ id: rnd(6), uid: B.uid, name: m.name, level, reason, by: u.user, byUid: uid, t: now, expires: days > 0 ? now + days * 864e5 : null, status: 'active' }); D.strikes.length = Math.min(D.strikes.length, 500);
+        audit(u.user, `Gave ${m.name} a staff ${level}: ${reason}`); return ok(res);
+      }
+      if (B.op === 'remove') {
+        const x = D.strikes.find(y => y.id === B.id && y.status === 'active'); if (!x) return send(res, 404, { error: 'That strike was already removed.' });
+        if (!u.isOwner && x.byUid !== uid && !above(u, memberPos(x.uid))) return deny(res);
+        x.status = 'removed'; x.removedBy = u.user; x.removedAt = now; audit(u.user, `Removed a staff ${x.level} from ${x.name}`); return ok(res);
+      }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (req.method === 'GET' && p === '/api/staffperf') { // what each staff member has done lately
+      if (!has(u, 'staff.review')) return deny(res);
+      const days = [7, 30, 90].includes(+url.searchParams.get('days')) ? +url.searchParams.get('days') : 30, now = Date.now(), cut = now - days * 864e5, ws = weekStart(now), by = {}, kind = { Warned: 'warn', Kicked: 'kick', Muted: 'mute', Suspended: 'ban', Banned: 'ban', Note: 'notes' };
+      for (const list of Object.values(D.logs)) for (const e of list) { if (!e.byUid || e.time < cut || !kind[e.type]) continue; const r = (by[e.byUid] ||= { warn: 0, kick: 0, mute: 0, ban: 0, notes: 0, undone: 0, last: 0 }); r[kind[e.type]]++; if (e.status === 'reverted') r.undone++; if (e.time > r.last) r.last = e.time; }
+      const handled = {}; for (const c of D.calls) if (c.by && c.status === 'resolved' && (c.resolved || c.t) > cut) handled[c.by] = (handled[c.by] || 0) + 1;
+      const liveS = x => x.status === 'active' && (!x.expires || x.expires > now), onLeave = id => D.loa.some(x => x.uid === id && x.status === 'approved' && x.start <= now && x.end >= now);
+      const rows = Object.entries(D.members).map(([id, m]) => { const r = by[id] || { warn: 0, kick: 0, mute: 0, ban: 0, notes: 0, undone: 0, last: 0 }, rid = m.robloxId || (id[0] === 'r' ? id.slice(2) : null), pl = rid ? D.play[rid] : null, rk = D.ranks[m.rank], sk = (D.strikes || []).filter(x => x.uid === id && liveS(x));
+        return { uid: id, name: m.name, rank: m.rank, robloxId: rid || null, owner: id === D.meta.owner, below: id !== uid && id !== D.meta.owner && above(u, memberPos(id)), ...r, actions: r.warn + r.kick + r.mute + r.ban, reports: handled[m.name] || 0, linked: !!rid, week: pl && pl.weekStart === ws ? Math.round(pl.week) : 0, quota: rk ? rk.quota || 0 : 0, strikes: sk.filter(x => x.level === 'strike').length, warnings: sk.filter(x => x.level === 'warning').length, onLeave: onLeave(id) }; })
+        .sort((a, b) => b.actions - a.actions || a.name.localeCompare(b.name));
+      return send(res, 200, { days, rows, strikes: (D.strikes || []).slice(0, 120).map(x => ({ ...x, live: liveS(x) })) });
     }
     if (req.method === 'POST' && p === '/api/watch') {
       if (!has(u, 'logbook.note')) return deny(res); const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
