@@ -619,8 +619,8 @@ input.in:focus{border-color:var(--ac);box-shadow:0 0 0 3px rgba(79,139,255,.18)}
 .st{background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--ln);border-radius:14px;padding:16px 18px;position:relative;overflow:hidden}
 .st:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--ac))}
 .st small{color:var(--mu);font-size:11.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}.st b{display:block;font-size:30px;letter-spacing:-.03em;margin-top:2px;font-variant-numeric:tabular-nums}
-.tabs{display:flex;gap:4px;border-bottom:1px solid var(--ln);margin-bottom:18px}
-.tab{background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 14px;color:var(--mu);font-weight:600;cursor:pointer;display:flex;gap:8px;align-items:center}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--ln);margin-bottom:18px;overflow-x:auto;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
+.tab{white-space:nowrap;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 14px;color:var(--mu);font-weight:600;cursor:pointer;display:flex;gap:8px;align-items:center}
 .tab:hover{color:var(--ink)}.tab.on{color:var(--ink);border-color:var(--ac)}.tab i{font-style:normal;font-size:11px;background:rgba(79,139,255,.18);color:var(--ac2);border-radius:99px;padding:1px 8px}
 .bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}.bar .in{max-width:340px}
 .chips{display:flex;gap:6px}.chip{height:30px;padding:0 12px;border-radius:99px;border:1px solid var(--ln);background:none;color:var(--mu);cursor:pointer;font-weight:600;font-size:13px}.chip.on{background:rgba(79,139,255,.15);border-color:rgba(79,139,255,.5);color:var(--ac2)}
@@ -643,14 +643,34 @@ code{font-size:12px;background:#0a0c12;border:1px solid var(--ln);padding:1px 7p
 .scrim{position:fixed;inset:0;background:rgba(3,4,8,.7);backdrop-filter:blur(5px);display:grid;place-items:center;z-index:50;padding:20px;animation:fi .15s}@keyframes fi{from{opacity:0}}
 .md{width:100%;max-width:420px;background:var(--card2);border:1px solid var(--ln);border-radius:16px;padding:22px;box-shadow:0 40px 90px -30px #000}.md h2{margin:0 0 6px;font-size:18px}.md p{margin:0 0 18px;color:var(--mu)}.md .r{display:flex;gap:8px;justify-content:flex-end}
 .skel{height:92px;border-radius:14px;border:1px solid var(--ln);background:linear-gradient(90deg,var(--card),var(--card2),var(--card));background-size:200% 100%;animation:sk 1.2s infinite;margin-bottom:10px}@keyframes sk{to{background-position:-200% 0}}
+.dp{margin-top:14px;padding-top:14px;border-top:1px solid var(--ln);display:grid;gap:16px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}.kv div{background:#0a0c12;border:1px solid var(--ln);border-radius:10px;padding:9px 12px}.kv small{display:block;color:var(--mu);font-size:11px;font-weight:650;letter-spacing:.05em;text-transform:uppercase}.kv b{font-size:14px;word-break:break-word}
+.sec{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mu);margin:0 0 8px}
+.tb{width:100%;border-collapse:collapse;font-size:13px}.tb th{text-align:left;color:var(--mu);font-weight:650;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--ln)}.tb td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.04)}
+.zone{border:1px solid rgba(255,77,94,.35);background:rgba(255,77,94,.05);border-radius:12px;padding:12px 14px}.zone .sec{color:#ff8f9a}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.lg{font-size:13px}.lg .e{display:flex;gap:12px;padding:8px 2px;border-bottom:1px solid rgba(255,255,255,.05)}.lg time{color:var(--mu);white-space:nowrap;width:150px;flex:none}.lg .e.bad span{color:#ff8f9a}
+.hc{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)}.hc:last-child{border:0}.hc b{flex:1}.hc span.note{max-width:55%;text-align:right}
+textarea.in{height:auto;padding:10px 13px;resize:vertical;min-height:64px;font:inherit;line-height:1.45}
+select.in{height:38px}
+.big{height:42px;font-size:15px}
+.mt{margin-top:12px}
 @media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}.top{padding:10px 14px}.w{padding:18px 14px 60px}}
 </style></head><body>
-<header class="top"><div class="br"><img src="/favicon.svg" alt=""><div><b>Sentinel Admin</b><small>Site console</small></div></div><span class="pill red"><span class="dot"></span>Restricted</span><span class="sp"></span><span class="pill grn" id="ss"><span class="dot"></span>Session active</span><button class="btn s" id="out">Sign out</button></header>
+<header class="top"><div class="br"><img src="/favicon.svg" alt=""><div><b>Sentinel Admin</b><small>Site console</small></div></div><span class="pill red"><span class="dot"></span>Restricted</span><span class="sp"></span><span class="pill red" id="pill-m" hidden>Maintenance on</span><span class="pill amb" id="pill-a" hidden>Announcement live</span><span class="pill grn" id="ss"><span class="dot"></span>Session active</span><button class="btn s" id="out">Sign out</button></header>
 <main class="w">
 <section class="stats"><div class="st"><small>Workspaces</small><b id="s1">-</b></div><div class="st" style="--c:var(--red)"><small>In recycle bin</small><b id="s2">-</b></div><div class="st" style="--c:var(--grn)"><small>Total members</small><b id="s3">-</b></div><div class="st" style="--c:var(--amb)"><small>Feedback</small><b id="s4">-</b></div></section>
-<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="tl" role="tab">Tools</button></nav>
+<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="lv" role="tab">Live <i id="lvn" hidden>0</i></button><button class="tab" data-t="ac" role="tab">Accounts</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="st" role="tab">Site</button><button class="tab" data-t="lg" role="tab">Audit log</button><button class="tab" data-t="tl" role="tab">Tools</button></nav>
 <section id="p-ws"><div class="bar"><input class="in" id="q" placeholder="Search by name, id or owner" aria-label="Search workspaces"><div class="chips"><button class="chip on" data-f="all">All</button><button class="chip" data-f="live">Active</button><button class="chip" data-f="del">Deleted</button></div><span class="sp"></span><button class="btn s" id="rf">Refresh</button></div><div id="o"><div class="skel"></div><div class="skel"></div></div></section>
+<section id="p-lv" hidden><div class="bar"><span class="note" id="lvs">Loading</span><span class="sp"></span><button class="btn s" id="lvr">Refresh</button></div><div id="lvo"></div></section>
+<section id="p-ac" hidden><div class="bar"><input class="in" id="uq" placeholder="Search accounts by name, Roblox name or id" aria-label="Search accounts"><button class="btn p" id="ub">Search</button></div><div id="uo"><div class="empty">Search for an account to see their workspaces and manage them.</div></div></section>
 <section id="p-fb" hidden><div id="fb"></div></section>
+<section id="p-st" hidden><div class="tg">
+<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 001 1h3l5 4V6L7 10H4a1 1 0 00-1 1zM16 8a5 5 0 010 8"/></svg></span>Announcement banner <span class="pill" id="anp">Off</span></h3><p>Shows a message at the top of Sentinel for everyone, like planned downtime. People can close it.</p><textarea class="in" id="ant" maxlength="240" placeholder="Sentinel will be briefly down tonight at 9pm Central."></textarea><div class="row"><select class="in" id="ank" style="width:auto"><option value="info">Info (blue)</option><option value="warn">Warning (amber)</option></select><button class="btn p" id="anb">Post</button><button class="btn" id="anr">Remove</button></div></div>
+<div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6z"/></svg></span>Maintenance mode <span class="pill" id="mtp">Off</span></h3><p>Pauses the panel for everyone while you fix something. Games keep syncing, so moderation in game is not interrupted. This console always works.</p><input class="in" id="mtm" maxlength="240" placeholder="We are updating Sentinel. Back in a few minutes."><div class="row"><button class="btn d" id="mtb">Turn on</button></div></div>
+<div class="card" style="grid-column:1/-1"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>Health <span class="sp" style="flex:1"></span><button class="btn s" id="hb">Run checks</button></h3><div id="ho" class="note">Running checks...</div></div>
+</div></section>
+<section id="p-lg" hidden><div class="bar"><span class="note">Everything done in this console, newest first.</span><span class="sp"></span><button class="btn s" id="lgr">Refresh</button></div><div class="card lg" id="lgo"></div></section>
 <section id="p-tl" hidden><div class="tg">
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></span>Off-site copy</h3><p>Download every workspace and account in one file. Keep it somewhere outside Supabase, like your own computer.</p><div><button class="btn p" id="eb">Download everything</button> <span class="note" id="em"></span></div></div>
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 12h10M5 16h6M3 4h18v16H3z"/></svg></span>Discord bot</h3><p>Register the slash commands after setting the Discord variables. Run it again whenever Sentinel adds commands.</p><div><button class="btn p" id="dr">Register commands</button> <span class="note" id="dm"></span></div></div>
@@ -664,11 +684,25 @@ function back(){location.reload()}
 function call(b){return fetch('/admin/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){if(r.status===401||r.status===403){back();throw new Error('Session ended')}if(!r.ok)throw new Error(j.error||'Error '+r.status);return j})})}
 function ask(title,text,ok,danger){return new Promise(function(res){var m=$('md');m.innerHTML='<div class="scrim"><div class="md" role="dialog" aria-modal="true"><h2>'+e(title)+'</h2><p>'+e(text)+'</p><div class="r"><button class="btn" id="mn">Cancel</button><button class="btn '+(danger?'d':'p')+'" id="my">'+e(ok)+'</button></div></div></div>';var c=function(v){m.innerHTML='';document.removeEventListener('keydown',k);res(v)},k=function(x){if(x.key==='Escape')c(false)};document.addEventListener('keydown',k);$('mn').onclick=function(){c(false)};$('my').onclick=function(){c(true)};m.firstChild.onclick=function(x){if(x.target===m.firstChild)c(false)};$('my').focus()})}
 function stats(){$('s1').textContent=WS.filter(function(w){return!w.deleted}).length;$('s2').textContent=WS.filter(function(w){return w.deleted}).length;$('s3').textContent=WS.reduce(function(a,w){return a+(w.members||0)},0);$('s4').textContent=FB.length;var n=$('fbn');n.hidden=!FB.length;n.textContent=FB.length}
+var OPEN={},DET={};
+function ago(t){if(!t)return'never';var s=Math.round((Date.now()-t)/1000);if(s<60)return s+'s ago';if(s<3600)return Math.round(s/60)+' min ago';if(s<86400)return Math.round(s/3600)+' h ago';return Math.round(s/86400)+' d ago'}
+function dt(t){return t?new Date(t).toLocaleString():'-'}
+function detHtml(w){var d=DET[w.id];if(!d)return'<div class="dp"><div class="note">Loading details...</div></div>';var m=d.meta,c=d.counts;
+var kv=function(k,v){return'<div><small>'+k+'</small><b>'+v+'</b></div>'};
+var sv=m.scriptV?('v'+m.scriptV+(m.latestScript&&m.scriptV<m.latestScript?' <span class="pill amb">outdated, latest v'+m.latestScript+'</span>':'')):'Never connected';
+var html='<div class="dp"><div><div class="sec">Overview</div><div class="kv">'+kv('Owner',e(m.owner))+kv('Created',dt(m.created))+kv('Connected',m.connectedAt?dt(m.connectedAt):'Never')+kv('Game script',sv)+kv('Place ID',m.placeId?e(m.placeId)+(m.placeLock?' (locked)':''):'Not set')+kv('Last place seen',m.lastPlace==null?'-':e(m.lastPlace))+kv('Game code changes',m.rot)+kv('Open Cloud key',m.openCloud?'Set':'Not set')+kv('Roblox group',m.group?e(m.group):'Not linked')+kv('Discord',m.discord?'Linked':'Not linked')+kv('Two-step required',m.require2fa?'Yes':'No')+kv('Status',m.deleted?'In recycle bin':m.suspended?'Suspended':'Active')+'</div></div>';
+html+='<div><div class="sec">Numbers</div><div class="kv">'+kv('Active bans',c.bans)+kv('Active mutes',c.mutes)+kv('Appeals',c.appeals+' ('+c.openAppeals+' open)')+kv('Forms',c.forms)+kv('Ranks',c.ranks)+kv('Rules',c.rules)+kv('Shifts',c.shifts)+'</div></div>';
+html+='<div><div class="sec">Live servers ('+d.servers.length+')</div>'+(d.servers.length?'<table class="tb"><tr><th>Players</th><th>Script</th><th>Chat</th><th>Up for</th></tr>'+d.servers.map(function(s){return'<tr><td>'+s.players+'</td><td>v'+s.sv+'</td><td>'+e(s.chat||'-')+'</td><td>'+ago(s.since).replace(' ago','')+'</td></tr>'}).join('')+'</table>':'<div class="note">Nobody is connected right now.</div>')+'</div>';
+html+='<div><div class="sec">Team ('+d.members.length+')</div><table class="tb"><tr><th>Name</th><th>Rank</th><th>Id</th><th>Joined</th></tr>'+d.members.map(function(x){return'<tr><td>'+e(x.name)+(x.owner?' <span class="pill amb">Owner</span>':'')+'</td><td>'+e(x.rank)+'</td><td class="mono">'+e(x.id)+'</td><td>'+new Date(x.joined).toLocaleDateString()+'</td></tr>'}).join('')+'</table></div>';
+html+='<div><div class="sec">Recent activity</div>'+(d.audit.length?'<table class="tb">'+d.audit.map(function(a){return'<tr><td style="white-space:nowrap;color:var(--mu)">'+dt(a.t)+'</td><td>'+e(a.user)+'</td><td>'+e(a.text)+'</td></tr>'}).join('')+'</table>':'<div class="note">Nothing yet.</div>')+'</div>';
+html+='<div class="zone"><div class="sec">Manage</div><div class="row"><button class="btn s" data-o="rn" data-w="'+e(w.id)+'">Rename</button>'+(m.suspended?'<button class="btn s" data-o="us" data-w="'+e(w.id)+'">Lift suspension</button>':(m.deleted?'':'<button class="btn s" data-o="su" data-w="'+e(w.id)+'">Suspend</button>'))+'<button class="btn s" data-o="rk" data-w="'+e(w.id)+'">Make a new game code</button>'+(m.deleted?'':'<button class="btn d s" data-o="bn" data-w="'+e(w.id)+'">Move to recycle bin</button>')+'<button class="btn d s" data-o="pg" data-w="'+e(w.id)+'">Delete forever</button></div><div class="note mt" id="k'+e(w.id)+'"></div></div></div>';
+return html}
 function drawWs(){var q=$('q').value.trim().toLowerCase(),l=WS.filter(function(w){return(FL==='all'||(FL==='del')===!!w.deleted)&&(!q||(w.name+' '+w.id+' '+w.owner).toLowerCase().indexOf(q)>=0)});
-$('o').innerHTML=l.length?l.map(function(w){return'<div class="card '+(w.deleted?'del':'')+'"><div class="ws"><div class="av">'+e((w.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(w.name)+'</b> <code>'+e(w.id)+'</code><div class="m"><span>Owner '+e(w.owner)+'</span><span>'+w.members+' member'+(w.members==1?'':'s')+'</span>'+(w.created?'<span>Created '+new Date(w.created).toLocaleDateString()+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(w.deleted?'<span class="pill red">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':'<span class="pill grn"><span class="dot"></span>Active</span>')+'</div><div class="acts">'+(w.deleted?'<button class="btn p s" data-o="rd" data-w="'+e(w.id)+'">Restore workspace</button>':'')+'<button class="btn s" data-o="sn" data-w="'+e(w.id)+'">Back up now</button><button class="btn s" data-o="ls" data-w="'+e(w.id)+'">Backups</button><button class="btn s" data-o="dl" data-w="'+e(w.id)+'">Download</button><span class="note" id="s'+e(w.id)+'"></span></div></div>'}).join(''):'<div class="empty">'+(WS.length?'No workspaces match.':'No workspaces yet.')+'</div>'}
+$('o').innerHTML=l.length?l.map(function(w){return'<div class="card '+(w.deleted?'del':'')+'"><div class="ws"><div class="av">'+e((w.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(w.name)+'</b> <code>'+e(w.id)+'</code><div class="m"><span>Owner '+e(w.owner)+'</span><span>'+w.members+' member'+(w.members==1?'':'s')+'</span>'+(w.created?'<span>Created '+new Date(w.created).toLocaleDateString()+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(w.deleted?'<span class="pill red">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':w.suspended?'<span class="pill amb">Suspended</span>':'<span class="pill grn"><span class="dot"></span>Active</span>')+'</div><div class="acts">'+(w.deleted?'<button class="btn p s" data-o="rd" data-w="'+e(w.id)+'">Restore workspace</button>':'')+'<button class="btn s" data-o="dtl" data-w="'+e(w.id)+'">'+(OPEN[w.id]?'Hide details':'Details')+'</button><button class="btn s" data-o="sn" data-w="'+e(w.id)+'">Back up now</button><button class="btn s" data-o="ls" data-w="'+e(w.id)+'">Backups</button><button class="btn s" data-o="dl" data-w="'+e(w.id)+'">Download</button><span class="note" id="s'+e(w.id)+'"></span></div>'+(OPEN[w.id]?detHtml(w):'')+'</div>'}).join(''):'<div class="empty">'+(WS.length?'No workspaces match.':'No workspaces yet.')+'</div>'}
+function ask2(title,text,ok,o){o=o||{};return new Promise(function(res){var m=$('md');m.innerHTML='<div class="scrim"><form class="md" role="dialog" aria-modal="true"><h2>'+e(title)+'</h2><p>'+e(text)+'</p><input class="in" id="mi" autocomplete="off" placeholder="'+e(o.ph||'')+'" value="'+e(o.val||'')+'" style="margin-bottom:18px"><div class="r"><button type="button" class="btn" id="mn">Cancel</button><button class="btn '+(o.danger?'d':'p')+'" id="my">'+e(ok)+'</button></div></form></div>';var c=function(v){m.innerHTML='';document.removeEventListener('keydown',k);res(v)},k=function(x){if(x.key==='Escape')c(null)};document.addEventListener('keydown',k);$('mn').onclick=function(){c(null)};m.querySelector('form').onsubmit=function(x){x.preventDefault();var v=$('mi').value.trim();if(o.must&&v!==o.must){toast('That does not match.',true);return}if(!o.opt&&!v){return}c(v)};m.firstChild.onclick=function(x){if(x.target===m.firstChild)c(null)};$('mi').focus()})}
 function drawFb(){$('fb').innerHTML=FB.length?FB.map(function(f){return'<div class="card fb"><div class="r"><span class="bd">'+e(f.type)+'</span><b>'+e(f.user)+'</b><span class="note">'+e(f.rank)+' - '+e(f.wsName)+' - '+new Date(f.t).toLocaleString()+'</span></div><p>'+e(f.text)+'</p><div class="r"><input class="in" style="flex:1;min-width:220px;width:auto" data-r="'+e(f.id)+'" placeholder="Write a reply" value="'+e(f.reply||'')+'"><button class="btn p s" data-o="fr" data-i="'+e(f.id)+'">'+(f.reply?'Update reply':'Reply')+'</button><button class="btn d s" data-o="fd" data-i="'+e(f.id)+'">Delete</button></div></div>'}).join(''):'<div class="empty">No feedback yet.</div>'}
 function load(){return call({op:'list'}).then(function(j){WS=j.workspaces;stats();drawWs();return call({op:'feedback'}).then(function(f){FB=f.items;stats();drawFb()},function(){})}).catch(function(x){$('o').innerHTML='<div class="empty">'+e(x.message)+'</div>'})}
-document.querySelector('.tabs').onclick=function(ev){var b=ev.target.closest('.tab');if(!b)return;document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t===b)});['ws','fb','tl'].forEach(function(k){$('p-'+k).hidden=k!==b.dataset.t})};
+document.querySelector('.tabs').onclick=function(ev){var b=ev.target.closest('.tab');if(!b)return;document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('on',t===b)});var t=b.dataset.t;['ws','lv','ac','fb','st','lg','tl'].forEach(function(k){$('p-'+k).hidden=k!==t});clearInterval(lvT);if(t==='lv'){loadLive();lvT=setInterval(loadLive,10000)}if(t==='st'){loadSite();runHealth()}if(t==='lg')loadLog()};
 document.querySelector('.chips').onclick=function(ev){var b=ev.target.closest('.chip');if(!b)return;FL=b.dataset.f;document.querySelectorAll('.chip').forEach(function(c){c.classList.toggle('on',c===b)});drawWs()};
 $('q').oninput=drawWs;$('rf').onclick=function(){load().then(function(){toast('Refreshed')})};
 $('out').onclick=function(){fetch('/admin/logout',{method:'POST'}).then(back)};
@@ -676,14 +710,59 @@ $('eb').onclick=function(){call({op:'exportAll'}).then(function(j){var a=documen
 $('dr').onclick=function(){call({op:'discordRegister'}).then(function(j){$('dm').textContent='Registered '+j.count+' commands. They can take a minute to appear.'}).catch(function(x){$('dm').textContent=x.message})};
 $('mr').onclick=function(){var u=$('mu').value.trim();if(!u)return;call({op:'mfaReset',uid:u}).then(function(j){$('mm').textContent=j.had?'Two-step removed. They can sign in and set it up again.':'That user did not have two-step on.'}).catch(function(x){$('mm').textContent=x.message})};
 $('fb').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var go=function(){return b.dataset.o==='fr'?call({op:'feedbackReply',id:b.dataset.i,reply:document.querySelector('[data-r="'+b.dataset.i+'"]').value}).then(function(){toast('Reply saved')}):ask('Delete this message?','It will be removed for good.','Delete',true).then(function(y){if(y)return call({op:'feedbackDelete',id:b.dataset.i}).then(function(){toast('Deleted')})})};go().then(load).catch(function(x){toast(x.message,true)})};
-$('o').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var w=b.dataset.w,s=$('s'+w),o=b.dataset.o;
-var fail=function(x){(s||{}).textContent=x.message;toast(x.message,true)};
-if(o==='rd')ask('Restore this workspace?','It comes back with its team, logs and settings.','Restore').then(function(y){if(y)return call({op:'restoreDeleted',wid:w}).then(function(){toast('Workspace restored');return load()})}).catch(fail);
+$('o').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var w=b.dataset.w,s=$('s'+w),o=b.dataset.o,wsr=WS.filter(function(x){return x.id===w})[0]||{},nm=wsr.name||w;
+var fail=function(x){var t=$('k'+w)||s;if(t)t.textContent=x.message;toast(x.message,true)};
+var reloadDet=function(){return call({op:'wsDetail',wid:w}).then(function(d){DET[w]=d;drawWs()})};
+if(o==='dtl'){if(OPEN[w]){delete OPEN[w];drawWs()}else{OPEN[w]=1;drawWs();reloadDet().catch(fail)}}
+else if(o==='rd')ask('Restore this workspace?','It comes back with its team, logs and settings.','Restore').then(function(y){if(y)return call({op:'restoreDeleted',wid:w}).then(function(){toast('Workspace restored');return load()})}).catch(fail);
 else if(o==='sn')call({op:'snapshotNow',wid:w}).then(function(){s.textContent='Backed up.';toast('Backup saved')}).catch(fail);
-else if(o==='ls')call({op:'snaps',wid:w}).then(function(j){s.innerHTML='';var d=s.parentNode,old=d.parentNode.querySelector('.snaps');if(old)old.remove();var x=document.createElement('div');x.className='snaps';x.innerHTML=j.snaps.length?j.snaps.map(function(k){return'<button class="btn s" data-o="rs" data-w="'+e(w)+'" data-d="'+e(k)+'">'+(k.indexOf('pre')===0?'Safety copy '+new Date(+k.slice(3)*1000).toLocaleString():k.slice(0,4)+'-'+k.slice(4,6)+'-'+k.slice(6))+'</button>'}).join(''):'<span class="note">No backups yet.</span>';d.parentNode.appendChild(x)}).catch(fail);
+else if(o==='ls')call({op:'snaps',wid:w}).then(function(j){s.innerHTML='';var d=s.parentNode,old=d.parentNode.querySelector('.snaps');if(old)old.remove();var x=document.createElement('div');x.className='snaps';x.innerHTML=j.snaps.length?j.snaps.map(function(k){return'<button class="btn s" data-o="rs" data-w="'+e(w)+'" data-d="'+e(k)+'">'+(k.indexOf('pre')===0?'Safety copy '+new Date(+k.slice(3)*1000).toLocaleString():k.slice(0,4)+'-'+k.slice(4,6)+'-'+k.slice(6))+'</button>'}).join(''):'<span class="note">No backups yet.</span>';d.parentNode.insertBefore(x,d.nextSibling)}).catch(fail);
 else if(o==='rs')ask('Restore this backup?','The workspace is replaced with the backup of '+b.dataset.d+'. A safety copy is made first.','Restore',true).then(function(y){if(y)return call({op:'restoreSnapshot',wid:w,date:b.dataset.d}).then(function(){toast('Backup restored')})}).catch(fail);
-else if(o==='dl')call({op:'download',wid:w}).then(function(j){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download='sentinel-backup-'+w+'.json';a.click()}).catch(fail)};
-load();</script></body></html>
+else if(o==='dl')call({op:'download',wid:w}).then(function(j){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download='sentinel-backup-'+w+'.json';a.click()}).catch(fail);
+else if(o==='rn')ask2('Rename workspace','Pick the new name (2 to 40 characters).','Rename',{val:nm,ph:'Workspace name'}).then(function(v){if(v)return call({op:'wsRename',wid:w,name:v}).then(function(){toast('Renamed');return load().then(reloadDet)})}).catch(fail);
+else if(o==='su')ask2('Suspend '+nm,'Its team is locked out of the panel and the game stops syncing, but nothing is deleted. Write the reason they will see.','Suspend',{ph:'Reason',danger:1,opt:1}).then(function(v){if(v!==null)return call({op:'wsSuspend',wid:w,on:true,reason:v}).then(function(){toast('Suspended');return load().then(reloadDet)})}).catch(fail);
+else if(o==='us')call({op:'wsSuspend',wid:w,on:false}).then(function(){toast('Suspension lifted');return load().then(reloadDet)}).catch(fail);
+else if(o==='rk')ask('Make a new game code?','The old code stops working at once. The game will go offline until the owner puts the new code in their script.','Make new code',true).then(function(y){if(y)return call({op:'wsRotate',wid:w}).then(function(j){var t=$('k'+w);t.innerHTML='New code (shown once): <code class="mono" style="user-select:all">'+e(j.code)+'</code> <button class="btn s" id="cc">Copy</button>';$('cc').onclick=function(){navigator.clipboard.writeText(j.code).then(function(){toast('Copied')})};toast('New game code made')})}).catch(fail);
+else if(o==='bn')ask('Move '+nm+' to the recycle bin?','Its team loses access now. You can restore it for 30 days, then it is deleted for good.','Move to bin',true).then(function(y){if(y)return call({op:'wsBin',wid:w}).then(function(){toast('Moved to the recycle bin');return load().then(reloadDet)})}).catch(fail);
+else if(o==='pg')ask2('Delete '+nm+' forever','This erases the workspace, its backups and every record. It cannot be undone. Type the workspace name to confirm.','Delete forever',{ph:nm,must:nm,danger:1}).then(function(v){if(v)return call({op:'wsPurge',wid:w,confirm:v}).then(function(){delete OPEN[w];toast('Deleted forever');return load()})}).catch(fail)};
+/* ---- live servers ---- */
+var lvT=null;function loadLive(){return call({op:'live'}).then(function(j){var items=j.items,p=items.reduce(function(a,x){return a+x.players},0),sv=items.reduce(function(a,x){return a+x.servers},0);$('lvs').textContent=p+' player'+(p==1?'':'s')+' in '+sv+' server'+(sv==1?'':'s')+' across '+items.length+' workspace'+(items.length==1?'':'s')+'. Updates every 10 seconds.';var n=$('lvn');n.hidden=!items.length;n.textContent=p;$('lvo').innerHTML=items.length?'<div class="card"><table class="tb"><tr><th>Workspace</th><th>Servers</th><th>Players</th><th>Script</th><th>Chat</th><th>Last check-in</th></tr>'+items.map(function(x){return'<tr><td><b>'+e(x.name)+'</b> <code>'+e(x.id)+'</code></td><td>'+x.servers+'</td><td>'+x.players+'</td><td>v'+x.sv+(x.sv<j.latest?' <span class="pill amb">outdated</span>':'')+'</td><td>'+e(x.chat.join(', ')||'-')+'</td><td>'+ago(x.seen)+'</td></tr>'}).join('')+'</table></div>':'<div class="empty">No game servers are connected right now.</div>'}).catch(function(x){$('lvs').textContent=x.message})}
+$('lvr').onclick=loadLive;
+/* ---- accounts ---- */
+function userCard(u){return'<div class="card"><div class="ws"><div class="av">'+e((u.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(u.name||'(no name)')+'</b> <code>'+e(u.id)+'</code><div class="m"><span>'+e(u.provider||'')+' sign-in</span>'+(u.roblox?'<span>Roblox @'+e(u.roblox)+'</span>':'')+(u.created?'<span>Joined '+new Date(u.created).toLocaleDateString()+'</span>':'')+(u.revoked?'<span>Signed out everywhere '+ago(u.revoked)+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(u.mfa?'<span class="pill grn">Two-step on</span>':'<span class="pill">No two-step</span>')+'</div>'+(u.workspaces.length?'<div class="snaps">'+u.workspaces.map(function(w){return'<span class="pill'+(w.deleted?' red':w.owner?' amb':'')+'">'+e(w.name)+(w.owner?' - owner':'')+(w.deleted?' - deleted':'')+'</span>'}).join('')+'</div>':'<div class="note mt">Not in any workspace.</div>')+'<div class="acts"><button class="btn s" data-u="so" data-i="'+e(u.id)+'">Sign out everywhere</button><button class="btn s" data-u="ex" data-i="'+e(u.id)+'">Export data</button>'+(u.mfa?'<button class="btn s" data-u="mf" data-i="'+e(u.id)+'">Reset two-step</button>':'')+'<button class="btn d s" data-u="dl" data-i="'+e(u.id)+'" data-n="'+e(u.name||'')+'">Delete account</button><span class="note" id="u'+e(u.id)+'"></span></div></div>'}
+function searchUsers(){var q=$('uq').value.trim();if(q.length<2){toast('Type at least 2 characters',true);return}call({op:'userSearch',q:q}).then(function(j){$('uo').innerHTML=j.items.length?j.items.map(userCard).join(''):'<div class="empty">No accounts match.</div>'}).catch(function(x){toast(x.message,true)})}
+$('ub').onclick=searchUsers;$('uq').onkeydown=function(k){if(k.key==='Enter')searchUsers()};
+function saveJson(name,j){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download=name;a.click()}
+$('uo').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var id=b.dataset.i,t=b.dataset.u,s=$('u'+id),fail=function(x){if(s)s.textContent=x.message;toast(x.message,true)};
+if(t==='so')ask('Sign '+id+' out everywhere?','Every browser they are signed in on is signed out. They can sign in again.','Sign out',true).then(function(y){if(y)return call({op:'userSignOut',uid:id}).then(function(){toast('Signed out everywhere');searchUsers()})}).catch(fail);
+else if(t==='ex')call({op:'userExport',uid:id}).then(function(j){saveJson('sentinel-account-'+id+'.json',j);toast('Export downloaded')}).catch(fail);
+else if(t==='mf')ask('Reset two-step for '+id+'?','Removes two-step so they can sign in and set it up again.','Reset',true).then(function(y){if(y)return call({op:'mfaReset',uid:id}).then(function(){toast('Two-step removed');searchUsers()})}).catch(fail);
+else if(t==='dl')ask2('Delete account '+id,'Removes the account and takes them off every team. Workspaces they own must be deleted or handed over first. Type the user id to confirm.','Delete account',{ph:id,must:id,danger:1}).then(function(v){if(v)return call({op:'userDelete',uid:id,confirm:v}).then(function(){toast('Account deleted');searchUsers()})}).catch(fail)};
+/* ---- site ---- */
+function drawSite(j){var a=j.announce,m=j.maint;$('anp').textContent=a?'On':'Off';$('anp').className='pill'+(a?' grn':'');if(a){$('ant').value=a.text;$('ank').value=a.kind}$('mtp').textContent=m&&m.on?'ON':'Off';$('mtp').className='pill'+(m&&m.on?' red':'');$('mtb').textContent=m&&m.on?'Turn off':'Turn on';$('mtb').className='btn '+(m&&m.on?'p':'d');if(m&&m.on)$('mtm').value=m.message||'';$('pill-m').hidden=!(m&&m.on);$('pill-a').hidden=!a}
+function loadSite(){return call({op:'site'}).then(drawSite).catch(function(){})}
+$('anb').onclick=function(){call({op:'announce',on:true,text:$('ant').value,kind:$('ank').value}).then(function(){toast('Announcement posted');loadSite()}).catch(function(x){toast(x.message,true)})};
+$('anr').onclick=function(){call({op:'announce',on:false}).then(function(){$('ant').value='';toast('Announcement removed');loadSite()}).catch(function(x){toast(x.message,true)})};
+$('mtb').onclick=function(){var on=$('mtp').textContent!=='ON';(on?ask('Turn on maintenance mode?','Nobody can use the panel until you turn it off. Games keep syncing.','Turn on',true):Promise.resolve(true)).then(function(y){if(y)return call({op:'maintenance',on:on,message:$('mtm').value}).then(function(){toast(on?'Maintenance mode is ON':'Maintenance mode is off');loadSite()})}).catch(function(x){toast(x.message,true)})};
+function hrow(n,st,t){return'<div class="hc"><b>'+n+'</b><span class="note">'+e(t||'')+'</span><span class="pill '+(st==='ok'?'grn':st==='warn'?'amb':'red')+'">'+(st==='ok'?'OK':st==='warn'?'Check':'Problem')+'</span></div>'}
+function runHealth(){$('ho').innerHTML='Running checks...';call({op:'health'}).then(function(j){var c=j.config,b=j.backups,h='';
+h+=hrow('Database',j.db.ok?(j.db.ms>1500?'warn':'ok'):'bad',j.db.ok?j.db.ms+' ms':'Cannot reach Supabase');
+h+=hrow('Workspaces',j.workspaces.live>=j.workspaces.max*.9?'warn':'ok',j.workspaces.live+' of '+j.workspaces.max+' allowed ('+j.workspaces.rows+' stored)');
+h+=hrow('Nightly backups',b?(b.ok&&Date.now()-b.t<36*36e5?'ok':'bad'):'warn',b?'Last run '+ago(b.t)+(b.ok?'':', with errors'):'Has never run. Check CRON_SECRET and the cron job.');
+h+=hrow('Cron secret',c.cronSecret?'ok':'warn',c.cronSecret?'Set':'Missing or under 16 characters');
+h+=hrow('Roblox',j.roblox==='ok'?'ok':'bad',j.roblox==='ok'?'Reachable':j.roblox);
+h+=hrow('Discord bot',!j.discord.configured?'warn':j.discord.status==='ok'?'ok':'bad',!j.discord.configured?'Not set up':j.discord.status);
+h+=hrow('Sign-in methods',j.signIn.length?'ok':'bad',j.signIn.join(', ')||'None configured');
+h+=hrow('Sign-ups',c.signupsOpen?'ok':'warn',c.signupsOpen?'Open (up to '+c.maxPerUser+' workspaces per person)':'Closed');
+h+=hrow('Legal pages',c.legalReviewed?'ok':'warn',c.legalReviewed?'Marked as reviewed':'Still marked as a draft (LEGAL_REVIEWED)');
+h+=hrow('Alert webhook',c.alertWebhook?'ok':'warn',c.alertWebhook?'Set':'Not set (ALERT_WEBHOOK)');
+h+=hrow('Report retention',  'ok',c.callRetentionDays+' days');
+$('ho').innerHTML=h}).catch(function(x){$('ho').textContent=x.message})}
+$('hb').onclick=runHealth;
+/* ---- audit log ---- */
+function loadLog(){call({op:'adminLog'}).then(function(j){$('lgo').innerHTML=j.items.length?j.items.map(function(l){return'<div class="e'+(l.bad?' bad':'')+'"><time>'+dt(l.t)+'</time><span>'+e(l.text)+(l.who?' <span class="note">('+e(l.who)+')</span>':'')+'</span></div>'}).join(''):'<div class="note">Nothing yet.</div>'}).catch(function(x){$('lgo').textContent=x.message})}
+$('lgr').onclick=loadLog;
+load();loadSite();loadLive();</script></body></html>
 `;
 const ADMIN_GATE = () => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="color-scheme" content="dark"><title>Sentinel Admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
 :root{--bg:#07080c;--bg2:#0b0d13;--card:#10131b;--card2:#151927;--ln:#222637;--ink:#e9ebf3;--mu:#8a8fa6;--ac:#4f8bff;--ac2:#7aa7ff;--red:#ff4d5e;--amb:#f5b942;--grn:#3ddc97}
@@ -740,6 +819,8 @@ const unpack = t => { if (!t) return null; const [b, g] = String(t).split('.'); 
 const cookiesOf = req => Object.fromEntries((req.headers.cookie || '').split(';').map(s => s.trim()).filter(Boolean).map(s => { const i = s.indexOf('='); let v = s.slice(i + 1); try { v = decodeURIComponent(v); } catch {} return [s.slice(0, i), v]; }));
 const mkCookie = (name, val, { maxAge = 604800, sameSite = 'Strict' } = {}) => `${name}=${encodeURIComponent(val)}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}; Secure`;
 const clearCookie = name => `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Secure`;
+const sessIssued = req => { const d = unpack(cookiesOf(req).sid); return (d && d.i) || 0; }; // when this sign-in began (0 for older cookies)
+const revoked = (U0, req) => !!(U0 && U0.revoked && U0.revoked > sessIssued(req));
 const sessionUid = req => { const d = unpack(cookiesOf(req).sid); return d && /^[gr]_\d{1,32}$/.test(d.u || '') ? d.u : null; };
 const ALNUM = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const randSecret = n => { let o = ''; while (o.length < n) for (const b of crypto.randomBytes(n * 2)) if (b < 228 && o.length < n) o += ALNUM[b % ALNUM.length]; return o; };
@@ -800,7 +881,7 @@ async function authRoute(req, res, url, p, ip) {
     res.setHeader('Set-Cookie', [mkCookie('mp', pack({ u: uid, e: Date.now() + 600000 }), { maxAge: 600 }), clearCookie('sid'), clearCookie('oa')]);
     res.writeHead(302, { Location: '/' + (oa.i ? '#/join/' + oa.i : '') }); return res.end();
   }
-  res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: uid, e: Date.now() + 7 * 864e5 })), clearCookie('oa')]);
+  res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: uid, i: Date.now(), e: Date.now() + 7 * 864e5 })), clearCookie('oa')]);
   res.writeHead(302, { Location: '/' + (oa.i ? '#/join/' + oa.i : '') }); return res.end();
 }
 
@@ -991,7 +1072,7 @@ async function route(req, res, url, p) {
       const w0 = limit('appeal:' + ip, 5, 3600000) || limit('appeali:' + ip, 8, APPEAL_WINDOW) || limit('appealw:' + wid, 60, 3600000) || await slimit('appeal:' + ip, 8, 864e5); if (w0) return tooMany(res, w0);
       const uname = cleanName(A.username, 40), text = cleanName(A.text, 1000); if (!/^\w{3,20}$/.test(uname)) return send(res, 400, { error: 'Enter your exact Roblox username.' });
       if (!text) return send(res, 400, { error: 'Write a short note for staff first.' });
-      setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
+      setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.meta.suspended || D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
       const id = await findId(uname), ban = id && D.bans[id];
       if (!ban || !live(ban)) return send(res, 404, { error: 'We could not find an active ban for that username in this game.' });
       if (D.appeals.some(x => x.uid === id && x.status === 'open')) return send(res, 409, { error: 'You already have an appeal waiting for review.' });
@@ -1025,7 +1106,9 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/admin/login') {
       if (ADMIN_TOKEN.length < 16) return send(res, 404, { error: 'The admin console is off. Set ADMIN_TOKEN (16+ characters) in Vercel to turn it on.' });
       const w1 = limit('admtry:' + ip, 40, 900000); if (w1) return tooMany(res, w1);
-      const L = await body(req); if (!same(String(L.token || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong password' });
+      const L = await body(req); await need('glob'); G.adminLog ||= []; const who = hash('ip:' + ip).toString('hex').slice(0, 8);
+      if (!same(String(L.token || ''), ADMIN_TOKEN)) { G.adminLog.unshift({ t: Date.now(), text: 'Failed sign-in attempt', bad: 1, who }); G.adminLog.length = Math.min(G.adminLog.length, 300); return send(res, 403, { error: 'Wrong password' }); }
+      G.adminLog.unshift({ t: Date.now(), text: 'Signed in', who }); G.adminLog.length = Math.min(G.adminLog.length, 300);
       res.setHeader('Set-Cookie', mkCookie('adm', pack({ a: 1, e: Date.now() + 8 * 3600000 }), { maxAge: 28800 })); return ok(res);
     }
     if (req.method === 'POST' && p === '/admin/logout') { res.setHeader('Set-Cookie', clearCookie('adm')); return ok(res); }
@@ -1033,9 +1116,12 @@ async function route(req, res, url, p) {
       if (ADMIN_TOKEN.length < 16) return send(res, 404, { error: 'The admin console is off. Set ADMIN_TOKEN (16+ characters) in Vercel to turn it on.' });
       const w0 = admSession() ? 0 : limit('admtry:' + ip, 40, 900000); if (w0) return tooMany(res, w0);
       if (!admSession() && !same(String(req.headers['x-admin-token'] || ''), ADMIN_TOKEN)) return send(res, 403, { error: 'Wrong token' });
-      const A = await body(req), wid = String(A.wid || '');
-      if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
+      const A = await body(req), wid = String(A.wid || ''); await need('glob'); G.adminLog ||= [];
+      const alog = t => { G.adminLog.unshift({ t: Date.now(), text: t }); G.adminLog.length = Math.min(G.adminLog.length, 300); };
+      const WID = /^[a-f0-9]{12}$/, UID = /^[gr]_\d{1,32}$/;
+      if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, suspended: r.meta.suspended || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
       if (A.op === 'exportAll') {
+        alog('Downloaded the full site export');
         const rows = (await sbGet('select=key,value,version&key=like.*&order=key')).filter(r => !/^(bk|rl):/.test(r.key)), out = JSON.stringify({ format: 'sentinel-site-export', v: 1, exportedAt: new Date().toISOString(), rows });
         if (out.length > 4e6) return send(res, 413, { error: 'Your site is too big to download here. Use the Supabase CLI (supabase db dump) instead.' });
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); return res.end(out);
@@ -1043,26 +1129,99 @@ async function route(req, res, url, p) {
       if (A.op === 'discordRegister') {
         if (!discordOn()) return send(res, 400, { error: 'Set DISCORD_APP_ID, DISCORD_PUBLIC_KEY and DISCORD_BOT_TOKEN in Vercel first, then redeploy.' });
         const r = await fetch(`${DISCORD.api}/applications/${DISCORD.app}/commands`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bot ' + DISCORD.token }, body: JSON.stringify(DISCORD_COMMANDS), signal: AbortSignal.timeout(8000) });
-        const t = await r.text(); return r.ok ? send(res, 200, { ok: true, count: DISCORD_COMMANDS.length }) : send(res, 400, { error: `Discord said ${r.status}: ${t.slice(0, 200)}` });
+        const t = await r.text(); return r.ok ? (alog('Registered the Discord commands'), send(res, 200, { ok: true, count: DISCORD_COMMANDS.length })) : send(res, 400, { error: `Discord said ${r.status}: ${t.slice(0, 200)}` });
       }
       if (A.op === 'mfaReset') {
         const t = String(A.uid || '').trim(); if (!/^[gr]_\d{1,32}$/.test(t)) return send(res, 400, { error: 'A user id looks like r_123456 or g_123456.' });
-        setUid(t); await need('user'); if (!U) return send(res, 404, { error: 'No such user' }); const had = !!(U.mfa && U.mfa.on); delete U.mfa; delete U.mfaPending; return send(res, 200, { ok: true, had });
+        setUid(t); await need('user'); if (!U) return send(res, 404, { error: 'No such user' }); const had = !!(U.mfa && U.mfa.on); delete U.mfa; delete U.mfaPending; alog('Reset two-step for ' + t); return send(res, 200, { ok: true, had });
       }
       if (A.op === 'feedback') { await need('fb'); return send(res, 200, { items: FB.slice(0, 200) }); }
       if (A.op === 'feedbackReply' || A.op === 'feedbackDelete') {
         await need('fb'); const i = FB.findIndex(f => f.id === String(A.id || '')); if (i < 0) return send(res, 404, { error: 'Not found' });
-        if (A.op === 'feedbackDelete') FB.splice(i, 1); else { FB[i].reply = String(A.reply || '').slice(0, 2000).trim() || null; FB[i].repliedAt = FB[i].reply ? Date.now() : null; }
+        if (A.op === 'feedbackDelete') { FB.splice(i, 1); alog('Deleted a feedback message'); } else { alog('Replied to a feedback message'); FB[i].reply = String(A.reply || '').slice(0, 2000).trim() || null; FB[i].repliedAt = FB[i].reply ? Date.now() : null; }
         return ok(res);
+      }
+      // ---- workspace controls ----
+      if (['wsDetail', 'wsRename', 'wsBin', 'wsPurge', 'wsRotate', 'wsSuspend'].includes(A.op)) {
+        if (!WID.test(wid)) return send(res, 400, { error: 'bad workspace' });
+        setWid(wid); await need('core', ...(A.op === 'wsDetail' ? ['live'] : [])); if (!D.meta) return send(res, 404, { error: 'No such workspace' });
+        const nm = D.meta.name;
+        if (A.op === 'wsDetail') {
+          const lv = Object.values(R.servers).filter(x => Date.now() - x.last < LIVE_MS), cnt = o => Object.values(o || {}).filter(live).length;
+          return send(res, 200, {
+            meta: { id: wid, name: nm, owner: D.meta.owner, created: D.meta.created, deleted: D.meta.deleted || null, suspended: D.meta.suspended || null, rot: D.meta.rot || 0, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, scriptV: D.meta.scriptV || 0, latestScript: latestScript(), connectedAt: D.meta.connectedAt || null, openCloud: !!D.meta.oc, group: (D.meta.group && D.meta.group.name) || null, require2fa: !!D.meta.require2fa, discord: !!(D.discord && D.discord.guild) },
+            members: Object.entries(D.members).map(([id, m]) => ({ id, name: m.name, rank: (D.ranks[m.rank] || {}).name || m.rank, joined: m.joined, owner: id === D.meta.owner })).sort((a, b) => (b.owner ? 1 : 0) - (a.owner ? 1 : 0) || a.joined - b.joined),
+            counts: { bans: cnt(D.bans), mutes: cnt(D.mutes), appeals: D.appeals.length, openAppeals: D.appeals.filter(a => a.status === 'open').length, forms: D.forms.length, ranks: Object.keys(D.ranks).length, rules: D.rulebook.length, shifts: D.shifts.length },
+            servers: lv.map(x => ({ players: (x.players || []).length, sv: x.sv, chat: x.chat || '', since: x.first || x.last })), audit: D.audit.slice(0, 15) });
+        }
+        if (A.op === 'wsRename') { const n2 = cleanName(A.name); if (n2.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = n2; audit('Site admin', `Renamed the workspace from "${nm}"`); alog(`Renamed workspace ${wid} from "${nm}" to "${n2}"`); return ok(res); }
+        if (A.op === 'wsSuspend') {
+          if (A.on) { D.meta.suspended = { t: Date.now(), reason: cleanName(A.reason, 200) }; audit('Site admin', 'Suspended the workspace'); alog(`Suspended workspace "${nm}" (${wid})` + (D.meta.suspended.reason ? ': ' + D.meta.suspended.reason : '')); }
+          else { delete D.meta.suspended; audit('Site admin', 'Lifted the suspension'); alog(`Lifted the suspension on "${nm}" (${wid})`); }
+          return ok(res);
+        }
+        if (A.op === 'wsRotate') { D.meta.rot = (D.meta.rot || 0) + 1; const nc = newCode(wid); D.meta.codeHash = nc.hash; audit('Site admin', 'Made a new game code'); alog(`Made a new game code for "${nm}" (${wid})`); return send(res, 200, { ok: true, code: nc.code }); }
+        if (A.op === 'wsBin') {
+          if (D.meta.deleted) return send(res, 400, { error: 'Already in the recycle bin' });
+          G.workspaces = Math.max(0, G.workspaces - 1); D.meta.deleted = Date.now(); audit('Site admin', 'Moved the workspace to the recycle bin'); alog(`Moved "${nm}" (${wid}) to the recycle bin`); return ok(res);
+        }
+        // wsPurge: gone for good, with the typed name as the safety catch
+        if (cleanName(A.confirm) !== nm) return send(res, 400, { error: 'Type the workspace name exactly to confirm' });
+        const guild = D.discord && D.discord.guild; if (!D.meta.deleted) G.workspaces = Math.max(0, G.workspaces - 1);
+        alog(`PERMANENTLY deleted workspace "${nm}" (${wid})`);
+        res.after.push(async () => { await sbDel(`key=like.w${wid}:*`); await sbDel(`key=like.bk:*:${wid}:*`); if (/^\d{5,25}$/.test(guild || '')) await sbDel(`key=in.(dg:${guild})`); });
+        return ok(res);
+      }
+      if (A.op === 'live') {
+        const rows = await sbGet('select=key,servers:value->servers&key=like.w*:live'), names = Object.fromEntries((await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta).map(r => [r.key.slice(1, 13), r.meta.name]));
+        const out = []; for (const r of rows) { const sv = Object.values(r.servers || {}).filter(x => Date.now() - x.last < LIVE_MS); if (sv.length) out.push({ id: r.key.slice(1, 13), name: names[r.key.slice(1, 13)] || '(unknown)', servers: sv.length, players: sv.reduce((a, x) => a + (x.players || []).length, 0), sv: Math.max(...sv.map(x => x.sv || 1)), chat: [...new Set(sv.map(x => x.chat).filter(Boolean))], seen: Math.max(...sv.map(x => x.last)) }); }
+        return send(res, 200, { latest: latestScript(), items: out.sort((a, b) => b.players - a.players) });
+      }
+      // ---- accounts ----
+      if (A.op === 'userSearch') {
+        const q = String(A.q || '').trim().toLowerCase(); if (q.length < 2) return send(res, 400, { error: 'Type at least 2 characters.' });
+        const rows = await sbGet('select=key,name:value->name,provider:value->provider,workspaces:value->workspaces,roblox:value->roblox,mfaOn:value->mfa->on,revoked:value->revoked,created:value->created&key=like.u:*');
+        const names = Object.fromEntries((await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta).map(r => [r.key.slice(1, 13), { name: r.meta.name, deleted: !!r.meta.deleted, owner: r.meta.owner }]));
+        const hit = rows.filter(r => { const id = r.key.slice(2); return id.toLowerCase().includes(q) || String(r.name || '').toLowerCase().includes(q) || String((r.roblox && r.roblox.name) || '').toLowerCase().includes(q); }).slice(0, 30);
+        return send(res, 200, { items: hit.map(r => { const id = r.key.slice(2); return { id, name: r.name, provider: r.provider, roblox: r.roblox ? r.roblox.name || null : null, mfa: !!r.mfaOn, revoked: r.revoked || null, created: r.created || null, workspaces: (r.workspaces || []).filter(w => names[w]).map(w => ({ id: w, name: names[w].name, deleted: names[w].deleted, owner: names[w].owner === id })) }; }) });
+      }
+      if (['userSignOut', 'userDelete', 'userExport'].includes(A.op)) {
+        const t = String(A.uid || '').trim(); if (!UID.test(t)) return send(res, 400, { error: 'A user id looks like r_123456 or g_123456.' });
+        setUid(t); await need('user'); if (!U) return send(res, 404, { error: 'No such user' });
+        if (A.op === 'userSignOut') { U.revoked = Date.now(); alog(`Signed ${t} out everywhere`); return ok(res); }
+        const mrows = (await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core')).filter(r => r.meta && r.members && r.members[t]);
+        if (A.op === 'userExport') {
+          await need('fb'); const { mfa, ...rest } = U; alog(`Exported the data held about ${t}`);
+          return send(res, 200, { exportedAt: new Date().toISOString(), id: t, account: { ...rest, mfa: mfa ? { on: !!mfa.on } : null }, memberships: mrows.map(r => ({ workspace: r.key.slice(1, 13), name: r.meta.name, deleted: !!r.meta.deleted, owner: r.meta.owner === t, member: r.members[t] })), feedback: FB.filter(f => f.uid === t) });
+        }
+        const owned = mrows.filter(r => r.meta.owner === t && !r.meta.deleted); if (owned.length) return send(res, 400, { error: 'This person owns ' + owned.map(r => '"' + r.meta.name + '"').join(', ') + '. Delete or hand over those workspaces first.' });
+        if (String(A.confirm || '').trim() !== t) return send(res, 400, { error: 'Type the exact user id to confirm' });
+        await need('fb'); FB = FB.filter(f => f.uid !== t); alog(`Deleted the account ${t}`);
+        res.after.push(async () => {
+          for (const r of mrows) for (let i = 0; i < 4; i++) { const [row] = await sbGet(`select=key,value,version&key=in.(${r.key})`); if (!row) break; const v = row.value; delete v.members[t]; v.audit = [{ t: Date.now(), user: 'Site admin', text: 'Removed a deleted account from the team' }, ...(v.audit || [])].slice(0, 300); const rr = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: r.key, expect: row.version, value: v }] }) }); if (rr.ok && (await rr.json()) === true) break; }
+          await sbDel(`key=in.(u:${t})`);
+        });
+        return ok(res);
+      }
+      // ---- site-wide ----
+      if (A.op === 'announce') { if (A.on && !String(A.text || '').trim()) return send(res, 400, { error: 'Write the message first.' }); G.announce = A.on ? { text: String(A.text).replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240), kind: A.kind === 'warn' ? 'warn' : 'info', t: Date.now() } : null; alog(A.on ? 'Posted a site announcement' : 'Removed the site announcement'); return ok(res); }
+      if (A.op === 'maintenance') { G.maint = A.on ? { on: true, message: String(A.message || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240), t: Date.now() } : null; alog(A.on ? 'Turned maintenance mode ON' : 'Turned maintenance mode off'); return ok(res); }
+      if (A.op === 'site') return send(res, 200, { announce: G.announce || null, maint: G.maint || null });
+      if (A.op === 'adminLog') return send(res, 200, { items: G.adminLog });
+      if (A.op === 'health') {
+        const t0 = Date.now(); let dbOk = true, n = 0; try { n = (await sbGet('select=key&key=like.w*:core')).length; } catch { dbOk = false; }
+        let dc = null; if (discordOn()) { try { const r = await fetch(`${DISCORD.api}/users/@me`, { headers: { Authorization: 'Bot ' + DISCORD.token }, signal: AbortSignal.timeout(4000) }); dc = r.ok ? 'ok' : r.status === 401 ? 'The bot token was refused' : 'Discord said ' + r.status; } catch { dc = 'Could not reach Discord'; } }
+        let rb = 'ok'; try { const r = await fetch(`${RBX_USERS}/v1/users/1`, { signal: AbortSignal.timeout(4000) }); if (!r.ok && r.status >= 500) rb = 'Roblox said ' + r.status; } catch { rb = 'Could not reach Roblox'; }
+        return send(res, 200, { db: { ok: dbOk, ms: Date.now() - t0 }, workspaces: { live: G.workspaces, rows: n, max: MAX_WORKSPACES }, backups: G.lastCron || null, discord: { configured: discordOn(), status: dc }, roblox: rb, signIn: providers(), config: { signupsOpen: SIGNUPS_OPEN, maxPerUser: MAX_PER_USER, legalReviewed: !!cfg.legalReviewed, cronSecret: CRON_SECRET.length >= 16, callRetentionDays: cfg.callRetentionDays, alertWebhook: !!env.ALERT_WEBHOOK }, now: Date.now() });
       }
       if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 400, { error: 'bad workspace' });
       if (A.op === 'snaps') return send(res, 200, { snaps: await listSnapshots(wid) });
-      if (A.op === 'snapshotNow') return (await snapshot(wid, bkDay())) ? ok(res) : send(res, 404, { error: 'No such workspace' });
+      if (A.op === 'snapshotNow') return (await snapshot(wid, bkDay())) ? (alog('Backed up workspace ' + wid), ok(res)) : send(res, 404, { error: 'No such workspace' });
       if (A.op === 'download') { setWid(wid); await need(...BK_ROWS); if (!D.meta) return send(res, 404, { error: 'No such workspace' }); return send(res, 200, backupFile()); }
-      if (A.op === 'restoreSnapshot') return (await restoreSnapshot(wid, String(A.date || ''), 'Site admin')) ? ok(res) : send(res, 404, { error: 'That backup does not exist' });
+      if (A.op === 'restoreSnapshot') return (await restoreSnapshot(wid, String(A.date || ''), 'Site admin')) ? (alog(`Restored workspace ${wid} from the backup of ${String(A.date).slice(0, 12)}`), ok(res)) : send(res, 404, { error: 'That backup does not exist' });
       if (A.op === 'restoreDeleted') {
         setWid(wid); await need('core', 'glob'); if (!D.meta || !D.meta.deleted) return send(res, 400, { error: 'That workspace is not in the recycle bin' });
-        delete D.meta.deleted; G.workspaces++; audit('Site admin', 'Restored the deleted workspace'); const owner = D.meta.owner;
+        delete D.meta.deleted; G.workspaces++; audit('Site admin', 'Restored the deleted workspace'); alog(`Restored the deleted workspace "${D.meta.name}" (${wid})`); const owner = D.meta.owner;
         if (/^[gr]_\d{1,32}$/.test(owner)) { setUid(owner); await need('user'); if (U && !U.workspaces.includes(wid)) U.workspaces.push(wid); }
         return ok(res);
       }
@@ -1142,6 +1301,7 @@ async function route(req, res, url, p) {
       const shards = [...new Set([...(Array.isArray(b.players) ? b.players : []), ...ev].map(x => x && Number.isInteger(x.userId) && x.userId > 0 ? shOf(x.userId) : null).filter(Boolean))];
       await need('core', 'play', 'live', 'cmds', ...shards, ...(chatty ? ['chat'] : []), ...(ev.some(e => e && e.type === 'modcall') ? ['calls'] : []));
       if (!D.meta || D.meta.deleted) return send(res, 403, { error: 'bad key' });
+      if (D.meta.suspended) return send(res, 403, { error: 'This workspace is suspended. Contact the Sentinel team.' });
       if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
       const place = Number.isInteger(b.placeId) ? b.placeId : 0;
       if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) return send(res, 403, { error: 'This game key is locked to a different place' });
@@ -1166,12 +1326,14 @@ async function route(req, res, url, p) {
       const mp = unpack(ck.mp); if (!mp || !/^[gr]_\d{1,32}$/.test(mp.u || '')) return send(res, 401, { error: 'That sign-in expired. Please sign in again.', code: 'signin' });
       setUid(mp.u); await need('user'); if (!U || !U.mfa || !U.mfa.on) return send(res, 401, { error: 'That sign-in expired. Please sign in again.', code: 'signin' });
       const t = mfaTry(U.mfa, (await body(req)).code); if (!t.ok) return send(res, t.code, { error: t.err });
-      res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: mp.u, e: Date.now() + 7 * 864e5 })), clearCookie('mp')]); return send(res, 200, { ok: true, recovery: !!t.recovery, left: U.mfa.rec.length });
+      res.setHeader('Set-Cookie', [mkCookie('sid', pack({ u: mp.u, i: Date.now(), e: Date.now() + 7 * 864e5 })), clearCookie('mp')]); return send(res, 200, { ok: true, recovery: !!t.recovery, left: U.mfa.rec.length });
     }
     if (p === '/api/me') {
-      const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER };
+      await need('glob');
+      const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER, announce: G.announce || null, maint: G.maint && G.maint.on ? { message: G.maint.message || '' } : null };
       if (!uid) { const mp = unpack(cookiesOf(req).mp); return send(res, 200, mp && /^[gr]_\d{1,32}$/.test(mp.u || '') ? { ...base, pending2fa: true } : base); }
       setUid(uid); await need('user'); if (!U) return send(res, 200, base);
+      if (revoked(U, req)) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 200, base); }
       const ids = U.workspaces.filter(w => /^[a-f0-9]{12}$/.test(w)); let list = [], rows0 = [];
       if (ids.length) {
         const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,meta:value->meta,members:value->members,ranks:value->ranks&key=in.(${ids.map(w => `w${w}:core`).join(',')})`, { headers: sbHeaders() });
@@ -1277,9 +1439,12 @@ async function route(req, res, url, p) {
 
     // ---- workspace pages: you must be a member of the workspace in the "ws" cookie ----
     if (!/^[a-f0-9]{12}$/.test(ck.ws || '')) return send(res, 409, { error: 'Choose a workspace', code: 'no_workspace' });
-    setWid(ck.ws); await need('core', 'user', ...(NEEDS[p] || []));
+    setWid(ck.ws); await need('core', 'user', 'glob', ...(NEEDS[p] || []));
+    if (G.maint && G.maint.on) return send(res, 503, { error: G.maint.message || 'Sentinel is down for a short maintenance break. Please check back soon.', code: 'maintenance' });
+    if (!U || revoked(U, req)) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 401, { error: 'Please sign in again.', code: 'signin' }); }
     if (!D.meta || D.meta.deleted) return send(res, 404, { error: 'That workspace no longer exists', code: 'no_workspace' });
     const mem = D.members[uid]; if (!mem) return send(res, 403, { error: 'You are not a member of this workspace', code: 'no_workspace' });
+    if (D.meta.suspended) return send(res, 403, { error: 'This workspace is suspended' + (D.meta.suspended.reason ? ': ' + D.meta.suspended.reason : '.') + ' Contact the Sentinel team if you think this is a mistake.', code: 'suspended' });
     if (U) { // keep name and linked Roblox account in sync with the person's account
       if (mem.name !== U.name) mem.name = U.name;
       const rid = uid[0] === 'r' ? uid.slice(2) : (U.roblox && U.roblox.id) || null; if ((mem.robloxId || null) !== rid) mem.robloxId = rid;
