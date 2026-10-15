@@ -457,7 +457,7 @@ async function onRoute(){
  if(r.linked){toast('Roblox account linked');history.replaceState(null,'','#/');}
  route=r;sideOpen=false;closeMenu();if(route.page!=='player')PROF=null;if(route.page==='player'&&PROF&&String(PROF.userId)!==route.id)PROF=null;
  if(S&&route.page==='setup'&&!S.me.owner){location.hash='#/';return}
- if(S&&route.page==='setup'&&!OB)OB={step:'code'};
+ if(S&&route.page==='setup'&&!OB)OB={step:'script'};
  render(true);if(S){await pageData();render()}}
 window.addEventListener('hashchange',onRoute);
 const go=h=>{if(location.hash==='#/'+h)onRoute();else location.hash='#/'+h};
@@ -505,8 +505,8 @@ function joinView(){
  <button class="btn pri l w" data-a="join-yes">Accept invite</button><button class="btn ghost w" style="margin-top:8px" data-a="join-no">Not now</button></div></div>`}
 
 function obView(){
- OB=OB||{step:'name',creating:1};const steps=['name','code','script','paste','http','chat','place','connect'],idx=steps.indexOf(OB.step),first=esc((ME.user.name||'').split(' ')[0]);
- const dots=`<div class="dots" role="img" aria-label="Step ${idx+1} of 8">${steps.map((s,i)=>`<i class="${i===idx?'on':i<idx?'done':''}"></i>`).join('')}</div>`;
+ OB=OB||{step:'name',creating:1};const steps=['name','script','paste','http','chat','place','connect'],idx=steps.indexOf(OB.step),first=esc((ME.user.name||'').split(' ')[0]);
+ const dots=`<div class="dots" role="img" aria-label="Step ${idx+1} of 7">${steps.map((s,i)=>`<i class="${i===idx?'on':i<idx?'done':''}"></i>`).join('')}</div>`;
  const back=v=>`<button type="button" class="btn l" data-a="ob" data-v="${v}">Back</button>`;
  let body='',left='<span></span>',right='',form='';
  if(OB.step==='name'){form='ob-name';
@@ -514,19 +514,18 @@ function obView(){
   <label class="lab" for="obn" style="text-align:center">Game name</label><input id="obn" class="inp bigin" name="name" maxlength="40" placeholder="Blox City Roleplay" required autocomplete="off" autofocus>
   <div class="hint">Your team will see this name. You can change it later.</div>`;
   left=ME.workspaces.length?`<button type="button" class="btn l" data-a="ob-exit">Cancel</button>`:'<span></span>';right=`<button class="btn pri l">Continue</button>`}
- else if(OB.step==='code'){
-  body=`<div class="appi">${ic('lock')}</div><h1>Your game code</h1><p class="lead">Every game gets its own private code. It is how your game proves to Sentinel that it is really yours, so treat it like a password.</p>${codeBox()}`;
-  right=`<button type="button" class="btn pri l" data-a="ob" data-v="script">I copied it</button>`}
  else if(OB.step==='script'){
-  body=`<div class="appi">${ic('copy')}</div><h1>Get the script</h1><p class="lead">This is the small program that connects your game to Sentinel. The same script works for every game. Only the code is yours.</p>
+  body=`<div class="appi">${ic('copy')}</div><h1>Your code and script</h1><p class="lead">Two things to copy. First, your private game code. It proves to Sentinel that the game is really yours, so treat it like a password. Second, the script that connects your game. The same script works for every game.</p>
+  <div class="lab" style="text-align:center;margin-top:6px">1. Your game code</div>${codeBox()}
+  <div class="lab" style="text-align:center;margin-top:16px">2. The script</div>
   <div class="row wrap" style="justify-content:center;gap:10px"><button type="button" class="btn pri l" data-a="copy-script">${ic('copy')}Copy script</button><a class="btn l" href="/api/bridge?download=1">${ic('dl')}Download .lua</a></div>
-  <div class="hint">Not sure which? Press <b>Copy script</b>. You will paste it in the next step.</div>`;
-  left=back('code');right=`<button type="button" class="btn pri l" data-a="ob" data-v="paste">Next</button>`}
+  <div class="hint">You will paste the script in the next step, then put the code inside it. Copy the code again at that step if you need to.</div>`;
+  left='<span></span>';right=`<button type="button" class="btn pri l" data-a="ob" data-v="paste">Next</button>`}
  else if(OB.step==='paste'){
   body=`<div class="appi">${ic('game')}</div><h1>Paste it into Roblox Studio</h1><p class="lead">Open your game in Roblox Studio, then follow these three small steps.</p>
   <div class="grp"><div class="gr"><span class="gn">1</span><div class="gt"><b>Make a new Script</b><div class="sm muted">In the Explorer, hover <b>ServerScriptService</b>, click the <b>+</b> and choose <b>Script</b>.</div></div></div>
   <div class="gr"><span class="gn">2</span><div class="gt"><b>Paste the script</b><div class="sm muted">Delete what is already inside it, then paste.</div></div></div>
-  <div class="gr"><span class="gn">3</span><div class="gt"><b>Add your code</b><div class="sm muted">Near the top, replace <b>[INPUT CODE HERE]</b> with your game code. Keep the quote marks around it.</div>${BRACKETS()}</div></div></div>`;
+  <div class="gr"><span class="gn">3</span><div class="gt"><b>Add your code</b><div class="sm muted">Near the top, replace <b>[INPUT CODE HERE]</b> with your game code. Keep the quote marks around it.</div>${codeBox()}${BRACKETS()}</div></div></div>`;
   left=back('script');right=`<button type="button" class="btn pri l" data-a="ob" data-v="http">Done</button>`}
  else if(OB.step==='http'){
   body=`<div class="appi">${ic('bolt')}</div><h1>Allow web requests</h1><p class="lead">Roblox blocks games from talking to websites unless you allow it. Sentinel needs this to send and receive moderation actions.</p>
@@ -1041,7 +1040,7 @@ document.addEventListener('change',async e=>{const el=e.target.closest('[data-a]
  if(d.a==='setrank'){const r=await api('/api/team',{op:'setrank',uid:d.uid,rank:el.value});if(!bad(r)){toast('Rank updated')}refresh()}
  else if(d.a==='rp'){const r={...S.rules[d.id]};r[d.k]=el.type==='number'?+el.value:el.value;const x=await api('/api/rules',{id:d.id,enabled:r.enabled,params:r});if(!bad(x)){toast('Saved');await loadState()}}});
 document.addEventListener('submit',async e=>{const f=e.target.closest('[data-f]');if(!f)return;e.preventDefault();const k=f.dataset.f,v=Object.fromEntries(new FormData(f));
- if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;NEWCODE=r.code||null;await loadMe();SETUP=null;await loadState();obStep('code')}
+ if(k==='ob-name'){const b=$('button',f);b.disabled=true;const r=await api('/api/workspaces',{name:v.name});b.disabled=false;if(bad(r))return;NEWCODE=r.code||null;await loadMe();SETUP=null;await loadState();obStep('script')}
  else if(k==='ob-place'){if(v.placeId){const r=await api('/api/workspace',{op:'place',placeId:v.placeId,lock:!!v.lock});if(bad(r))return}obStep('connect')}
  else if(k==='lookup'){lookup(v.q.trim())}
  else if(k==='lbq'){LBF.q=v.q;LB=null;render();LB=await api(`/api/logbook?type=${LBF.type}&q=${encodeURIComponent(LBF.q)}`);render()}
@@ -1199,7 +1198,7 @@ setInterval(async()=>{if(route.page==='player'||route.page==='reports')return;if
 (async()=>{try{render();route=parse();if(route.page==='join'||route.page==='gjoin'){await loadMe();await onRoute();LOADED=true;return}
  await loadMe();let gj=null;try{gj=sessionStorage.getItem('gj')}catch{}if(gj&&ME.user){LOADED=true;location.hash='#/g/'+gj;return}
  if(route.linked){toast('Roblox account linked');history.replaceState(null,'','#/');route={page:'home'}}
- if(ME.user&&ME.workspaces.length){await loadState();if(route.page==='setup'&&S&&S.me.owner)OB={step:'code'};await pageData()}}catch(e){console.error(e);LASTERR=LASTERR||String(e.message||e)}LOADED=true;render(true);setTimeout(async()=>{await alphaNotice();whatsNew(tour())},900)})();
+ if(ME.user&&ME.workspaces.length){await loadState();if(route.page==='setup'&&S&&S.me.owner)OB={step:'script'};await pageData()}}catch(e){console.error(e);LASTERR=LASTERR||String(e.message||e)}LOADED=true;render(true);setTimeout(async()=>{await alphaNotice();whatsNew(tour())},900)})();
 </script>
 </body>
 </html>
