@@ -66,13 +66,13 @@ const defaultRanks = () => ({
   mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
   helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'sessions.host'], quota: 60, limit: 15 },
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
+const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
 const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
 
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, discord: null, discordCodes: {} });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, discord: null, discordCodes: {}, pending: [], syncSeen: {} });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 };
 let OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
@@ -94,8 +94,14 @@ function muteWarn(hide = true) { // why a mute might not stop chat right now (ch
   const e = live.find(s => s.muteErr); if (e) return `Muted, but the game reported a problem applying it: ${e.muteErr}`;
   return null;
 }
+let SITE_NOW = ''; // this request's site address, so in-game messages can include the appeal link
+function banText(x) { // what the banned player reads on Roblox's ban screen (Roblox allows ~400 characters)
+  const len = x.expires ? `This suspension ends ${new Date(x.expires).toUTCString().slice(0, 16)} (UTC).` : 'This ban does not expire.';
+  const ap = D.meta && D.settings.appeals !== false && SITE_NOW ? ` Appeal at ${SITE_NOW}/appeal/${D.meta.id}` : '';
+  return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
+}
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -113,7 +119,7 @@ const ROWS = {
 };
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
-  '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
+  '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
   '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
@@ -158,7 +164,7 @@ function migrate() { // bring older workspaces up to date
   if (D.webhook && D.webhook.events) for (const k of ['appeals', 'watch']) if (!(k in D.webhook.events)) D.webhook.events[k] = true;
   if (!D.meta.v4) { D.meta.v4 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('mod.unban') && !r.perms.includes('appeals.review')) r.perms.push('appeals.review'); }
   D.rulebook ||= []; D.loa ||= []; if (!D.daily || Array.isArray(D.daily)) D.daily = {};
-  D.discordCodes ||= {};
+  D.discordCodes ||= {}; D.pending ||= []; D.syncSeen ||= {}; if (D.webhook && D.webhook.events && !('approvals' in D.webhook.events)) D.webhook.events.approvals = true;
   D.signals ||= {}; if (D.webhook && D.webhook.events && !('signals' in D.webhook.events)) D.webhook.events.signals = true;
   D.shifts ||= []; if (D.webhook && D.webhook.events && !('shifts' in D.webhook.events)) D.webhook.events.shifts = true;
   if (!D.meta.v6) { D.meta.v6 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage') && !r.perms.includes('shifts.manage')) r.perms.push('shifts.manage'); }
@@ -347,6 +353,22 @@ function nameLike(a, b) {
   const sa = a.replace(/\d+$/, ''), sb = b.replace(/\d+$/, ''); if (sa.length >= 5 && sa === sb) return true;
   return lev(a, b) <= (Math.min(a.length, b.length) >= 8 ? 2 : 1);
 }
+async function banSyncPull() { // copy new bans from the owner's other games (never from anyone else's), at most once a minute
+  const sy = D.settings.sync, now = Date.now(); if (!sy || !sy.from || !sy.from.length || now - (sy.at || 0) < 60000) return;
+  sy.at = now; let rows; try { rows = await sbGet('select=key,meta:value->meta,bans:value->bans&key=in.(' + sy.from.map(f => 'w' + f.id + ':core').join(',') + ')'); } catch { return; }
+  D.syncSeen ||= {}; const staff = new Set(Object.entries(D.members).map(([mid, m]) => String(m.robloxId || (mid[0] === 'r' ? mid.slice(2) : '')))); let n = 0;
+  for (const r of rows) {
+    const m = r.meta; if (!m || m.deleted || m.suspended || m.owner !== D.meta.owner) continue;
+    for (const b of Object.values(r.bans || {})) {
+      if (n >= 25) break;
+      if (!b || !Number.isInteger(b.userId) || b.userId < 1 || !live(b) || staff.has(String(b.userId)) || (D.bans[b.userId] && live(D.bans[b.userId])) || (D.syncSeen[b.userId] || 0) >= (b.time || 1)) continue;
+      await need('logs'); D.syncSeen[b.userId] = b.time || 1; n++;
+      act({ action: 'ban', userId: b.userId, name: cleanName(b.name, 40) || String(b.userId), reason: cleanName(`Copied from ${m.name}: ${b.reason}`, 300), minutes: b.expires ? Math.max(1, Math.ceil((b.expires - now) / 60000)) : 0, by: 'Ban sync' });
+    }
+  }
+  if (n) feed(`Ban sync added ${n} ban${n > 1 ? 's' : ''}`, 'Ban sync');
+  const ks = Object.keys(D.syncSeen); if (ks.length > 3000) for (const k of ks.sort((a, b) => D.syncSeen[a] - D.syncSeen[b]).slice(0, ks.length - 3000)) delete D.syncSeen[k];
+}
 async function signalCheck(req, fresh, joined) {
   if (D.settings.signals === false || !joined.length) return;
   const now = Date.now(), staff = new Set(Object.entries(D.members).map(([mid, m]) => String(m.robloxId || (mid[0] === 'r' ? mid.slice(2) : '')))), bans = Object.values(D.bans).filter(live);
@@ -354,17 +376,17 @@ async function signalCheck(req, fresh, joined) {
   req._ages ||= {}; let fetched = 0;
   for (const id of cand) {
     const name = (D.play[id] || {}).name || String(id), reasons = [];
-    const sim = bans.find(bn => bn.userId !== id && nameLike(name, bn.name)); if (sim) reasons.push({ k: 'name', text: `Name looks like ${sim.name}, who is banned` });
+    const sim = bans.find(bn => bn.userId !== id && nameLike(name, bn.name)); let of = null; if (sim) { of = { userId: sim.userId, name: sim.name }; reasons.push({ k: 'name', text: `Name looks like ${sim.name}, who is banned` }); }
     if (fresh.has(id)) {
       const rb = bans.filter(bn => bn.time && now - bn.time < 36e5 && bn.userId !== id).sort((a, b) => b.time - a.time)[0];
-      if (rb) reasons.push({ k: 'ban', text: `First joined ${Math.max(1, Math.round((now - rb.time) / 60000))} min after ${rb.name} was banned` });
+      if (rb) { of ||= { userId: rb.userId, name: rb.name }; reasons.push({ k: 'ban', text: `First joined ${Math.max(1, Math.round((now - rb.time) / 60000))} min after ${rb.name} was banned` }); }
       if (id in req._ages || fetched < 3) {
         if (!(id in req._ages)) { fetched++; try { const x = await j(RBX_USERS + '/v1/users/' + id); req._ages[id] = x && x.created ? Date.parse(x.created) : null; } catch { req._ages[id] = null; } }
         const c = req._ages[id]; if (c) { const d = Math.floor((now - c) / 864e5); if (d < 7) reasons.push({ k: 'age', text: `Roblox account is ${d < 1 ? 'less than a day' : d + (d === 1 ? ' day' : ' days')} old` }); }
       }
     }
     const kinds = new Set(reasons.map(r => r.k));
-    if (kinds.has('name') || kinds.size >= 2) { D.signals[id] = { t: now, name, reasons, status: 'open' }; feed(`Worth a look: ${name}`); notify('signals', `Worth a look: ${name}`, reasons.map(r => '• ' + r.text).join('\n') + '\nThese are hints, not proof. Check before acting.', [], 0xf5a524); }
+    if (kinds.has('name') || kinds.size >= 2) { D.signals[id] = { t: now, name, reasons, status: 'open', strength: kinds.size >= 3 || (kinds.has('name') && kinds.size >= 2) ? 'strong' : 'likely', ...(of ? { of } : {}) }; feed(`Worth a look: ${name}`); notify('signals', `Worth a look: ${name}`, reasons.map(r => '• ' + r.text).join('\n') + '\nThese are hints, not proof. Check before acting.', [], 0xf5a524); }
   }
   const keys = Object.keys(D.signals).sort((a, b) => D.signals[b].t - D.signals[a].t); for (const [i, k] of keys.entries()) if (i >= 100 || now - D.signals[k].t > 14 * 864e5) delete D.signals[k];
 }
@@ -424,6 +446,24 @@ async function readAnswers(form, ans) {
   return { answers: out, who: whoR };
 }
 const needSecond = (u, ban) => !!(D.settings.twoPerson && ban && !ban.expires && !u.isOwner); // lifting a permanent ban takes two staff (the owner can always do it alone)
+const APPR_KINDS = { permBan: 'Permanent bans', rank: 'Rank changes', wsDelete: 'Deleting the workspace' }, APPR_MS = 72 * 36e5, PEND_MSG = 'Sent for approval. A second staff member has to approve it before it happens.';
+const approvalOn = k => !!(D.settings.approvals && D.settings.approvals[k]);
+function canApprove(it, a, auid) { // who may sign off a waiting request: never the person who asked
+  if (!a || !it || it.byUid === auid) return false;
+  if (it.kind === 'permBan') return has(a, 'mod.permban');
+  if (it.kind === 'rank') { const m = D.members[it.payload.uid], r = D.ranks[it.payload.rank]; return !!(m && r && it.payload.uid !== D.meta.owner && above(a, memberPos(it.payload.uid)) && above(a, r.pos)); }
+  if (it.kind === 'wsDelete') return isAdminLevel(a);
+  return false;
+}
+const approverExists = (kind, uid, payload) => Object.keys(D.members).some(id => id !== uid && canApprove({ kind, payload, byUid: uid }, who(id), id)); // with nobody else able to approve, the action just goes ahead
+function propose(kind, u, uid, payload, text, reason) {
+  const now = Date.now(); D.pending = (D.pending || []).filter(x => now - x.t < APPR_MS);
+  const key = JSON.stringify(payload), dup = D.pending.find(x => x.kind === kind && x.byUid === uid && JSON.stringify(x.payload) === key); if (dup) return dup;
+  if (D.pending.length >= 30) return null;
+  const it = { id: crypto.randomBytes(5).toString('hex'), kind, payload, by: u.user, byUid: uid, t: now, text, reason: reason || '' };
+  D.pending.push(it); audit(u.user, `Asked for approval to ${text}`); feed(`Needs approval: ${text}`, u.user);
+  notify('approvals', `Needs a second approval: ${text}`, reason, [['Asked by', u.user]], 0xf5a524); return it;
+}
 const DEFAULT_REPLIES = ['Thanks for being honest. We have lifted your ban. Please follow the rules from now on.', 'We reviewed what happened and the ban stays. You can appeal again later.', 'Bans for exploiting are not lifted on appeal.', 'Please tell us more about what happened next time you appeal.'];
 const cleanLinks = (arr, max) => (Array.isArray(arr) ? arr : []).map(x => String(x || '').trim()).filter(x => /^https?:\/\/[^\s<>"'`]{3,300}$/i.test(x)).slice(0, max);
 function logEntry(userId, name, e) {
@@ -453,7 +493,8 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId, ...(extra || {}) }); feed(`${type}: ${name} (${reason})`, by); return e; };
   if (action === 'ban') {
     const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
-    cmd({ type: 'ban', userId, reason, seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
+    { const sg = D.signals[userId]; if (sg && sg.status === 'open') { sg.status = 'confirmed'; sg.by = by; sg.done = Date.now(); } } // an alt-account hint that ended in a ban
+    cmd({ type: 'ban', userId, reason, display: banText(D.bans[userId]), seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
   } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); unbanCmd(userId); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
   else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id, hide: hide !== false }; const len = expires ? 'for ' + fmtMin(minutes) : 'until a moderator lifts it'; const mt = hide !== false ? `You can't chat ${len}. Reason: ${reason}` : `You are muted ${len}. You can still type, but nobody can see your messages. Reason: ${reason}`; cmd({ type: 'message', kind: 'warn', title: 'You were muted', body: mt, userId, text: mt }); }
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
@@ -505,7 +546,7 @@ function sync(b) {
   if (total > D.stats.peak) D.stats.peak = total;
   if (total > ((D.daily[dayKey(now)] || {}).p || 0)) daily().p = total;
   const hist = R.history; if (!hist.length || now - hist[hist.length - 1].t > 6e4) { hist.push({ t: now, n: total }); if (hist.length > 120) hist.shift(); }
-  for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason }); }
+  for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason, display: banText(x) }); }
   R.cmds = R.cmds.filter(c => now - c.t < (c.keep ? KEEP_MS : 120000) && !(c.type === 'ban' && c.seconds > 0 && now - c.t >= c.seconds * 1000)); if (R.cmds.length > 300) R.cmds = R.cmds.slice(-300);
   if (!prev || now - prev.last > 90000) for (const c of R.cmds) if (c.keep) delete c.seen[id]; // a server that went quiet and came back (or a new Studio test, which always reports the same id) gets bans and unbans again
   const out = R.cmds.filter(c => !c.seen[id]); out.forEach(c => c.seen[id] = 1);
@@ -940,6 +981,10 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
     if (c >= u.limit) return [429, { error: `Your rank allows ${u.limit} moderation actions per hour. Ask a higher rank for help.` }];
   }
   if (action === 'points') { const amt = clampInt(B.amount, -100000, 100000); if (!amt) return [400, { error: 'Enter a points amount' }]; addPoints(B.userId, nm, amt, reason, u.user, uid); return [200, { ok: true }]; }
+  if (action === 'ban' && !(minutes > 0) && !u.isOwner && approvalOn('permBan')) { // permanent bans can need a second person
+    const pl = { userId: B.userId, name: nm, reason, ruleId, ev: cleanLinks(B.evidence, 5), note: cleanName(B.note, 500) };
+    if (approverExists('permBan', uid, pl)) { const it = propose('permBan', u, uid, pl, `permanently ban ${nm}`, reason); if (!it) return [429, { error: 'Too many requests are waiting for approval. Ask someone to clear them first.' }]; return [200, { ok: true, pending: true, msg: PEND_MSG }]; }
+  }
   if (action === 'unban' && needSecond(u, D.bans[B.userId])) {
     const ban = D.bans[B.userId], rq = ban.unreq;
     if (!rq || Date.now() - rq.t > 7 * 864e5) { ban.unreq = { uid, by: u.user, t: Date.now(), reason }; audit(u.user, `Asked to unban ${nm} (a second staff member must approve)`); if (!botPost({ embeds: [dEmbed(`Unban needs a second approval: ${nm}`, reason, [['Asked by', u.user], ['Banned for', ban.reason]], 0xf5a524)], components: [{ type: 1, components: [dBtn('Approve unban', `ub:${B.userId}`, 3)] }] })) notify('bans', `Unban needs a second approval: ${nm}`, reason, [['Asked by', u.user]], 0xf5a524); return [200, { ok: true, pending: true, msg: 'Saved. This is a permanent ban, so a second staff member must also approve the unban.' }]; }
@@ -977,6 +1022,41 @@ const gate=()=>{$('b').disabled=!($('u').value.trim()&&$('t').value.trim())};$('
 $('f').onsubmit=async e=>{e.preventDefault();if($('b').disabled)return;$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();
  if(r.ok){$('f').hidden=true;$('m').appendChild(el('div','m o','Appeal sent. Staff will review it soon.'));if(j.check){const b=el('div','rp');b.appendChild(el('b','','Save this link to check the result and read any reply from staff'));const a=el('a','lk',j.check);a.href=j.check;b.appendChild(a);$('m').appendChild(b)}}
  else{$('m').appendChild(el('div','m e',j.error||'Something went wrong.'));gate()}}catch{$('m').innerHTML='';$('m').appendChild(el('div','m e','No connection. Try again.'));gate()}};</script></body></html>`;
+
+const REPORT_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex"><title>Report a player</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
+:root{--bg:#e9eefb;--card:rgba(255,255,255,.82);--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.14)}@media(prefers-color-scheme:dark){:root{--bg:#0d1020;--card:rgba(44,44,48,.8);--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.18)}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px;background:radial-gradient(40% 45% at 15% 20%,#8ab8ff55,transparent 70%),radial-gradient(40% 45% at 85% 85%,#ffc2a155,transparent 70%),var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif}
+.c{width:100%;max-width:460px;background:var(--card);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border-radius:20px;padding:34px 30px;box-shadow:0 0 0 .5px var(--ln),0 24px 64px rgba(20,24,40,.2)}
+h1{font-size:23px;letter-spacing:-.02em;margin:0 0 6px}p{color:var(--mu);margin:0 0 20px}label{display:block;font-weight:600;font-size:13px;margin:14px 0 6px}label small{font-weight:400;color:var(--mu)}
+input,textarea{width:100%;border:0;border-radius:9px;padding:10px 12px;font:inherit;color:inherit;background:rgba(127,127,127,.12);box-shadow:inset 0 0 0 .5px var(--ln);outline:0}input:focus,textarea:focus{box-shadow:0 0 0 3px #0a7aff55}textarea{min-height:120px;resize:vertical}
+button{margin-top:20px;width:100%;height:42px;border:0;border-radius:10px;font:600 15px inherit;color:#fff;background:linear-gradient(180deg,#3d9bff,var(--ac));cursor:pointer}button[disabled]{opacity:.5}
+.m{margin-top:14px;font-size:14px;padding:10px 12px;border-radius:9px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}.hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+</style></head><body><div class="c"><h1 id="h">Report a player</h1><p id="s">Loading...</p><form id="f" hidden novalidate><label for="t1">Player you are reporting</label><input id="t1" maxlength="40" autocomplete="off" placeholder="Their exact Roblox username"><label for="t2">What happened?</label><textarea id="t2" maxlength="1000" placeholder="Say what they did, roughly when, and in which server if you know."></textarea><label for="t3">Evidence link <small>(optional)</small></label><input id="t3" maxlength="300" autocomplete="off" placeholder="https://..."><label for="t4">Your Roblox username <small>(optional, so staff can ask questions)</small></label><input id="t4" maxlength="40" autocomplete="off"><input class="hp" id="hp" tabindex="-1" autocomplete="off" aria-hidden="true"><button id="b" disabled>Send report</button></form><div id="m"></div><div class="x">Reports are read by the game's staff. False reports may be ignored.</div></div>
+<script>var w=location.pathname.split('/')[2]||'',$=function(i){return document.getElementById(i)};
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+fetch('/api/report/info?w='+encodeURIComponent(w)).then(function(r){return r.json()}).then(function(j){if(j.error){$('s').textContent=j.error;return}$('s').textContent='Report a player in '+j.name+'. Staff will look into it.';$('f').hidden=false}).catch(function(){$('s').textContent='Could not load this page.'});
+function gate(){$('b').disabled=!($('t1').value.trim()&&$('t2').value.trim())}$('t1').oninput=$('t2').oninput=gate;
+$('f').onsubmit=function(e){e.preventDefault();if($('b').disabled)return;$('b').disabled=true;$('m').innerHTML='';
+fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w:w,target:$('t1').value.trim(),text:$('t2').value.trim(),link:$('t3').value.trim(),reporter:$('t4').value.trim(),website:$('hp').value})}).then(function(r){return r.json().then(function(j){return[r,j]})}).then(function(a){if(a[0].ok){$('f').hidden=true;$('m').appendChild(el('div','m o','Report sent. Thank you, staff will look into it.'))}else{$('m').appendChild(el('div','m e',a[1].error||'Something went wrong.'));gate()}}).catch(function(){$('m').appendChild(el('div','m e','No connection. Try again.'));gate()})};</script></body></html>
+`;
+const LOG_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Moderation log</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
+:root{--bg:#e9eefb;--card:rgba(255,255,255,.82);--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.12)}@media(prefers-color-scheme:dark){:root{--bg:#0d1020;--card:rgba(44,44,48,.8);--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.14)}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;padding:28px 16px;background:radial-gradient(40% 45% at 15% 10%,#8ab8ff55,transparent 70%),var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif}
+.c{max-width:720px;margin:0 auto;background:var(--card);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border-radius:20px;padding:30px;box-shadow:0 0 0 .5px var(--ln),0 24px 64px rgba(20,24,40,.2)}
+h1{font-size:24px;letter-spacing:-.02em;margin:0 0 4px}p{color:var(--mu);margin:0 0 18px}
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px}.sum div{background:rgba(127,127,127,.1);border-radius:12px;padding:10px 12px}.sum b{display:block;font-size:22px}.sum small{color:var(--mu);font-size:12px}
+.r{display:flex;gap:12px;align-items:center;padding:11px 2px;border-top:1px solid var(--ln)}.r time{color:var(--mu);font-size:13px;width:88px;flex:none}.t{font-size:12px;font-weight:700;border-radius:6px;padding:2px 8px;flex:none;background:rgba(127,127,127,.18)}.t.ban{background:rgba(255,59,48,.16);color:#d70015}.t.warn{background:rgba(255,159,10,.18);color:#b25e00}.t.mute{background:rgba(10,122,255,.14);color:var(--ac)}.t.ok{background:rgba(48,209,88,.16);color:#1f8a3b}
+.r .w{flex:1;min-width:0}.r .w span{color:var(--mu);font-size:13px;display:block;overflow:hidden;text-overflow:ellipsis}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}
+</style></head><body><div class="c"><h1 id="h">Moderation log</h1><p id="s">Loading...</p><div class="sum" id="sm" hidden></div><div id="o"></div><div class="x">Player names are partly hidden. Published by the game's staff.</div></div>
+<script>var w=location.pathname.split('/')[2]||'',$=function(i){return document.getElementById(i)};
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+var CL={Banned:'ban',Suspended:'ban',Unbanned:'ok',Warned:'warn',Kicked:'warn',Muted:'mute',Unmuted:'ok'};
+fetch('/api/publiclog?w='+encodeURIComponent(w)).then(function(r){return r.json()}).then(function(j){if(j.error){$('s').textContent=j.error;return}
+$('h').textContent=j.name+' moderation log';$('s').textContent='The most recent actions by staff. Last '+j.days+' days.';
+var sm=$('sm');sm.hidden=false;[['Bans',j.counts.bans],['Warnings',j.counts.warns],['Mutes',j.counts.mutes],['Kicks',j.counts.kicks]].forEach(function(x){var d=el('div');d.appendChild(el('b','',x[1]));d.appendChild(el('small','',x[0]));sm.appendChild(d)});
+var o=$('o');if(!j.items.length){o.appendChild(el('p','','Nothing to show yet.'));return}
+j.items.forEach(function(i){var r=el('div','r');r.appendChild(el('time','',new Date(i.t).toLocaleDateString()));r.appendChild(el('span','t '+(CL[i.type]||''),i.type));var d=el('div','w');d.appendChild(el('div','',i.who+(i.len?' - '+i.len:'')));if(i.reason)d.appendChild(el('span','',i.reason));r.appendChild(d);o.appendChild(r)})}).catch(function(){$('s').textContent='Could not load this page.'});</script></body></html>
+`;
 
 const FORM_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="robots" content="noindex"><title>Form</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
 :root{--bg:#e9eefb;--card:rgba(255,255,255,.84);--ink:#1d1d1f;--mu:#6e6e73;--ac:#0a7aff;--ln:rgba(0,0,0,.14)}@media(prefers-color-scheme:dark){:root{--bg:#0d1020;--card:rgba(44,44,48,.82);--ink:#f5f5f7;--mu:#98989f;--ac:#0a84ff;--ln:rgba(255,255,255,.18)}}
@@ -1039,7 +1119,7 @@ img{width:56px;height:56px;margin-bottom:14px}h1{margin:0 0 8px;font-size:24px;l
 </style></head><body><div class="c"><img src="/favicon.svg" alt=""><h1>Back soon</h1><p>${esc(msg || 'Sentinel is down for a short maintenance break.')}</p><div class="bar"></div><div class="s">This page checks again by itself.</div></div></body></html>`;
 async function route(req, res, url, p) {
   try {
-    const ip = ipOf(req);
+    const ip = ipOf(req); SITE_NOW = site(req);
     const MS = await maintState();
     if (MS && MS.on && MS.full && !/^\/(admin|status|api\/status|api\/cron)(\/|$)/.test(p)) {
       res.setHeader('Retry-After', '120'); res.setHeader('Cache-Control', 'no-store');
@@ -1049,6 +1129,8 @@ async function route(req, res, url, p) {
     if (req.method === 'GET' && p === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(fs.readFileSync(path.join(__dirname, '..', 'index.html'))); }
     if (req.method === 'GET' && p.startsWith('/legal/')) { const n = p.slice(7); if (!LEGAL[n]) return send(res, 404, { error: 'not found' }); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(legalPage(n)); }
     if (req.method === 'GET' && /^\/appeal\/[a-f0-9]{12}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(APPEAL_PAGE); }
+    if (req.method === 'GET' && /^\/report\/[a-f0-9]{12}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(REPORT_PAGE); }
+    if (req.method === 'GET' && /^\/log\/[a-f0-9]{12}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(LOG_PAGE); }
     if (req.method === 'GET' && /^\/f\/[a-f0-9]{12}\/[a-f0-9]{6}$/.test(p)) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(FORM_PAGE); }
     if (p === '/api/form/info' || p === '/api/form/status' || (p === '/api/form/submit' && req.method === 'POST')) {
       const A = req.method === 'POST' ? await body(req) : Object.fromEntries(url.searchParams), wid = String(A.w || ''), fid = String(A.f || '');
@@ -1103,6 +1185,38 @@ async function route(req, res, url, p) {
       feed(`Ban appeal from ${ban.name || uname}`);
       if (!botPost({ embeds: [dEmbed(`Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason], ['Banned by', ban.by]], 0x0a7aff)], components: [{ type: 1, components: [dBtn('Accept and unban', `ap:${aid}:a`, 3), dBtn('Deny', `ap:${aid}:d`, 4)] }] })) notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
       return send(res, 200, { ok: true, check: `${site(req)}/appeal/${wid}?r=${aid}.${tok}` });
+    }
+    if (req.method === 'GET' && p === '/api/report/info') {
+      const wid = String(url.searchParams.get('w') || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This report link is not valid.' });
+      const w0 = limit('repinfo:' + ip, 60, 60000); if (w0) return tooMany(res, w0);
+      setWid(wid); await need('core'); if (!D.meta || D.meta.deleted || D.meta.suspended) return send(res, 404, { error: 'This report link is not valid.' });
+      if (!D.settings.webReports) return send(res, 403, { error: 'This game is not taking web reports right now. Use !modcall in game instead.' });
+      return send(res, 200, { name: D.meta.name });
+    }
+    if (req.method === 'POST' && p === '/api/report') {
+      const A = await body(req), wid = String(A.w || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This report link is not valid.' });
+      if (A.website) return send(res, 200, { ok: true }); // a bot filled the hidden field
+      const w0 = limit('webrep:' + ip, 4, 3600000) || limit('webrepw:' + wid, 100, 3600000) || await slimit('webrep:' + ip, 8, 864e5); if (w0) return tooMany(res, w0);
+      const tname = cleanName(A.target, 40), text = cleanName(A.text, 1000), rname = cleanName(A.reporter, 40), link = String(A.link || '').trim().slice(0, 300);
+      if (!/^\w{3,20}$/.test(tname)) return send(res, 400, { error: 'Enter the exact Roblox username of the player.' });
+      if (text.length < 5) return send(res, 400, { error: 'Say what happened in a few words.' });
+      if (link && !/^https?:\/\/\S+$/i.test(link)) return send(res, 400, { error: 'The evidence link must start with https://' });
+      setWid(wid); await need('core', 'play', 'live', 'calls'); if (!D.meta || D.meta.deleted || D.meta.suspended || !D.settings.webReports) return send(res, 403, { error: 'This game is not taking web reports right now.' });
+      const tid = await findId(tname); if (!tid) return send(res, 404, { error: 'We could not find a Roblox player with that username.' });
+      const rid = rname && /^\w{3,20}$/.test(rname) ? await findId(rname) : null;
+      const call = { id: ++D.callSeq, t: Date.now(), from: { userId: rid || 0, name: rid ? rname : 'Web report' }, text: `Reporting ${tname}: ${text}${link ? '\nEvidence: ' + link : ''}`, server: 'web', status: 'open', by: null, note: '', chat: [], web: true, target: { userId: tid, name: tname } };
+      D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
+      feed(`Web report #${call.id} about ${tname}`); notify('reports', `Web report #${call.id} about ${tname}`, text, [['From', rid ? rname : 'Anonymous']], 0x635bff);
+      return send(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && p === '/api/publiclog') {
+      const wid = String(url.searchParams.get('w') || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This page is not valid.' });
+      const w0 = limit('publog:' + ip, 40, 60000); if (w0) return tooMany(res, w0);
+      setWid(wid); await need('core', 'logs'); if (!D.meta || D.meta.deleted || D.meta.suspended || !D.settings.publicLog) return send(res, 404, { error: 'This game does not publish a moderation log.' });
+      const DAYS = 30, cut = Date.now() - DAYS * 864e5, mask = n => { n = String(n || '?'); return n.slice(0, 2) + '***'; };
+      const all = Object.values(D.logs).flat().filter(e => e && e.time > cut && ['Banned', 'Suspended', 'Unbanned', 'Warned', 'Kicked', 'Muted', 'Unmuted'].includes(e.type)).sort((a, b) => b.time - a.time);
+      const counts = { bans: all.filter(e => e.type === 'Banned' || e.type === 'Suspended').length, warns: all.filter(e => e.type === 'Warned').length, mutes: all.filter(e => e.type === 'Muted').length, kicks: all.filter(e => e.type === 'Kicked').length };
+      return send(res, 200, { name: D.meta.name, days: DAYS, counts, items: all.slice(0, 50).map(e => ({ t: e.time, type: e.type, who: mask(e.name), len: e.minutes > 0 ? fmtMin(e.minutes) : (e.type === 'Banned' || e.type === 'Muted' ? 'permanent' : ''), reason: String(e.reason || '').slice(0, 140) })) });
     }
     if (p === '/api/cron' && (req.method === 'GET' || req.method === 'POST')) {
       const w0 = limit('cron:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
@@ -1331,7 +1445,7 @@ async function route(req, res, url, p) {
       if (chatty && rule('flaggedmute').enabled) await need('logs');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
-      const out = sync(b); await signalCheck(req, fresh, joined);
+      const out = sync(b); await signalCheck(req, fresh, joined); await banSyncPull();
       return send(res, 200, out);
     }
 
@@ -1505,7 +1619,7 @@ async function route(req, res, url, p) {
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
-        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, watch: D.watch,
+        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, approvals: D.settings.approvals || {}, pending: (D.pending || []).filter(x => now - x.t < APPR_MS).map(x => ({ id: x.id, kind: x.kind, text: x.text, by: x.by, t: x.t, reason: x.reason, mine: x.byUid === uid, can: canApprove(x, u, uid) })).filter(x => x.mine || x.can), sync: has(u, 'automations.manage') ? { from: (D.settings.sync || {}).from || [] } : null, signalsDone: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status !== 'open').sort((a, b) => (b[1].done || b[1].t) - (a[1].done || a[1].t)).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], watch: D.watch,
         staffWeek: Object.entries(D.audit.filter(a => a.t > now - 7 * 864e5 && a.user && a.user !== 'Automation').reduce((m, a) => (m[a.user] = (m[a.user] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([user, n]) => ({ user, n })),
         rules: Object.fromEntries(Object.keys(DEFAULT_RULES).map(k => [k, rule(k)])), stats: { ...D.stats, activeBans: bans.length, activeMutes: mutes.length } });
     }
@@ -1516,6 +1630,18 @@ async function route(req, res, url, p) {
       const id = +url.searchParams.get('userId'), r = D.rulebook.find(x => x.id === url.searchParams.get('rule')); if (!r) return send(res, 404, { error: 'No such rule' });
       const n = (D.logs[id] || []).filter(e => e.ruleId === r.id && e.status !== 'reverted').length;
       return send(res, 200, { offense: n + 1, step: r.steps[Math.min(n, r.steps.length - 1)] });
+    }
+    if (p === '/api/analytics') {
+      const rng = [7, 14, 30].includes(+url.searchParams.get('range')) ? +url.searchParams.get('range') : 30, now = Date.now();
+      const days = [...Array(rng)].map((_, i) => dayKey(now - (rng - 1 - i) * 864e5)), ser = f => days.map(d => (D.daily[d] || {})[f] || 0);
+      const cut = now - rng * 864e5, ent = Object.values(D.logs).flat().filter(e => e && e.time > cut && MOD_TYPES.includes(e.type));
+      const types = Object.fromEntries(MOD_TYPES.map(t => [t, ent.filter(e => e.type === t).length])), by = {};
+      for (const e of ent) { const k = e.by || 'Automation'; by[k] = (by[k] || 0) + 1; }
+      const sum = a => a.reduce((x, y) => x + y, 0), ap = D.appeals.filter(a => a.t > cut);
+      return send(res, 200, { range: rng, days, joins: ser('j'), peak: ser('p'), unique: ser('u'), actions: ser('a'), reports: ser('r'), types,
+        staff: Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, n]) => ({ name, n })),
+        totals: { joins: sum(ser('j')), unique: sum(ser('u')), actions: sum(ser('a')), reports: sum(ser('r')), peak: Math.max(0, ...ser('p')) },
+        appeals: { sent: ap.length, accepted: ap.filter(a => a.status === 'accepted').length, denied: ap.filter(a => a.status === 'denied').length, open: D.appeals.filter(a => a.status === 'open').length } });
     }
     if (p === '/api/logbook') {
       const type = url.searchParams.get('type') || '', q = cleanName(url.searchParams.get('q'), 60).toLowerCase();
@@ -1648,7 +1774,10 @@ async function route(req, res, url, p) {
       if (!above(u, memberPos(t))) return send(res, 403, { error: 'You can only manage members below your rank.' });
       if (B.op === 'remove') { audit(u.user, `Removed ${m.name}`); delete D.members[t]; return ok(res); }
       if (B.op === 'setrank' && m.group && D.meta.group && D.meta.group.id) return send(res, 409, { error: `${m.name}'s rank comes from your Roblox group. Change their role in the group instead.` });
-      if (B.op === 'setrank') { const r = D.ranks[B.rank]; if (!r || !above(u, r.pos)) return send(res, 403, { error: 'You can only give ranks below your own.' }); m.rank = B.rank; audit(u.user, `Set ${m.name} to ${r.name}`); return ok(res); }
+      if (B.op === 'setrank') { const r = D.ranks[B.rank]; if (!r || !above(u, r.pos)) return send(res, 403, { error: 'You can only give ranks below your own.' });
+        if (m.rank === B.rank) return ok(res);
+        if (!u.isOwner && approvalOn('rank')) { const pl = { uid: t, name: m.name, rank: B.rank, rankName: r.name }; if (approverExists('rank', uid, pl)) { const it = propose('rank', u, uid, pl, `set ${m.name} to ${r.name}`, ''); if (!it) return send(res, 429, { error: 'Too many requests are waiting for approval. Ask someone to clear them first.' }); return send(res, 200, { ok: true, pending: true, msg: PEND_MSG }); } }
+        m.rank = B.rank; audit(u.user, `Set ${m.name} to ${r.name}`); return ok(res); }
       return send(res, 400, { error: 'bad request' });
     }
     if (req.method === 'POST' && p === '/api/rulebook') {
@@ -1726,11 +1855,41 @@ async function route(req, res, url, p) {
       for (const x of list) if (shEnd(x) < now - 5 * 60000 && !x.att) { x.att = {}; for (const sg of x.signups) { const rid = ridOf(sg.uid); x.att[sg.uid] = rid ? Math.round(inGameSecs(+rid, x.start, shEnd(x)) / 60) : null; } } // freeze attendance once a shift is over
       return send(res, 200, { shifts: list.map(x => shiftView(x, uid)) });
     }
+    if (req.method === 'POST' && p === '/api/approvals') { // sign off, decline or withdraw a request that needs a second person
+      const now = Date.now(), it = (D.pending || []).find(x => x.id === B.id && now - x.t < APPR_MS);
+      if (!it) return send(res, 404, { error: 'That request is gone. It was already handled, or it expired.' });
+      if (B.op === 'cancel' || B.op === 'deny') {
+        if (B.op === 'cancel' ? it.byUid !== uid : !canApprove(it, u, uid)) return deny(res);
+        D.pending = D.pending.filter(x => x !== it); audit(u.user, `${B.op === 'cancel' ? 'Withdrew' : 'Declined'} the request to ${it.text}`); return ok(res);
+      }
+      if (B.op !== 'approve') return send(res, 400, { error: 'bad request' });
+      if (it.byUid === uid) return send(res, 409, { error: 'You asked for this, so a different staff member has to approve it.' });
+      if (!canApprove(it, u, uid)) return send(res, 403, { error: 'Your rank does not allow you to approve this.' });
+      const pl = it.payload;
+      if (it.kind === 'rank') {
+        const m = D.members[pl.uid]; if (!m || !D.ranks[pl.rank]) { D.pending = D.pending.filter(x => x !== it); return send(res, 404, { error: 'That person or rank no longer exists, so the request was dropped.' }); }
+        if (m.group && D.meta.group && D.meta.group.id) { D.pending = D.pending.filter(x => x !== it); return send(res, 409, { error: `${m.name}'s rank comes from your Roblox group, so the request was dropped.` }); }
+        m.rank = pl.rank; audit(u.user, `Approved: set ${m.name} to ${D.ranks[pl.rank].name} (asked by ${it.by})`);
+      } else if (it.kind === 'permBan') {
+        if (D.bans[pl.userId] && live(D.bans[pl.userId]) && !D.bans[pl.userId].expires) { D.pending = D.pending.filter(x => x !== it); return send(res, 409, { error: `${pl.name} is already permanently banned.` }); }
+        act({ action: 'ban', userId: pl.userId, name: pl.name, reason: cleanName(`${pl.reason} (approved by ${u.user})`, 400), minutes: 0, by: it.by, byUid: it.byUid, ruleId: pl.ruleId || null, extra: { ...(pl.ev && pl.ev.length ? { ev: pl.ev } : {}), ...(pl.note ? { note: pl.note } : {}) } });
+        audit(u.user, `Approved: permanently ban ${pl.name} (asked by ${it.by})`);
+      } else if (it.kind === 'wsDelete') {
+        await need('glob'); G.workspaces = Math.max(0, G.workspaces - 1); D.meta.deleted = now; audit(u.user, `Approved: delete the workspace (asked by ${it.by})`);
+        D.pending = D.pending.filter(x => x !== it); res.setHeader('Set-Cookie', clearCookie('ws')); return send(res, 200, { ok: true, deleted: true });
+      }
+      D.pending = D.pending.filter(x => x !== it); return ok(res);
+    }
     if (req.method === 'POST' && p === '/api/signals') {
       if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.signals = !!B.on; audit(u.user, B.on ? 'Turned on alt-account hints' : 'Turned off alt-account hints'); return ok(res); }
       if (!has(u, 'mod.kick')) return deny(res);
       const x = D.signals[B.userId]; if (!x) return send(res, 404, { error: 'Nothing to dismiss.' });
-      x.status = 'dismissed'; x.by = u.user; audit(u.user, `Dismissed the alt-account hint for ${x.name}`); return ok(res);
+      if (B.op === 'watch') {
+        if (Object.keys(D.watch).length >= 200 && !D.watch[B.userId]) return send(res, 400, { error: 'The watchlist is full (200 players).' });
+        D.watch[B.userId] = { name: x.name, by: u.user, t: Date.now(), reason: cleanName('Possible alt' + (x.of ? ' of ' + x.of.name : ''), 200) };
+        x.status = 'watching'; x.by = u.user; x.done = Date.now(); audit(u.user, `Put ${x.name} on the watchlist from the alt-account queue`); return ok(res);
+      }
+      x.status = 'dismissed'; x.by = u.user; x.done = Date.now(); audit(u.user, `Dismissed the alt-account hint for ${x.name}`); return ok(res);
     }
     if (req.method === 'POST' && p === '/api/shifts') {
       const x = D.shifts.find(y => y.id === B.id), now = Date.now();
@@ -1784,6 +1943,20 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'POST' && p === '/api/appeals') {
       if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.appeals = !!B.on; audit(u.user, B.on ? 'Opened ban appeals' : 'Closed ban appeals'); return ok(res); }
+      if (B.op === 'webreports') { if (!has(u, 'automations.manage')) return deny(res); D.settings.webReports = !!B.on; audit(u.user, B.on ? 'Opened the web report form' : 'Closed the web report form'); return ok(res); }
+      if (B.op === 'publiclog') { if (!has(u, 'automations.manage')) return deny(res); D.settings.publicLog = !!B.on; audit(u.user, B.on ? 'Published the moderation log' : 'Made the moderation log private'); return ok(res); }
+      if (B.op === 'approvals') { if (!u.isOwner) return ownerOnly(res); if (!APPR_KINDS[B.key]) return send(res, 400, { error: 'bad request' }); D.settings.approvals = { ...(D.settings.approvals || {}), [B.key]: !!B.on }; audit(u.user, `${B.on ? 'Turned on' : 'Turned off'} second approval for ${APPR_KINDS[B.key].toLowerCase()}`); return ok(res); }
+      if (B.op === 'syncadd' || B.op === 'syncremove') {
+        if (!u.isOwner) return ownerOnly(res);
+        const wid = String(B.wid || ''), sy = D.settings.sync ||= { from: [], at: 0 };
+        if (B.op === 'syncremove') { const f = sy.from.find(x => x.id === wid); sy.from = sy.from.filter(x => x.id !== wid); if (f) audit(u.user, `Stopped copying bans from ${f.name}`); return ok(res); }
+        if (!/^[a-f0-9]{12}$/.test(wid) || wid === CTX.wid) return send(res, 400, { error: 'Pick one of your other workspaces.' });
+        if (sy.from.some(x => x.id === wid)) return ok(res);
+        if (sy.from.length >= 5) return send(res, 400, { error: 'You can copy bans from up to 5 games.' });
+        const rows = await sbGet(`select=key,meta:value->meta&key=in.(w${wid}:core)`), m = rows[0] && rows[0].meta;
+        if (!m || m.deleted || m.owner !== D.meta.owner) return send(res, 400, { error: 'You can only copy bans from games you own. Pick one of your other workspaces.' });
+        sy.from.push({ id: wid, name: m.name }); sy.at = 0; audit(u.user, `Started copying bans from ${m.name}`); return ok(res);
+      }
       if (B.op === 'twoperson') { if (!has(u, 'automations.manage')) return deny(res); D.settings.twoPerson = !!B.on; audit(u.user, B.on ? 'Lifting permanent bans now needs two staff' : 'Lifting permanent bans no longer needs two staff'); return ok(res); }
       if (B.op === 'replies') {
         if (!has(u, 'automations.manage')) return deny(res);
@@ -1882,6 +2055,7 @@ async function route(req, res, url, p) {
       }
       if (B.op === 'delete') {
         if (cleanName(B.confirm) !== D.meta.name) return send(res, 400, { error: 'Type the workspace name exactly to confirm' });
+        if (approvalOn('wsDelete') && approverExists('wsDelete', uid, {})) { const it = propose('wsDelete', u, uid, {}, `delete the workspace ${D.meta.name}`, ''); if (!it) return send(res, 429, { error: 'Too many requests are waiting for approval.' }); return send(res, 200, { ok: true, pending: true, msg: PEND_MSG }); }
         await need('glob'); const wid = CTX.wid; G.workspaces = Math.max(0, G.workspaces - 1); if (U) U.workspaces = U.workspaces.filter(w => w !== wid);
         D.meta.deleted = Date.now(); audit(u.user, 'Deleted the workspace'); // kept for 30 days, so the site admin can bring it back if it was a mistake or a hack
         res.setHeader('Set-Cookie', clearCookie('ws'));
