@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 10 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 11 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -209,6 +209,15 @@ local function setupChat()
 			local src = message.TextSource
 			if not src then return true end
 			if muted[src.UserId] then
+				-- a muted player can still ask !sentinel what state they are in (nobody else sees it)
+				local cmdName = string.lower(string.match(message.Text or "", "^!(%a+)") or "")
+				if cmdName == "sentinel" then
+					if not seen[message.MessageId] then
+						seen[message.MessageId] = true
+						onChat(src.UserId, message.Text)
+					end
+					return false
+				end
 				-- tell them why, at most every 8 seconds
 				if os.clock() - (mutedNote[src.UserId] or -999) > 8 then
 					mutedNote[src.UserId] = os.clock()
@@ -320,7 +329,8 @@ diagText = function(plr)
 	local off = 0
 	for _ in muted do n += 1 end
 	for _ in chatOff do off += 1 end
-	return string.format("Script v%d. Chat: %s. Your chat sources: %d (can send: %s). Muted players now: %d (chat box removed for %d).%s",
+	local me = muted[plr.UserId] and (chatOff[plr.UserId] and "YOU ARE MUTED (chat box removed). " or "YOU ARE MUTED (can type, nobody sees it). ") or "You are not muted. "
+	return me .. string.format("Script v%d. Chat: %s. Your chat sources: %d (can send: %s). Muted players now: %d (chat box removed for %d).%s",
 		SCRIPT_VERSION, mode, mine, canSend, n, off, lastMuteErr ~= "" and (" Problem: " .. lastMuteErr) or "")
 end
 
