@@ -2,7 +2,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/index.js": {
-      "includeFiles": "{index.html,SentinelBridge.lua,legal/**}",
+      "includeFiles": "{index.html,SentinelBridge.lua,SentinelClient.lua,legal/**}",
       "maxDuration": 15
     }
   },
