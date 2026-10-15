@@ -368,7 +368,7 @@ let LASTERR='',LOADED=false;
 async function api(path,body){
  let r;try{const o=body!==undefined?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{};o.signal=AbortSignal.timeout(20000);r=await fetch(path,o)}catch{toast('No connection. Check your internet.','err');return{error:'offline',_s:0}}
  let j={};try{j=await r.json()}catch{} if(!j||typeof j!=='object')j={};j._s=r.status;
- if(j.code==='maintenance'||j.code==='suspended'){if(!BLOCK||BLOCK.code!==j.code){BLOCK={code:j.code,msg:j.error};render()}}
+ if(j.code==='maintenance'&&path==='/api/me')j={providers:[],signupsOpen:false,user:null,workspaces:[],current:null,maint:{message:j.error},_s:503};else if(j.code==='maintenance'||j.code==='suspended'){if(!BLOCK||BLOCK.code!==j.code){BLOCK={code:j.code,msg:j.error};render()}}
  if(r.status>=500)LASTERR=j.error||('Server error '+r.status);if(r.status===429)toast(j.error||'Slow down a moment.','err');else if(r.status===401&&ME&&ME.user){ME=await (await fetch('/api/me')).json();S=null;render()}
  return j}
 const bad=r=>{if(r.error&&r._s!==429){toast(r.error,'err');return true}return!!r.error};
