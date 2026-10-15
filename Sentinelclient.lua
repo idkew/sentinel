@@ -2,7 +2,7 @@
 	Sentinel chat-bar script (optional, but recommended)
 
 	WHAT IT DOES
-	  When a moderator mutes a player in Sentinel, this hides that player's chat bar completely,
+	  When a moderator mutes a player in Sentinel, this hides that player's chat bar and chat window (including Quick Words) completely,
 	  and brings it back when the mute ends. Without it, a muted player's messages are still
 	  stopped by the server, but they can still type.
 
@@ -35,6 +35,8 @@ local function hideChat()
 		end
 	end)
 	pcall(function() StarterGui:SetCore("ChatBarDisabled", true) end) -- the old chat
+	-- also hides the whole chat window, which is where Roblox's "Quick Words" button lives
+	pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false) end)
 end
 
 local function showChat()
@@ -45,6 +47,7 @@ local function showChat()
 		if cfg then cfg.Enabled = savedInput ~= false end
 	end)
 	pcall(function() StarterGui:SetCore("ChatBarDisabled", false) end)
+	pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true) end)
 end
 
 local function apply()
