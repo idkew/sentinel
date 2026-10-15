@@ -22,7 +22,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 9 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 10 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -184,6 +184,16 @@ local function onChat(userId, text)
 end
 
 local mutedNote = {}
+-- every other chat channel (team chat, quick words and so on) also refuses a muted player's messages
+local function guardChannel(ch)
+	if not ch:IsA("TextChannel") or ch.Name == "RBXGeneral" then return end
+	if ch.ShouldDeliverCallback ~= nil then return end -- the game has its own rule here, leave it alone
+	ch.ShouldDeliverCallback = function(message, _target)
+		local src = message.TextSource
+		if src and muted[src.UserId] then return false end
+		return true
+	end
+end
 local function setupChat()
 	if TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
 		local channels = TextChatService:WaitForChild("TextChannels", 30)
@@ -192,6 +202,8 @@ local function setupChat()
 			warn("[Sentinel] RBXGeneral chat channel not found. Chat monitor, mutes and !commands won't work.")
 			return
 		end
+		for _, other in channels:GetChildren() do guardChannel(other) end
+		channels.ChildAdded:Connect(guardChannel)
 		-- Runs on the server for every message (once per recipient, so ids are de-duplicated)
 		ch.ShouldDeliverCallback = function(message, _target)
 			local src = message.TextSource
