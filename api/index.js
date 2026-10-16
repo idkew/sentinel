@@ -190,6 +190,22 @@ const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(+v) || 0));
 
 // ---- game logic ----
 const live = o => !o.expires || o.expires > Date.now();
+// Where one logbook entry stands right now, so the website can say so plainly.
+// active: still in force. fulfilled: a timed mute or suspension that ran its course, or a kick that was carried out.
+// lifted: ended early by an unmute or unban. reverted: undone by staff. none: notes, points and lifts have nothing to track.
+function entryState(e, id) {
+  if (!e) return {};
+  if (e.status === 'reverted') return { state: 'reverted' };
+  if (e.type === 'Kicked') return { state: 'fulfilled', ends: e.time };
+  if (e.type === 'Warned') return { state: 'active' };
+  if (!['Muted', 'Suspended', 'Banned'].includes(e.type)) return { state: 'none' };
+  const now = Date.now(), ends = e.minutes > 0 ? e.time + e.minutes * 60000 : null, lift = e.type === 'Muted' ? 'Unmuted' : 'Unbanned';
+  const lifted = (D.logs[id] || []).find(x => x.type === lift && x.status !== 'reverted' && x.time > e.time && (!ends || x.time < ends));
+  if (lifted) return { state: 'lifted', ends: lifted.time };
+  if (ends && ends <= now) return { state: 'fulfilled', ends };
+  const cur = e.type === 'Muted' ? D.mutes[id] : D.bans[id];
+  return cur && cur.entry === e.id ? { state: 'active', ends } : { state: 'lifted' };
+}
 const feed = (text, by) => { D.feed.unshift({ t: Date.now(), text }); D.feed.length = Math.min(D.feed.length, 50); if (by) audit(by, text); };
 const audit = (user, text) => { D.audit.unshift({ t: Date.now(), user, text }); D.audit.length = Math.min(D.audit.length, 300); };
 const DEFAULT_RULES = {
@@ -619,7 +635,7 @@ async function profile(id) {
   const ban = D.bans[id], mute = D.mutes[id], ws = weekStart(Date.now());
   return { userId: id, name: rb ? rb.name : online ? online.name : local ? local.name : 'User ' + id, displayName: rb ? rb.displayName : online ? online.displayName : '', created: rb ? rb.created : null,
     avatar: (await avatars([id]))[id] || null, online: !!online, server: online ? online.server : null,
-    banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, signal: D.signals[id] || null, logbook: (D.logs[id] || []).slice().reverse(),
+    banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, signal: D.signals[id] || null, logbook: (D.logs[id] || []).slice().reverse().map(e => ({ ...e, ...entryState(e, id) })),
     play: local ? { total: Math.round(local.total), week: local.weekStart === ws ? Math.round(local.week) : 0, points: local.points } : null,
     reports: D.calls.filter(c => c.from.userId === id).slice(0, 20).map(c => ({ id: c.id, t: c.t, text: c.text, status: c.status })),
     against: D.calls.filter(c => c.target && c.target.userId === id && c.status !== 'resolved').length,
@@ -1693,12 +1709,12 @@ async function route(req, res, url, p) {
       let all = []; for (const [id, list] of Object.entries(D.logs)) for (const e of list) all.push({ ...e, userId: +id, name: e.name || (D.play[id] || {}).name || 'User ' + id });
       if (type) all = all.filter(e => TYPE_GROUP[e.type] === type);
       if (q) all = all.filter(e => `${e.name} ${e.reason} ${e.by}`.toLowerCase().includes(q));
-      all.sort((a, b) => b.time - a.time); return send(res, 200, { entries: all.slice(0, 200), total: all.length });
+      all.sort((a, b) => b.time - a.time); return send(res, 200, { entries: all.slice(0, 200).map(e => ({ ...e, ...entryState(e, e.userId) })), total: all.length });
     }
     if (req.method === 'POST' && p === '/api/action') { const [c, o] = doAction(u, uid, B); return send(res, c, o); }
     if (req.method === 'GET' && p === '/api/entry') {
       const id = +url.searchParams.get('userId'), e = (D.logs[id] || []).find(x => x.id === url.searchParams.get('id'));
-      return e ? send(res, 200, { entry: { ...e, userId: id } }) : send(res, 404, { error: 'That entry no longer exists.' });
+      return e ? send(res, 200, { entry: { ...e, userId: id, ...entryState(e, id) } }) : send(res, 404, { error: 'That entry no longer exists.' });
     }
     if (req.method === 'POST' && p === '/api/entry') {
       const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
