@@ -96,9 +96,9 @@ function muteWarn(hide = true) { // why a mute might not stop chat right now (ch
   return null;
 }
 let SITE_NOW = ''; // this request's site address, so in-game messages can include the appeal link
-function banText(x) { // what the banned player reads on Roblox's ban screen (Roblox allows ~400 characters)
+function banText(x, plain) { // what the banned player reads: Roblox's ban screen (about 400 characters) or the kick message. Roblox runs the ban screen text through its filter and shows ##### for anything it dislikes, links included, so that one (plain) carries no link
   const len = x.expires ? `This suspension ends ${new Date(x.expires).toUTCString().slice(0, 16)} (UTC).` : 'This ban does not expire.';
-  const ap = D.meta && D.settings.appeals !== false && SITE_NOW ? ` Appeal at ${SITE_NOW}/appeal/${D.meta.id}` : '';
+  const ap = !plain && D.meta && D.settings.appeals !== false && SITE_NOW ? ` Appeal at ${SITE_NOW}/appeal/${D.meta.id}` : '';
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
@@ -528,7 +528,7 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   if (action === 'ban') {
     const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
     { const sg = D.signals[userId]; if (sg && sg.status === 'open') { sg.status = 'confirmed'; sg.by = by; sg.done = Date.now(); } } // an alt-account hint that ended in a ban
-    cmd({ type: 'ban', userId, reason, display: banText(D.bans[userId]), seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
+    cmd({ type: 'ban', userId, reason, display: banText(D.bans[userId], true), seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
   } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); unbanCmd(userId); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
   else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id, hide: hide !== false }; const len = expires ? 'for ' + fmtMin(minutes) : 'until a moderator lifts it'; const mt = hide !== false ? `You can't chat ${len}. Reason: ${reason}` : `You are muted ${len}. You can still type, but nobody can see your messages. Reason: ${reason}`; cmd({ type: 'message', kind: 'warn', title: 'You were muted', body: mt, userId, text: mt }); }
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
