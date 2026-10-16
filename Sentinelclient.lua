@@ -25,6 +25,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local StarterGui = game:GetService("StarterGui")
 
+local CLIENT_VERSION = 2 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
 local player = Players.LocalPlayer
 local savedInput = nil -- what the chat bar was set to before we hid it
 local hidden = false
@@ -434,5 +435,5 @@ task.spawn(function()
 		local ok, err = pcall(showNotice, text, kind, title)
 		if not ok then warn("[Sentinel] Could not show a banner: " .. tostring(err)) end
 	end)
-	noticeEvent:FireServer("ready") -- tells the game script to send banners here instead of drawing them itself
+	noticeEvent:FireServer("ready", CLIENT_VERSION) -- tells the game script to send banners here instead of drawing them itself, and which version this is
 end)
