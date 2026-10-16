@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 15 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 16 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -272,7 +272,7 @@ local function serverBanner(plr, pg, text, kind, title)
 	end)
 end
 
-local function banner(plr, text, kind, title)
+local function bannerNow(plr, text, kind, title)
 	local pg = plr:FindFirstChild("PlayerGui")
 	if not pg then return end
 	text = string.sub(tostring(text), 1, 300)
@@ -282,6 +282,12 @@ local function banner(plr, text, kind, title)
 	else
 		serverBanner(plr, pg, text, kind, title)
 	end
+end
+
+-- a banner must never be able to break anything else (like hiding a !command from chat), so errors are caught and printed instead
+local function banner(plr, text, kind, title)
+	local ok, err = pcall(bannerNow, plr, text, kind, title)
+	if not ok then warn("[Sentinel] Could not show a banner to " .. plr.Name .. ": " .. tostring(err)) end
 end
 
 ------------------------------------------------------------------ chat: monitor, commands, mute
@@ -294,7 +300,9 @@ local function onChat(userId, text)
 	local command, rest = string.match(text, "^!(%a+)%s*(.*)$")
 	command = command and string.lower(command)
 	if command == "sentinel" then
-		banner(plr, diagText(plr), "blue", "Sentinel check")
+		print("[Sentinel] !sentinel from " .. plr.Name .. " (player script: " .. (clientReady[plr] and ("version " .. tostring(clientVer[plr])) or "not seen") .. ")")
+		local okDiag, diag = pcall(diagText, plr)
+		banner(plr, okDiag and diag or ("The check failed: " .. tostring(diag)), "blue", "Sentinel check")
 		return true
 	elseif command == "attend" then
 		queue({ type = "attend", userId = userId, name = plr.Name })
@@ -499,7 +507,21 @@ task.spawn(function()
 end)
 
 ------------------------------------------------------------------ commands from the panel
-local function doBan(userId, reason, seconds)
+-- Roblox runs the ban screen message through its text filter and shows ##### for anything it dislikes, so check the wording first
+local function survivesFilter(text, userId)
+	local ok, res = pcall(function()
+		return TextService:FilterStringAsync(text, userId):GetNonChatStringForUserAsync(userId)
+	end)
+	if ok and typeof(res) == "string" then return not string.find(res, "#", 1, true) end
+	return true -- could not check, so go ahead with it
+end
+local function doBan(userId, reason, seconds, why)
+	if not survivesFilter(reason, userId) then
+		for _, text in ipairs({ "You are banned from this experience. Reason: " .. tostring(why or "No reason given") .. ".", "You are banned from this experience." }) do
+			reason = text
+			if survivesFilter(text, userId) then break end
+		end
+	end
 	local ok, err = pcall(Players.BanAsync, Players, {
 		UserIds = { userId }, Duration = seconds, DisplayReason = reason,
 		PrivateReason = "Banned from web panel", ApplyToUniverse = true,
@@ -517,7 +539,7 @@ local function handle(c)
 	if c.type == "kick" then
 		if plr then plr:Kick(tostring(c.display or ("[Sentinel] " .. tostring(c.reason)))) end
 	elseif c.type == "ban" then
-		doBan(c.userId, tostring(c.display or c.reason), c.seconds)
+		doBan(c.userId, tostring(c.display or c.reason), c.seconds, c.reason)
 	elseif c.type == "unban" then
 		local ok, err
 		for attempt = 1, 4 do
