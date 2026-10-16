@@ -245,6 +245,9 @@ function tick(p, dt, now) {
 let LUA_V = null; // the newest game script version is read from SentinelBridge.lua, so changing that file's SCRIPT_VERSION alerts every workspace
 const latestScript = () => { if (LUA_V === null) { try { LUA_V = +((fs.readFileSync(path.join(__dirname, '..', 'SentinelBridge.lua'), 'utf8').match(/^local SCRIPT_VERSION = (\d+)/m) || [])[1]) || 0; } catch { LUA_V = 0; } } return LUA_V; };
 const scriptInfo = () => { const v = D.meta.scriptV || (D.meta.connectedAt ? 1 : 0), latest = latestScript(); return { v, latest, outdated: v > 0 && latest > 0 && v < latest }; };
+let CLI_V = null; // same idea for the optional player script: its CLIENT_VERSION in SentinelClient.lua is the newest
+const latestClient = () => { if (CLI_V === null) { try { CLI_V = +((fs.readFileSync(path.join(__dirname, '..', 'SentinelClient.lua'), 'utf8').match(/^local CLIENT_VERSION = (\d+)/m) || [])[1]) || 0; } catch { CLI_V = 0; } } return CLI_V; };
+const clientInfo = () => { const v = D.meta.clientV || 0, latest = latestClient(); return { v, latest, outdated: v > 0 && latest > 0 && v < latest, bridgeNew: (D.meta.scriptV || 0) >= 15 }; };
 const KEEP_MS = 7 * 864e5; // bans and unbans wait for a server to start, since a banned player can't join to trigger anything
 const cmd = c => {
   if ((c.type === 'ban' || c.type === 'unban') && c.userId) { R.cmds = R.cmds.filter(x => !((x.type === 'ban' || x.type === 'unban') && x.userId === c.userId)); c.keep = 1; } // the newest decision for a player replaces older ones
@@ -571,6 +574,10 @@ function sync(b) {
     if (e.type === 'join' && D.meta && scriptInfo().outdated && Date.now() - (D.meta.scriptAlertAt || 0) > 6 * 36e5) { // tell the owner and anyone who can change settings, in game
       const dev = Object.entries(D.members).some(([mid, m]) => m.robloxId && String(m.robloxId) === String(uid) && (mid === D.meta.owner || has(who(mid), 'automations.manage')));
       if (dev) { D.meta.scriptAlertAt = Date.now(); const msg = 'Your Sentinel game script is out of date. Open Settings, then Game on the website, download the new script and paste it into your game.'; cmd({ type: 'message', kind: 'warn', title: 'Sentinel update available', body: msg, text: 'Sentinel update: ' + msg, userId: uid }); }
+    }
+    if (e.type === 'join' && D.meta && !scriptInfo().outdated && clientInfo().outdated && Date.now() - (D.meta.clientAlertAt || 0) > 6 * 36e5) { // the player script is out of date: same heads-up, once every 6 hours
+      const dev = Object.entries(D.members).some(([mid, m]) => m.robloxId && String(m.robloxId) === String(uid) && (mid === D.meta.owner || has(who(mid), 'automations.manage')));
+      if (dev) { D.meta.clientAlertAt = Date.now(); const msg = 'Your Sentinel player script is out of date. Open Settings, then Game on the website, copy the new player script and paste it over the old one in StarterPlayerScripts.'; cmd({ type: 'message', kind: 'warn', title: 'Sentinel update available', body: msg, text: 'Sentinel update: ' + msg, userId: uid }); }
     }
     if (e.type === 'join') { D.stats.joins++; daily().j++; feed(`${name} joined`); if (D.watch[uid]) { feed(`Watchlist: ${name} joined (${D.watch[uid].reason || 'no reason'})`); notify('watch', `Watched player joined: ${name}`, D.watch[uid].reason || '', [['Server', String(b.jobId || '').slice(0, 8)]], 0xffc53d); } const w = rule('welcome'); if (w.enabled) cmd({ type: 'message', kind: 'info', userId: uid, text: w.text }); if (uid) { const h = phist(uid); if (h.cur && h.cur.s >= 5) { closeSession(h); h.cur = { t: now, s: 0, sv: id.slice(0, 8), last: now }; } } }
     else if (e.type === 'leave') { feed(`${name} left`); if (uid) closeSession(phist(uid)); }
@@ -1499,6 +1506,7 @@ async function route(req, res, url, p) {
       if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) return send(res, 403, { error: 'This game key is locked to a different place' });
       if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
       const sv = Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1; if (sv > (D.meta.scriptV || 0)) D.meta.scriptV = sv; // the highest version seen, so old servers that are still shutting down don't matter
+      const cv = Number.isInteger(b.clientV) && b.clientV > 0 && b.clientV < 1000 ? b.clientV : 0; if (cv > (D.meta.clientV || 0)) D.meta.clientV = cv; // the newest player script seen, same rule
       if (!D.meta.connectedAt) D.meta.connectedAt = Date.now();
       const rjOn = rule('rapidjoin').enabled && ev.some(e => e && e.type === 'join');
       if ((chatty && (rule('flaggedmute').enabled || AM_RULES.some(k => rule(k).enabled))) || rjOn) await need('logs');
@@ -1668,7 +1676,7 @@ async function route(req, res, url, p) {
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000) })),
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
-        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
+        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
         invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by, lock: i.lock ? i.lock.name : null })) : [],
