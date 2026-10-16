@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 14 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 15 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -227,10 +227,19 @@ if not noticeEvent then
 	noticeEvent.Name = "SentinelNotice"
 	noticeEvent.Parent = ReplicatedStorage
 end
-local clientReady, activeBanner = {}, {}
-noticeEvent.OnServerEvent:Connect(function(plr, msg)
-	if msg == "ready" then clientReady[plr] = true end
+local clientReady, clientVer, activeBanner = {}, {}, {}
+noticeEvent.OnServerEvent:Connect(function(plr, msg, ver)
+	if msg ~= "ready" then return end
+	clientReady[plr] = true
+	clientVer[plr] = (type(ver) == "number" and ver >= 1 and ver < 1000) and math.floor(ver) or 1
 end)
+local function newestClient() -- the newest SentinelClient version among the players here (0 when nobody has it), so the website can tell you when to update it
+	local v = 0
+	for _, x in pairs(clientVer) do
+		if x > v then v = x end
+	end
+	return v
+end
 
 local function serverBanner(plr, pg, text, kind, title)
 	if activeBanner[plr] then activeBanner[plr]:Destroy() end
@@ -539,7 +548,7 @@ local function sync()
 	local sent = table.clone(pending)
 	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
 		Url = URL .. "/game/sync", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
-		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION, chat = chatMode(), muteErr = lastMuteErr }),
+		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION, clientV = newestClient(), chat = chatMode(), muteErr = lastMuteErr }),
 	})
 	busy = false
 	if not ok or not res.Success then
@@ -566,7 +575,7 @@ Players.PlayerAdded:Connect(function(p)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
-	clientReady[p], activeBanner[p] = nil, nil
+	clientReady[p], clientVer[p], activeBanner[p] = nil, nil, nil
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
