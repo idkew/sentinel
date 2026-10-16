@@ -5,7 +5,9 @@
 	  1. When a moderator mutes a player in Sentinel, this hides that player's chat bar and chat window (including Quick Words) completely,
 	     and brings it back when the mute ends. Without it, a muted player's messages are still
 	     stopped by the server, but they can still type.
-	  2. Adds a small Report button. Players pick who they are reporting (optional), say what happened and press Send.
+	  2. Draws warnings and announcements from your moderators as a card with a timer line that runs round its border, smoothly at any frame rate.
+	     It needs SentinelBridge version 14 or newer in ServerScriptService.
+	  3. Adds a small Report button. Players pick who they are reporting (optional), say what happened and press Send.
 	     The report lands in Reports on your Sentinel website with the chat around that moment attached.
 	     It needs SentinelBridge version 13 or newer in ServerScriptService. Set SHOW_REPORT_BUTTON to false below to turn the button off.
 
@@ -210,3 +212,227 @@ if SHOW_REPORT_BUTTON then
 		if not ok then warn("[Sentinel] Could not build the Report button: " .. tostring(err)) end
 	end)
 end
+
+------------------------------------------------------------------ banners
+-- Warnings, mute notices and announcements from your moderators. They are drawn here, on the player's own screen, so the
+-- slide-in and the timer line run at the player's full frame rate. (Without this script the game script draws them itself.)
+-- It needs SentinelBridge version 14 or newer in ServerScriptService.
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+------------------------------------------------------------------ notice card (the same block sits in SentinelBridge and SentinelClient)
+-- A dark card with an icon, a title and a message. A coloured line runs round its border as the timer:
+-- it starts at the top-centre, runs down both sides and meets at the bottom-centre.
+local NOTICE_STYLES = {
+	warn = { color = Color3.fromRGB(255, 159, 10), glyph = "!", title = "Warning" },
+	red = { color = Color3.fromRGB(255, 69, 58), glyph = "!", title = "Notice" },
+	blue = { color = Color3.fromRGB(10, 132, 255), glyph = "i", title = "Notice" },
+	green = { color = Color3.fromRGB(48, 209, 88), glyph = "\u{2713}", title = "Done" },
+}
+local RING_R, RING_T, RING_M = 18, 2, 8 -- corner radius, line thickness, spare room round the card so the line is never cut off
+
+-- Which parts of the card's border are drawn once the timer is p (0 to 1) of the way round.
+-- Works in card pixels and gives six rectangles (three per side); the border is only visible inside them.
+-- Each part is cut with a straight line: vertical on the top and bottom, horizontal on the sides.
+local function ringRects(W, H, r, p, pad)
+	local hw = W / 2
+	r = math.min(r, hw, H / 2)
+	local q = math.pi * r / 4 -- half of a rounded corner
+	local top, side = hw - r, H - 2 * r
+	local L1, L2, L3 = top + q, q + side + q, q + (hw - r)
+	local d = math.max(0, math.min(1, p)) * (L1 + L2 + L3)
+	local OV = 2.5 -- the parts overlap a little so there is never a hairline gap between them
+	local c45 = r * (1 - math.sqrt(0.5)) -- the 45 degree point of a corner sits this far in from the card's edge
+	local x45, y45a, y45c = W - c45, c45, H - c45
+	local right = {}
+	if d > 0 then -- along the top, then round the first half of the top corner
+		local x
+		if d >= L1 then x = x45 + OV
+		elseif d <= top then x = hw + d
+		else x = (W - r) + r * math.sin((d - top) / r) end
+		right[1] = { hw - 0.5, -pad, x, y45a + OV }
+	end
+	local s = d - L1
+	if s > 0 then -- round the rest of that corner, down the side, into the first half of the bottom corner
+		local y
+		if s >= L2 then y = y45c + OV
+		elseif s <= q then y = r - r * math.cos(math.pi / 4 + s / r)
+		elseif s <= q + side then y = r + (s - q)
+		else y = (H - r) + r * math.sin((s - q - side) / r) end
+		right[2] = { x45 - OV, y45a - OV, W + pad, y }
+	end
+	s = s - L2
+	if s > 0 then -- the rest of the bottom corner, then along the bottom to the middle
+		local x
+		if s <= q then x = (W - r) + r * math.cos(math.pi / 4 + s / r)
+		else x = (W - r) - (s - q) end
+		right[3] = { math.max(x, hw - 0.5), y45c - OV, W + pad, H + pad }
+	end
+	local out = {}
+	for i = 1, 3 do
+		local a = right[i]
+		out[i] = a or false
+		out[i + 3] = a and { W - a[3], a[2], W - a[1], a[4] } or false -- the left side is the mirror image
+	end
+	return out
+end
+
+local function buildNotice(gui, text, kind, title, fixed)
+	local st = NOTICE_STYLES[kind] or NOTICE_STYLES.red
+	local R, T, M = RING_R, RING_T, RING_M
+	local function make(class, props, parent)
+		local o = Instance.new(class)
+		for k, v in pairs(props) do o[k] = v end
+		o.Parent = parent
+		return o
+	end
+
+	local root = make("CanvasGroup", {
+		Name = "Notice", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -6),
+		BackgroundTransparency = 1, GroupTransparency = 1, BorderSizePixel = 0,
+	}, gui)
+	if fixed then
+		root.Size = UDim2.fromOffset(fixed.w + 2 * M, fixed.h + 2 * M)
+	else
+		root.Size = UDim2.new(0.92, 0, 0, 0)
+		root.AutomaticSize = Enum.AutomaticSize.Y
+		make("UISizeConstraint", { MinSize = Vector2.new(240, 0), MaxSize = Vector2.new(380 + 2 * M, math.huge) }, root)
+	end
+	make("UIPadding", { PaddingTop = UDim.new(0, M), PaddingBottom = UDim.new(0, M), PaddingLeft = UDim.new(0, M), PaddingRight = UDim.new(0, M) }, root)
+	local scale = make("UIScale", { Scale = 0.95 }, root)
+
+	local card = make("Frame", {
+		Name = "Card", BackgroundColor3 = Color3.fromRGB(20, 20, 23), BackgroundTransparency = 0.03, BorderSizePixel = 0, Active = true,
+	}, root)
+	if fixed then
+		card.Size = UDim2.fromOffset(fixed.w, fixed.h)
+	else
+		card.Size = UDim2.new(1, 0, 0, 0)
+		card.AutomaticSize = Enum.AutomaticSize.Y
+	end
+	make("UICorner", { CornerRadius = UDim.new(0, R) }, card)
+	make("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.9, Thickness = T }, card) -- the faint track the line runs along
+
+	local inner = make("Frame", { Name = "Inner", BackgroundTransparency = 1, BorderSizePixel = 0 }, card)
+	if fixed then
+		inner.Size = UDim2.fromOffset(fixed.w, fixed.h)
+	else
+		inner.Size = UDim2.new(1, 0, 0, 0)
+		inner.AutomaticSize = Enum.AutomaticSize.Y
+	end
+	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 18) }, inner)
+	local row = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, inner)
+	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, row)
+
+	local icon = make("TextLabel", {
+		Size = UDim2.fromOffset(30, 30), BackgroundColor3 = st.color, BackgroundTransparency = 0.82, BorderSizePixel = 0,
+		TextColor3 = st.color, Font = Enum.Font.GothamBold, TextSize = 16, Text = st.glyph, LayoutOrder = 1,
+	}, row)
+	make("UICorner", { CornerRadius = UDim.new(1, 0) }, icon)
+
+	local col = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, -42, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2 }, row)
+	make("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, col)
+	make("TextLabel", {
+		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Color3.fromRGB(246, 246, 248), Font = Enum.Font.GothamBold, TextSize = 14, Text = title or st.title, LayoutOrder = 1,
+	}, col)
+	make("TextLabel", {
+		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
+		TextColor3 = Color3.fromRGB(176, 176, 185), Font = Enum.Font.GothamMedium, TextSize = 13, Text = text, LayoutOrder = 2,
+	}, col)
+
+	-- the timer line: six clip windows, each showing part of a copy of the card's border
+	local ring = make("Frame", { Name = "Timer", BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(), ZIndex = 5 }, card)
+	local segs = {}
+	for i = 1, 6 do
+		local clip = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, ClipsDescendants = true, Visible = false, ZIndex = 5 }, ring)
+		local line = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 5 }, clip)
+		make("UICorner", { CornerRadius = UDim.new(0, R) }, line)
+		make("UIStroke", { Color = st.color, Thickness = T }, line)
+		segs[i] = { clip = clip, line = line }
+	end
+
+	local n = { root = root, card = card }
+	-- p runs from 0 (nothing drawn) to 1 (the whole border drawn)
+	function n.progress(p)
+		local W, H
+		if fixed then
+			W, H = fixed.w, fixed.h
+		else
+			local a = card.AbsoluteSize
+			W, H = a.X / scale.Scale, a.Y / scale.Scale
+		end
+		if W < 2 * R + 4 or H < 2 * R + 4 then return end
+		local rects = ringRects(W, H, R, p, T + 1)
+		for i = 1, 6 do
+			local seg, rc = segs[i], rects[i]
+			if rc then
+				local l, t = math.floor(rc[1]), math.floor(rc[2])
+				seg.clip.Position = UDim2.fromOffset(l, t)
+				seg.clip.Size = UDim2.fromOffset(math.max(0, rc[3] - l), math.max(0, rc[4] - t))
+				seg.line.Size = UDim2.fromOffset(W, H)
+				seg.line.Position = UDim2.fromOffset(-l, -t)
+				seg.clip.Visible = true
+			else
+				seg.clip.Visible = false
+			end
+		end
+	end
+	local function play(inward, quick)
+		local info = inward and TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+			or TweenInfo.new(quick and 0.16 or 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		local a = TweenService:Create(root, info, { Position = UDim2.new(0.5, 0, 0, inward and 10 or -4), GroupTransparency = inward and 0 or 1 })
+		TweenService:Create(scale, info, { Scale = inward and 1 or 0.97 }):Play()
+		a:Play()
+		return a
+	end
+	function n.show() play(true) end
+	function n.hide(quick) return play(false, quick) end
+	return n
+end
+
+local currentNotice = nil -- the function that closes the banner on screen
+local function showNotice(text, kind, title)
+	if typeof(text) ~= "string" then return end
+	if typeof(kind) ~= "string" then kind = "red" end
+	if typeof(title) ~= "string" then title = nil end
+	text = string.sub(text, 1, 300)
+	if currentNotice then currentNotice(true) end
+	local gui = Instance.new("ScreenGui")
+	gui.Name, gui.ResetOnSpawn, gui.DisplayOrder, gui.IgnoreGuiInset = "SentinelBanner", false, 200, true
+	gui.Parent = player:WaitForChild("PlayerGui")
+	local n = buildNotice(gui, text, kind, title, nil)
+	local conn
+	local finished = false
+	local function finish(quick)
+		if finished then return end
+		finished = true
+		if conn then conn:Disconnect() end
+		n.hide(quick)
+		task.delay(quick and 0.2 or 0.4, function() gui:Destroy() end)
+		if currentNotice == finish then currentNotice = nil end
+	end
+	currentNotice = finish
+	n.show()
+	n.card.InputBegan:Connect(function(input) -- tap or click the card to close it early
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then finish(false) end
+	end)
+	local show = math.max(5, math.min(9, 4.5 + #text / 25)) -- seconds on screen: longer messages stay longer
+	local start = os.clock() + 0.4 -- let the card finish sliding in before the line starts
+	conn = RunService.RenderStepped:Connect(function()
+		local p = (os.clock() - start) / show
+		n.progress(math.max(0, p))
+		if p >= 1 then finish(false) end
+	end)
+end
+
+task.spawn(function()
+	local noticeEvent = ReplicatedStorage:WaitForChild("SentinelNotice", 30)
+	if not noticeEvent then return end -- the game script is older than version 14: it draws the banners itself
+	noticeEvent.OnClientEvent:Connect(function(text, kind, title)
+		local ok, err = pcall(showNotice, text, kind, title)
+		if not ok then warn("[Sentinel] Could not show a banner: " .. tostring(err)) end
+	end)
+	noticeEvent:FireServer("ready") -- tells the game script to send banners here instead of drawing them itself
+end)
