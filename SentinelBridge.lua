@@ -3,7 +3,7 @@
 	  * Ban / suspend  -> Roblox's own ban system (Players:BanAsync), applied to the whole experience
 	  * Kick           -> Player:Kick()
 	  * Mute           -> TextChatService (muted players' messages are dropped)
-	  * Warn/announce  -> on-screen banner
+	  * Warn/announce  -> on-screen banner (a dark card with a timer line that runs round its border; smoothest with the optional SentinelClient script)
 	  * Chat monitor   -> every chat message is sent to the panel (kept in memory there, never saved)
 	  * Players can type in chat:   !modcall <message>   (report to moderators)   and   !attend   (join a session)
 	  * Report button  -> the optional SentinelClient script adds a Report button (pick a player + details); this script receives it
@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 13 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 14 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -44,116 +44,235 @@ local function queue(ev)
 end
 
 local TweenService = game:GetService("TweenService")
-local STYLES = {
+local TextService = game:GetService("TextService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+------------------------------------------------------------------ notice card (the same block sits in SentinelBridge and SentinelClient)
+-- A dark card with an icon, a title and a message. A coloured line runs round its border as the timer:
+-- it starts at the top-centre, runs down both sides and meets at the bottom-centre.
+local NOTICE_STYLES = {
 	warn = { color = Color3.fromRGB(255, 159, 10), glyph = "!", title = "Warning" },
 	red = { color = Color3.fromRGB(255, 69, 58), glyph = "!", title = "Notice" },
 	blue = { color = Color3.fromRGB(10, 132, 255), glyph = "i", title = "Notice" },
 	green = { color = Color3.fromRGB(48, 209, 88), glyph = "\u{2713}", title = "Done" },
 }
-local activeBanner = {}
+local RING_R, RING_T, RING_M = 18, 2, 8 -- corner radius, line thickness, spare room round the card so the line is never cut off
 
--- a small frosted card that slides in from the top, matching the Sentinel website
-local function banner(plr, text, kind, title)
-	local pg = plr:FindFirstChild("PlayerGui")
-	if not pg then return end
-	local st = STYLES[kind] or STYLES.red
+-- Which parts of the card's border are drawn once the timer is p (0 to 1) of the way round.
+-- Works in card pixels and gives six rectangles (three per side); the border is only visible inside them.
+-- Each part is cut with a straight line: vertical on the top and bottom, horizontal on the sides.
+local function ringRects(W, H, r, p, pad)
+	local hw = W / 2
+	r = math.min(r, hw, H / 2)
+	local q = math.pi * r / 4 -- half of a rounded corner
+	local top, side = hw - r, H - 2 * r
+	local L1, L2, L3 = top + q, q + side + q, q + (hw - r)
+	local d = math.max(0, math.min(1, p)) * (L1 + L2 + L3)
+	local OV = 2.5 -- the parts overlap a little so there is never a hairline gap between them
+	local c45 = r * (1 - math.sqrt(0.5)) -- the 45 degree point of a corner sits this far in from the card's edge
+	local x45, y45a, y45c = W - c45, c45, H - c45
+	local right = {}
+	if d > 0 then -- along the top, then round the first half of the top corner
+		local x
+		if d >= L1 then x = x45 + OV
+		elseif d <= top then x = hw + d
+		else x = (W - r) + r * math.sin((d - top) / r) end
+		right[1] = { hw - 0.5, -pad, x, y45a + OV }
+	end
+	local s = d - L1
+	if s > 0 then -- round the rest of that corner, down the side, into the first half of the bottom corner
+		local y
+		if s >= L2 then y = y45c + OV
+		elseif s <= q then y = r - r * math.cos(math.pi / 4 + s / r)
+		elseif s <= q + side then y = r + (s - q)
+		else y = (H - r) + r * math.sin((s - q - side) / r) end
+		right[2] = { x45 - OV, y45a - OV, W + pad, y }
+	end
+	s = s - L2
+	if s > 0 then -- the rest of the bottom corner, then along the bottom to the middle
+		local x
+		if s <= q then x = (W - r) + r * math.cos(math.pi / 4 + s / r)
+		else x = (W - r) - (s - q) end
+		right[3] = { math.max(x, hw - 0.5), y45c - OV, W + pad, H + pad }
+	end
+	local out = {}
+	for i = 1, 3 do
+		local a = right[i]
+		out[i] = a or false
+		out[i + 3] = a and { W - a[3], a[2], W - a[1], a[4] } or false -- the left side is the mirror image
+	end
+	return out
+end
+
+local function buildNotice(gui, text, kind, title, fixed)
+	local st = NOTICE_STYLES[kind] or NOTICE_STYLES.red
+	local R, T, M = RING_R, RING_T, RING_M
+	local function make(class, props, parent)
+		local o = Instance.new(class)
+		for k, v in pairs(props) do o[k] = v end
+		o.Parent = parent
+		return o
+	end
+
+	local root = make("CanvasGroup", {
+		Name = "Notice", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -6),
+		BackgroundTransparency = 1, GroupTransparency = 1, BorderSizePixel = 0,
+	}, gui)
+	if fixed then
+		root.Size = UDim2.fromOffset(fixed.w + 2 * M, fixed.h + 2 * M)
+	else
+		root.Size = UDim2.new(0.92, 0, 0, 0)
+		root.AutomaticSize = Enum.AutomaticSize.Y
+		make("UISizeConstraint", { MinSize = Vector2.new(240, 0), MaxSize = Vector2.new(380 + 2 * M, math.huge) }, root)
+	end
+	make("UIPadding", { PaddingTop = UDim.new(0, M), PaddingBottom = UDim.new(0, M), PaddingLeft = UDim.new(0, M), PaddingRight = UDim.new(0, M) }, root)
+	local scale = make("UIScale", { Scale = 0.95 }, root)
+
+	local card = make("Frame", {
+		Name = "Card", BackgroundColor3 = Color3.fromRGB(20, 20, 23), BackgroundTransparency = 0.03, BorderSizePixel = 0, Active = true,
+	}, root)
+	if fixed then
+		card.Size = UDim2.fromOffset(fixed.w, fixed.h)
+	else
+		card.Size = UDim2.new(1, 0, 0, 0)
+		card.AutomaticSize = Enum.AutomaticSize.Y
+	end
+	make("UICorner", { CornerRadius = UDim.new(0, R) }, card)
+	make("UIStroke", { Color = Color3.new(1, 1, 1), Transparency = 0.9, Thickness = T }, card) -- the faint track the line runs along
+
+	local inner = make("Frame", { Name = "Inner", BackgroundTransparency = 1, BorderSizePixel = 0 }, card)
+	if fixed then
+		inner.Size = UDim2.fromOffset(fixed.w, fixed.h)
+	else
+		inner.Size = UDim2.new(1, 0, 0, 0)
+		inner.AutomaticSize = Enum.AutomaticSize.Y
+	end
+	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 18) }, inner)
+	local row = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, inner)
+	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, row)
+
+	local icon = make("TextLabel", {
+		Size = UDim2.fromOffset(30, 30), BackgroundColor3 = st.color, BackgroundTransparency = 0.82, BorderSizePixel = 0,
+		TextColor3 = st.color, Font = Enum.Font.GothamBold, TextSize = 16, Text = st.glyph, LayoutOrder = 1,
+	}, row)
+	make("UICorner", { CornerRadius = UDim.new(1, 0) }, icon)
+
+	local col = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, -42, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2 }, row)
+	make("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, col)
+	make("TextLabel", {
+		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 18), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+		TextColor3 = Color3.fromRGB(246, 246, 248), Font = Enum.Font.GothamBold, TextSize = 14, Text = title or st.title, LayoutOrder = 1,
+	}, col)
+	make("TextLabel", {
+		BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
+		TextColor3 = Color3.fromRGB(176, 176, 185), Font = Enum.Font.GothamMedium, TextSize = 13, Text = text, LayoutOrder = 2,
+	}, col)
+
+	-- the timer line: six clip windows, each showing part of a copy of the card's border
+	local ring = make("Frame", { Name = "Timer", BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(), ZIndex = 5 }, card)
+	local segs = {}
+	for i = 1, 6 do
+		local clip = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, ClipsDescendants = true, Visible = false, ZIndex = 5 }, ring)
+		local line = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 5 }, clip)
+		make("UICorner", { CornerRadius = UDim.new(0, R) }, line)
+		make("UIStroke", { Color = st.color, Thickness = T }, line)
+		segs[i] = { clip = clip, line = line }
+	end
+
+	local n = { root = root, card = card }
+	-- p runs from 0 (nothing drawn) to 1 (the whole border drawn)
+	function n.progress(p)
+		local W, H
+		if fixed then
+			W, H = fixed.w, fixed.h
+		else
+			local a = card.AbsoluteSize
+			W, H = a.X / scale.Scale, a.Y / scale.Scale
+		end
+		if W < 2 * R + 4 or H < 2 * R + 4 then return end
+		local rects = ringRects(W, H, R, p, T + 1)
+		for i = 1, 6 do
+			local seg, rc = segs[i], rects[i]
+			if rc then
+				local l, t = math.floor(rc[1]), math.floor(rc[2])
+				seg.clip.Position = UDim2.fromOffset(l, t)
+				seg.clip.Size = UDim2.fromOffset(math.max(0, rc[3] - l), math.max(0, rc[4] - t))
+				seg.line.Size = UDim2.fromOffset(W, H)
+				seg.line.Position = UDim2.fromOffset(-l, -t)
+				seg.clip.Visible = true
+			else
+				seg.clip.Visible = false
+			end
+		end
+	end
+	local function play(inward, quick)
+		local info = inward and TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+			or TweenInfo.new(quick and 0.16 or 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		local a = TweenService:Create(root, info, { Position = UDim2.new(0.5, 0, 0, inward and 10 or -4), GroupTransparency = inward and 0 or 1 })
+		TweenService:Create(scale, info, { Scale = inward and 1 or 0.97 }):Play()
+		a:Play()
+		return a
+	end
+	function n.show() play(true) end
+	function n.hide(quick) return play(false, quick) end
+	return n
+end
+
+-- Players who also have the optional SentinelClient script get their banners drawn on their own screen, which is smooth at any frame rate.
+-- Everyone else gets the same card built here on the server. It looks the same, but it animates a little less smoothly.
+local noticeEvent = ReplicatedStorage:FindFirstChild("SentinelNotice")
+if not noticeEvent then
+	noticeEvent = Instance.new("RemoteEvent")
+	noticeEvent.Name = "SentinelNotice"
+	noticeEvent.Parent = ReplicatedStorage
+end
+local clientReady, activeBanner = {}, {}
+noticeEvent.OnServerEvent:Connect(function(plr, msg)
+	if msg == "ready" then clientReady[plr] = true end
+end)
+
+local function serverBanner(plr, pg, text, kind, title)
 	if activeBanner[plr] then activeBanner[plr]:Destroy() end
-
+	local okSize, size = pcall(function()
+		return TextService:GetTextSize(text, 13, Enum.Font.GothamMedium, Vector2.new(340 - 14 - 18 - 42, 1000))
+	end)
+	local bodyH = okSize and size.Y or 16 * math.ceil(#text / 36)
 	local gui = Instance.new("ScreenGui")
 	gui.Name, gui.ResetOnSpawn, gui.DisplayOrder, gui.IgnoreGuiInset = "SentinelBanner", false, 200, true
-
-	local card = Instance.new("CanvasGroup")
-	card.AnchorPoint = Vector2.new(0.5, 0)
-	card.Position = UDim2.new(0.5, 0, 0, -110)
-	card.Size = UDim2.new(0.92, 0, 0, 0)
-	card.AutomaticSize = Enum.AutomaticSize.Y
-	card.BackgroundColor3 = Color3.fromRGB(28, 28, 31)
-	card.BackgroundTransparency = 0.04
-	card.BorderSizePixel = 0
-	card.GroupTransparency = 1
-	card.Parent = gui
-	Instance.new("UICorner", card).CornerRadius = UDim.new(0, 16)
-	local limit = Instance.new("UISizeConstraint", card)
-	limit.MaxSize = Vector2.new(400, math.huge)
-	limit.MinSize = Vector2.new(220, 0)
-	local stroke = Instance.new("UIStroke", card)
-	stroke.Color, stroke.Transparency, stroke.Thickness = Color3.new(1, 1, 1), 0.86, 1
-	-- padding lives on an inner frame so the countdown bar can sit on the card's real bottom edge
-	local inner = Instance.new("Frame")
-	inner.BackgroundTransparency = 1
-	inner.Size = UDim2.new(1, 0, 0, 0)
-	inner.AutomaticSize = Enum.AutomaticSize.Y
-	inner.Parent = card
-	local pad = Instance.new("UIPadding", inner)
-	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 14), UDim.new(0, 17)
-	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 14), UDim.new(0, 16)
-
-	local row = Instance.new("Frame")
-	row.BackgroundTransparency = 1
-	row.Size = UDim2.new(1, 0, 0, 0)
-	row.AutomaticSize = Enum.AutomaticSize.Y
-	row.Parent = inner
-	local rowLayout = Instance.new("UIListLayout", row)
-	rowLayout.FillDirection, rowLayout.Padding = Enum.FillDirection.Horizontal, UDim.new(0, 12)
-
-	local icon = Instance.new("TextLabel")
-	icon.Size = UDim2.fromOffset(30, 30)
-	icon.BackgroundColor3 = st.color
-	icon.TextColor3 = Color3.new(1, 1, 1)
-	icon.Font, icon.TextSize, icon.Text = Enum.Font.GothamBold, 17, st.glyph
-	icon.Parent = row
-	Instance.new("UICorner", icon).CornerRadius = UDim.new(1, 0)
-
-	local col = Instance.new("Frame")
-	col.BackgroundTransparency = 1
-	col.Size = UDim2.new(1, -42, 0, 0)
-	col.AutomaticSize = Enum.AutomaticSize.Y
-	col.Parent = row
-	local colLayout = Instance.new("UIListLayout", col)
-	colLayout.Padding = UDim.new(0, 2)
-
-	local head = Instance.new("TextLabel")
-	head.BackgroundTransparency = 1
-	head.Size = UDim2.new(1, 0, 0, 0)
-	head.AutomaticSize = Enum.AutomaticSize.Y
-	head.TextXAlignment, head.TextWrapped = Enum.TextXAlignment.Left, true
-	head.TextColor3 = Color3.fromRGB(245, 245, 247)
-	head.Font, head.TextSize = Enum.Font.GothamBold, 14
-	head.Text = title or st.title
-	head.LayoutOrder = 1
-	head.Parent = col
-
-	local body = Instance.new("TextLabel")
-	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, 0, 0, 0)
-	body.AutomaticSize = Enum.AutomaticSize.Y
-	body.TextXAlignment, body.TextYAlignment, body.TextWrapped = Enum.TextXAlignment.Left, Enum.TextYAlignment.Top, true
-	body.TextColor3 = Color3.fromRGB(190, 190, 197)
-	body.Font, body.TextSize = Enum.Font.GothamMedium, 14
-	body.Text = text
-	body.LayoutOrder = 2
-	body.Parent = col
-
-	local bar = Instance.new("Frame") -- thin countdown line along the bottom
-	bar.AnchorPoint, bar.Position = Vector2.new(0, 1), UDim2.new(0, 0, 1, 0)
-	bar.Size = UDim2.new(1, 0, 0, 3)
-	bar.BackgroundColor3, bar.BackgroundTransparency, bar.BorderSizePixel = st.color, 0.35, 0
-	bar.ZIndex = 5
-	bar.Parent = card
-
 	gui.Parent = pg
 	activeBanner[plr] = gui
-	local SHOW = 6
-	TweenService:Create(card, TweenInfo.new(0.5, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Position = UDim2.new(0.5, 0, 0, 18), GroupTransparency = 0 }):Play()
-	TweenService:Create(bar, TweenInfo.new(SHOW, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 0, 3) }):Play()
-	task.delay(SHOW, function()
-		if not gui.Parent then return end
-		local out = TweenService:Create(card, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Position = UDim2.new(0.5, 0, 0, -110), GroupTransparency = 1 })
-		out:Play()
-		out.Completed:Wait()
+	local n = buildNotice(gui, text, kind, title, { w = 340, h = 28 + math.max(30, 20 + bodyH) })
+	n.show()
+	task.spawn(function()
+		local show = math.max(5, math.min(9, 4.5 + #text / 25))
+		task.wait(0.4) -- let the card finish sliding in before the line starts
+		local start = os.clock()
+		while activeBanner[plr] == gui and gui.Parent do
+			local p = (os.clock() - start) / show
+			if p >= 1 then break end
+			n.progress(p)
+			task.wait(0.05)
+		end
+		if activeBanner[plr] ~= gui or not gui.Parent then return end
+		n.progress(1)
+		n.hide()
+		task.wait(0.4)
 		gui:Destroy()
 		if activeBanner[plr] == gui then activeBanner[plr] = nil end
 	end)
+end
+
+local function banner(plr, text, kind, title)
+	local pg = plr:FindFirstChild("PlayerGui")
+	if not pg then return end
+	text = string.sub(tostring(text), 1, 300)
+	if title ~= nil then title = string.sub(tostring(title), 1, 40) end
+	if clientReady[plr] then
+		noticeEvent:FireClient(plr, text, kind, title)
+	else
+		serverBanner(plr, pg, text, kind, title)
+	end
 end
 
 ------------------------------------------------------------------ chat: monitor, commands, mute
@@ -185,7 +304,6 @@ local function onChat(userId, text)
 end
 
 -- the Report button in SentinelClient sends here. The button can name a player, so staff see who was reported.
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local reportEvent = ReplicatedStorage:FindFirstChild("SentinelReport")
 if not reportEvent then
 	reportEvent = Instance.new("RemoteEvent")
@@ -448,6 +566,7 @@ Players.PlayerAdded:Connect(function(p)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
+	clientReady[p], activeBanner[p] = nil, nil
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
