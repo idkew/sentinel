@@ -80,6 +80,8 @@ const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
 const save = () => {};
+// a report from a game server still running gets a link that joins that exact server (Roblox's start link with gameInstanceId)
+const callOut = c => { const { jobId, placeId, ...rest } = c, up = !!(jobId && R.servers[jobId] && Date.now() - R.servers[jobId].last < 6e4 && !R.servers[jobId].closed); return jobId ? { ...rest, live: up, join: up ? `https://www.roblox.com/games/start?placeId=${placeId}&gameInstanceId=${encodeURIComponent(jobId)}` : '' } : rest; };
 const pruneCalls = () => { const cut = Date.now() - cfg.callRetentionDays * 864e5; D.calls = D.calls.filter(c => c.t > cut); };
 const MUTE_SCRIPT = 6, MUTE_HIDE_SCRIPT = 9; // MUTE_HIDE_SCRIPT: the first script version that can let a muted player keep typing // the first script version that really stops muted players chatting
 function unbanWarn() { // Roblox only lifts a ban from a running game server (or the Open Cloud key), and a banned player cannot join to start one
@@ -121,7 +123,7 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
@@ -598,7 +600,7 @@ function sync(b) {
     } else if (e.type === 'modcall') {
       const tg = e.target && Number.isInteger(e.target.userId) && e.target.userId > 0 && e.target.userId !== uid ? { userId: e.target.userId, name: String(e.target.name || e.target.userId).slice(0, 40) } : null;
       const near = R.chat.filter(c => c.jobId === id), pick = new Set([...near.slice(-15), ...(tg ? near.filter(c => c.userId === tg.userId).slice(-10) : [])]);
-      const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || (tg ? 'Reported ' + tg.name : 'No details given'), server: id.slice(0, 8), status: 'open', by: null, note: '', ...(tg ? { target: tg } : {}),
+      const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || (tg ? 'Reported ' + tg.name : 'No details given'), server: id.slice(0, 8), status: 'open', by: null, note: '', ...(tg ? { target: tg } : {}), ...(id !== 'studio' && Number.isInteger(b.placeId) && b.placeId > 0 ? { jobId: id, placeId: b.placeId } : {}),
         chat: near.filter(c => pick.has(c)).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
       D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
       feed(`Report #${call.id} from ${name}: ${call.text}`);
@@ -1688,7 +1690,7 @@ async function route(req, res, url, p) {
         loa: { mine: D.loa.filter(x => x.uid === uid).slice(0, 20), all: has(u, 'loa.review') ? D.loa.slice(0, 80) : [] },
         webhook: has(u, 'webhooks.manage') ? { set: !!(D.webhook && D.webhook.url), hint: D.webhook && D.webhook.url ? D.webhook.url.slice(-6) : '', events: (D.webhook || DEFAULT_WEBHOOK()).events } : null,
         series: { players: ser('u'), peak: ser('p'), actions: ser('a'), reports: ser('r'), joins: ser('j'), days },
-        openCalls: D.calls.filter(c => c.status !== 'resolved').length, calls: D.calls.slice(0, 40),
+        openCalls: D.calls.filter(c => c.status !== 'resolved').length, calls: D.calls.slice(0, 40).map(callOut),
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
@@ -1774,7 +1776,7 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/call') {
       if (!has(u, 'reports.handle')) return deny(res);
       const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
-      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); }
+      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
       else if (B.op === 'resolve' && c.status !== 'resolved') {
         c.status = 'resolved'; c.by = c.by || u.user; c.note = cleanName(B.note, 200); c.resolved = Date.now();
         cmd({ type: 'message', kind: 'ok', title: 'Report resolved', body: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}`, userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
