@@ -23,12 +23,12 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 19 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 20 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
 local MODCALL_COOLDOWN = 30 -- seconds between ModCalls per player
-local LOGO_IMAGE = 125769810744796 -- the Sentinel logo on in-game banners: upload logo-512.png in Studio (Asset Manager, Images) and put its image id here. 0 = no logo
+local LOGO_IMAGE = 0 -- the Sentinel logo on in-game banners: upload logo-512.png in Studio (Asset Manager, Images) and put its image id here. 0 = no logo
 
 local pending, muted, busy = {}, {}, false
 local chatOff = {} -- muted players whose chat box is taken away (the rest of the muted can type, but nobody sees it)
@@ -539,7 +539,7 @@ local function survivesFilter(text, userId)
 	if ok and typeof(res) == "string" then return not string.find(res, "#", 1, true) end
 	return true -- could not check, so go ahead with it
 end
-local function doBan(userId, reason, seconds, why)
+local function doBan(userId, reason, seconds, why, alts)
 	if not survivesFilter(reason, userId) then
 		for _, text in ipairs({ "You are banned from this experience. Reason: " .. tostring(why or "No reason given") .. ".", "You are banned from this experience." }) do
 			reason = text
@@ -549,6 +549,7 @@ local function doBan(userId, reason, seconds, why)
 	local ok, err = pcall(Players.BanAsync, Players, {
 		UserIds = { userId }, Duration = seconds, DisplayReason = reason,
 		PrivateReason = "Banned from web panel", ApplyToUniverse = true,
+		ExcludeAltAccounts = (alts == false), -- Roblox also bans the accounts it links to this player, unless staff turned that off for this ban
 	})
 	if ok then print("[Sentinel] Roblox ban applied to user " .. tostring(userId)) end
 	if not ok then
@@ -563,7 +564,7 @@ local function handle(c)
 	if c.type == "kick" then
 		if plr then plr:Kick(tostring(c.display or ("[Sentinel] " .. tostring(c.reason)))) end
 	elseif c.type == "ban" then
-		doBan(c.userId, tostring(c.display or c.reason), c.seconds, c.reason)
+		doBan(c.userId, tostring(c.display or c.reason), c.seconds, c.reason, c.alts)
 	elseif c.type == "unban" then
 		local ok, err
 		for attempt = 1, 4 do
