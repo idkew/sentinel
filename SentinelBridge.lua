@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 17 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 18 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -189,6 +189,12 @@ local function buildNotice(gui, text, kind, title, fixed)
 		else
 			local a = card.AbsoluteSize
 			W, H = a.X / scale.Scale, a.Y / scale.Scale
+			-- lock the height the first time: the line's bottom pieces reach past the card's edge, and an auto-sized card would grow to fit them every frame
+			if card.AutomaticSize ~= Enum.AutomaticSize.None and H >= 2 * R + 4 then
+				card.AutomaticSize, root.AutomaticSize = Enum.AutomaticSize.None, Enum.AutomaticSize.None
+				card.Size = UDim2.new(1, 0, 0, H)
+				root.Size = UDim2.new(0.92, 0, 0, H + 2 * M)
+			end
 		end
 		if W < 2 * R + 4 or H < 2 * R + 4 then return end
 		local rects = ringRects(W, H, R, p, T + 1)
