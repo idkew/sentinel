@@ -331,6 +331,7 @@ async function runOC() {
       const uni = o.universe || o.uni || await ocUniverse(); let x = await ocPatch(uni, id, key, true);
       if (x.r.status === 400) x = await ocPatch(uni, id, key, false);
       ok = x.r.ok; msg = ok ? 'Lifted' : `Roblox said ${x.r.status}${x.r.status === 401 || x.r.status === 403 ? ' (check the key, its permission, and that it covers this experience)' : x.r.status === 404 ? ' (that player has no Roblox ban here, or the Universe ID is wrong)' : ''}: ${x.text.replace(/\s+/g, ' ').slice(0, 140)}`;
+      if (x.r.status === 429) msg = 'Roblox is limiting changes to this player because they were banned or unbanned moments ago. A running game server still lifts the ban; otherwise lift it again in a few minutes.';
       if (x.r.status === 404 && /not.?found/i.test(x.text)) { ok = true; msg = 'No ban found on Roblox, so nothing to lift'; }
     } catch (e) { msg = String(e.message || e).slice(0, 200); }
     o.last = { t: Date.now(), userId: id, ok, msg }; if (!ok) audit('Sentinel', `Could not lift the Roblox ban on ${id}: ${msg}`);
