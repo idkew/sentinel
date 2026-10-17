@@ -53,7 +53,7 @@ const PERMS = [
   ['mod.warn', 'Warn players', 'Moderation'], ['mod.kick', 'Kick players', 'Moderation'], ['mod.mute', 'Mute and unmute players', 'Moderation'],
   ['mod.ban', 'Suspend players (timed bans)', 'Moderation', 1], ['mod.permban', 'Ban players permanently', 'Moderation', 1], ['mod.unban', 'Unban players', 'Moderation', 1],
   ['logbook.note', 'Add private notes to players', 'Moderation'], ['logbook.revert', 'Revert logbook entries', 'Moderation', 1],
-  ['reports.handle', 'Claim and resolve reports', 'Reports'], ['appeals.review', 'Review ban appeals', 'Reports'], ['chat.view', 'Read live chat', 'Reports'],
+  ['reports.handle', 'Claim and resolve reports', 'Reports'], ['appeals.review', 'Review ban appeals', 'Reports'], ['chat.view', 'Read live chat', 'Reports'], ['chatlogs.view', 'Read and search chat logs', 'Reports', 1],
   ['announce', 'Announce to every server', 'Game'], ['sessions.host', 'Host sessions', 'Activity'], ['shifts.manage', 'Create shifts and see attendance', 'Activity'], ['points.manage', 'Give and remove points', 'Activity'],
   ['loa.review', 'Approve or deny leave requests', 'Team'], ['team.manage', 'Invite, remove and re-rank members below them', 'Team', 1], ['ranks.manage', 'Create and edit ranks below their own', 'Team', 1],
   ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
@@ -64,7 +64,7 @@ const PERMS = [
 const ALLP = PERMS.map(p => p[0]);
 const defaultRanks = () => ({
   admin: { name: 'Administrator', color: '#635bff', pos: 30, perms: ALLP.slice(), quota: 0, limit: 0 },
-  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
+  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
   helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'sessions.host'], quota: 60, limit: 15 },
 });
 const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
@@ -73,9 +73,9 @@ const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhoo
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
-let OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
+let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
 const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad workspace'); CTX.wid = w; };
@@ -104,7 +104,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -112,6 +112,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
+  cbo: { get: () => CBO, set: v => { CBO = v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } }, // chat log boxes still filling, per game server
   chat: { get: () => ({ chat: R.chat, flagCount: R.flagCount, am: R.am }), set: v => { R.chat = v.chat || []; R.flagCount = v.flagCount || {}; R.am = v.am || {}; } },
   user: { get: () => U, set: v => { U = v; } },
   ...Object.fromEntries([...Array(16).keys()].map(i => ['h' + i, { get: () => (D.hist[i] ||= {}), set: v => { D.hist[i] = v || {}; } }])), // per-player playtime history, split in 16 rows so each save stays small
@@ -123,13 +124,13 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live'], '/api/chatlogs': ['cbo'], '/api/chatlogs/box': ['cbo'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -155,7 +156,7 @@ async function commit() {
   return (await r.json()) === true;
 }
 async function sendHooks() { // Discord notifications, only after the change was saved
-  await Promise.all(HOOKS.splice(0).map(h => fetch(h.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(h.body), signal: AbortSignal.timeout(3000) }).catch(() => {})));
+  await Promise.all(HOOKS.splice(0).map(h => fetch(h.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(h.body), signal: AbortSignal.timeout(3000) }).then(r => { if (!r.ok) logEvent('webhook_fail', 'Discord webhook said ' + r.status); }, e => logEvent('webhook_fail', 'Discord webhook could not be reached: ' + String((e && e.message) || e).slice(0, 80)))));
 }
 function migrate() { // bring older workspaces up to date
   if (!D.meta) return;
@@ -174,6 +175,9 @@ function migrate() { // bring older workspaces up to date
   D.forms ||= []; D.formsNew ||= 0; if (D.webhook && D.webhook.events && !('forms' in D.webhook.events)) D.webhook.events.forms = true;
   if (!D.meta.v5) { D.meta.v5 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage')) for (const x of ['forms.manage', 'forms.review']) if (!r.perms.includes(x)) r.perms.push(x); }
   D.strikes ||= [];
+  if (!D.meta.v10) { D.meta.v10 = 1; D.abuse ||= {}; D.notices ||= []; } // abuse counters and notices from the Sentinel team
+  D.abuse ||= {}; D.notices ||= [];
+  if (!D.meta.v9) { D.meta.v9 = 1; const elev = new Set(PERMS.filter(p => p[3]).map(p => p[0])); for (const r of Object.values(D.ranks)) if (r.perms.includes('reports.handle') && r.perms.some(x => elev.has(x)) && !r.perms.includes('chatlogs.view')) r.perms.push('chatlogs.view'); } // chat logs: Moderator and up
   if (!D.meta.v7) { D.meta.v7 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage')) for (const x of ['staff.review', 'servers.manage']) if (!r.perms.includes(x)) r.perms.push(x); }
 }
 
@@ -314,7 +318,7 @@ async function rbxUser(name) { // the real Roblox account behind a username, or 
   return null;
 }
 const unbanCmd = userId => { cmd({ type: 'unban', userId }); if (D.meta && D.meta.oc) OCQ.push({ id: +userId, active: false }); };
-const machineOn = () => !!(D.meta && D.meta.oc && D.meta.oc.key && D.meta.oc.machine); // machine bans: Roblox also bans the accounts it links to this player (Roblox does the matching, Sentinel stores no device data)
+const machineOn = () => !!(D.meta && D.meta.oc && D.meta.oc.key && D.meta.oc.machine && feat('machineBans')); // machine bans: Roblox also bans the accounts it links to this player (Roblox does the matching, Sentinel stores no device data)
 async function ocUniverse() {
   const o = D.meta.oc; if (o.universe) return o.universe;
   const place = D.meta.placeId || D.meta.lastPlace; if (!place) throw new Error('Sentinel does not know your game yet. Enter your Universe ID, or start the game once.');
@@ -346,7 +350,7 @@ async function runOC() {
       if (!op.active && x.r.status === 404 && /not.?found/i.test(x.text)) { ok = true; msg = 'No ban found on Roblox, so nothing to lift'; }
     } catch (e) { msg = String(e.message || e).slice(0, 200); }
     o.last = { t: Date.now(), userId: id, ok, msg, ...(op.active ? { machine: true } : {}) };
-    if (!ok) audit('Sentinel', `Could not ${what} ${id}: ${msg}`);
+    if (!ok) { audit('Sentinel', `Could not ${what} ${id}: ${msg}`); logEvent('oc_fail', `Could not ${what} ${id}: ${msg}`); }
     if (op.active && op.entry) { const e = (D.logs[id] || []).find(x => x.id === op.entry); if (e) { if (ok) delete e.machineErr; else e.machineErr = msg.slice(0, 200); } }
   }
 }
@@ -526,10 +530,37 @@ function propose(kind, u, uid, payload, text, reason) {
 }
 const DEFAULT_REPLIES = ['Thanks for being honest. We have lifted your ban. Please follow the rules from now on.', 'We reviewed what happened and the ban stays. You can appeal again later.', 'Bans for exploiting are not lifted on appeal.', 'Please tell us more about what happened next time you appeal.'];
 const cleanLinks = (arr, max) => (Array.isArray(arr) ? arr : []).map(x => String(x || '').trim()).filter(x => /^https?:\/\/[^\s<>"'`]{3,300}$/i.test(x)).slice(0, max);
+async function erasePlayer(id) { // everything this workspace stores about one player. A running ban is kept, without the name, for community safety. Needs core, logs, play, calls, chat and cbo loaded
+  const names = new Set([D.play[id]?.name, D.bans[id]?.name, D.mutes[id]?.name, ...D.calls.filter(c => c.from.userId === id).map(c => c.from.name), ...R.chat.filter(m => m.userId === id).map(m => m.name), ...(D.logs[id] || []).map(e => e.name)].filter(x => x && String(x).length >= 3));
+  await need(shOf(id)); if (D.hist[id % SH]) delete D.hist[id % SH][id];
+  delete D.logs[id]; delete D.play[id]; delete D.mutes[id]; delete D.signals[id]; delete D.watch[id];
+  if (D.bans[id]) D.bans[id] = { userId: id, name: 'User ' + id, reason: 'Retained for community safety', time: D.bans[id].time, expires: D.bans[id].expires };
+  D.calls = D.calls.filter(c => c.from.userId !== id); D.calls.forEach(c => c.chat = (c.chat || []).filter(m => m.userId !== id)); R.chat = R.chat.filter(m => m.userId !== id);
+  D.appeals = D.appeals.filter(a => a.uid !== id); D.kicks = (D.kicks || []).filter(k => k.userId !== id);
+  await forgetInBoxes(CTX.wid, id); for (const o of Object.values(CBO)) o.msgs = o.msgs.filter(m => m.userId !== id);
+  if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
+  const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
+  D.feed.forEach(f => f.text = scrub(f.text)); D.audit.forEach(a => a.text = scrub(a.text));
+}
+// per-workspace limits the site admin can change (D.meta.caps), so one workspace can't fill the database
+const CAP_DEF = { members: 100, logbook: 50000 };
+const capOf = k => { const v = D.meta && D.meta.caps && D.meta.caps[k]; return Number.isInteger(v) && v > 0 ? v : CAP_DEF[k]; };
+const logCount = () => Object.values(D.logs).reduce((n, l) => n + l.length, 0);
+function trimLogs(max, protect) { // over the logbook limit: oldest points and notes go first, then the oldest finished records. Running bans and mutes are never removed
+  let over = logCount() - max; if (over <= 0) return 0;
+  const keep = new Set([...Object.values(D.bans), ...Object.values(D.mutes)].map(x => x && x.entry).filter(Boolean).concat(protect || [])), all = [];
+  for (const [id, l] of Object.entries(D.logs)) for (const e of l) if (!keep.has(e.id) && !(e.type === 'Note' && e.pin)) all.push([id, e]);
+  const rank = e => (e.type === 'Points' || e.type === 'Note' ? 0 : 1);
+  all.sort((a, b) => rank(a[1]) - rank(b[1]) || a[1].time - b[1].time);
+  const drop = new Set(all.slice(0, over).map(x => x[1].id)); let n = 0;
+  for (const [id, l] of Object.entries(D.logs)) { const k = l.filter(e => !drop.has(e.id)); n += l.length - k.length; if (k.length) D.logs[id] = k; else delete D.logs[id]; }
+  return n;
+}
 function logEntry(userId, name, e) {
   const list = (D.logs[userId] ||= []), x = { id: rnd(6), name, status: 'active', time: Date.now(), ...e };
   list.push(x); if (list.length > 500) list.splice(0, list.length - 500);
   if (MOD_TYPES.includes(x.type)) daily().a++;
+  if (D.meta) { const cap = capOf('logbook'); let n = logCount(); if (n > cap) { const t = trimLogs(cap, x.id); n -= t; feed(`Logbook limit reached: removed ${t} old ${t === 1 ? 'entry' : 'entries'}`, 'Sentinel'); } D.meta.logN = n; }
   return x;
 }
 function notify(ev, title, desc, fields = [], color = 0x635bff) {
@@ -552,7 +583,7 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   const expires = minutes > 0 ? Date.now() + minutes * 60000 : null;
   const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId, ...(extra || {}) }); feed(`${type}: ${name} (${reason})`, by); return e; };
   if (action === 'ban') {
-    const mb = machineOn() && alts !== false, e = log(expires ? 'Suspended' : 'Banned'); if (mb) e.machine = true; D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
+    abuseTick('ban'); const mb = machineOn() && alts !== false, e = log(expires ? 'Suspended' : 'Banned'); if (mb) e.machine = true; D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
     { const sg = D.signals[userId]; if (sg && sg.status === 'open') { sg.status = 'confirmed'; sg.by = by; sg.done = Date.now(); } } // an alt-account hint that ended in a ban
     cmd({ type: 'ban', userId, reason, display: banText(D.bans[userId], true), seconds: minutes > 0 ? minutes * 60 : -1, alts: mb });
     if (mb) OCQ.push({ id: +userId, active: true, seconds: minutes > 0 ? minutes * 60 : 0, display: banText(D.bans[userId], true), private: `${reason} (by ${by})`, alts: true, entry: e.id }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
@@ -574,13 +605,161 @@ function amHit(id, uid, name, why, now) { // apply an automatic rule's action on
   const r = rule(id), k = `c:${id}:${uid}`; if ((R.am[k] || 0) > now - 30000) return false; R.am[k] = now;
   act({ action: r.action, userId: uid, name, reason: 'Automatic: ' + why, minutes: r.action === 'mute' ? r.minutes : 0, by: 'Automation' }); return true;
 }
+// one definition of "a link", "shouting", "the same message" and "spam", shared by the auto-moderation rules and the chat log flags
+const LINK_RE = /(https?:\/\/|www\.|\b[a-z0-9-]{2,}\.(com|net|org|gg|io|co|xyz|ru|tk|ly|me)\b)/i;
+const isLink = t => LINK_RE.test(String(t));
+const isShout = (t, pct) => { const l = String(t).replace(/[^a-z]/gi, ''); return l.length >= 12 && l.replace(/[^A-Z]/g, '').length * 100 / l.length >= pct; };
+const nz = x => String(x).toLowerCase().replace(/\s+/g, ' ').trim();
+const burst = (list, uid, now, seconds) => list.filter(m => m.userId === uid && m.t > now - seconds * 1000 && m.t <= now).length; // messages from one player in the last few seconds
 function autoMod(uid, name, text, now) { // spam, repeats, links and shouting; staff and already-muted players are left alone
   if (!uid || isStaffId(uid) || (D.mutes[uid] && live(D.mutes[uid]))) return;
   amPrune(now);
-  const sp = rule('spam'); if (sp.enabled && R.chat.filter(m => m.userId === uid && m.t > now - sp.seconds * 1000).length >= sp.messages && amHit('spam', uid, name, `spam (${sp.messages} messages in ${sp.seconds} seconds)`, now)) return;
-  const rp = rule('repeat'); if (rp.enabled) { const nz = x => String(x).toLowerCase().replace(/\s+/g, ' ').trim(), mine = R.chat.filter(m => m.userId === uid && m.t > now - 6e4).slice(-rp.times); if (mine.length >= rp.times && mine.every(m => nz(m.text) === nz(text)) && amHit('repeat', uid, name, `repeated the same message ${rp.times} times`, now)) return; }
-  const lk = rule('links'); if (lk.enabled && /(https?:\/\/|www\.|\b[a-z0-9-]{2,}\.(com|net|org|gg|io|co|xyz|ru|tk|ly|me)\b)/i.test(text) && amHit('links', uid, name, 'posted a link', now)) return;
-  const cp = rule('caps'); if (cp.enabled) { const l = String(text).replace(/[^a-z]/gi, ''); if (l.length >= 12 && l.replace(/[^A-Z]/g, '').length * 100 / l.length >= cp.percent && amHit('caps', uid, name, 'shouting in capital letters', now)) return; }
+  const sp = rule('spam'); if (sp.enabled && burst(R.chat, uid, now, sp.seconds) >= sp.messages && amHit('spam', uid, name, `spam (${sp.messages} messages in ${sp.seconds} seconds)`, now)) return;
+  const rp = rule('repeat'); if (rp.enabled) { const mine = R.chat.filter(m => m.userId === uid && m.t > now - 6e4).slice(-rp.times); if (mine.length >= rp.times && mine.every(m => nz(m.text) === nz(text)) && amHit('repeat', uid, name, `repeated the same message ${rp.times} times`, now)) return; }
+  const lk = rule('links'); if (lk.enabled && isLink(text) && amHit('links', uid, name, 'posted a link', now)) return;
+  const cp = rule('caps'); if (cp.enabled && isShout(text, cp.percent) && amHit('caps', uid, name, 'shouting in capital letters', now)) return;
+}
+
+// ---- chat logs: chat grouped into boxes of up to 10 messages from one game server, kept in the chat_boxes table (see supabase.sql)
+const BOX_N = 10, BOX_IDLE = 5 * 60000, CB_MAX_N = +env.CHATLOG_MAX_BOXES || 25000, CB_MAX_BYTES = (+env.CHATLOG_MAX_MB || 40) * 1e6, CB_PAGE = 20, CB_OPEN_MAX = 200;
+const BOX_ID_RE = /^[A-Z0-9]{9}-[A-Z0-9]{8}$/;
+const boxId = () => { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', r = n => Array.from({ length: n }, () => A[crypto.randomInt(36)]).join(''); return r(9) + '-' + r(8); };
+const CHAT_FLAGS = { strong: 'Strong language or slur', mild: 'Mild language', link: 'Link', invite: 'Discord invite', pii: 'Possible personal info', caps: 'Shouting', repeat: 'Same message repeated', spam: 'Rapid-fire spam', long: 'Very long message', garble: 'Strange characters' };
+const chatDays = () => [7, 14, 30].includes(D.settings.chatDays) ? D.settings.chatDays : 14;
+// swearing and slurs. Owners can replace the list in Settings, Automations. Only used to help staff look: nothing is punished from it
+const DEFAULT_CUSS = {
+  mild: ['damn', 'dammit', 'hell', 'crap', 'piss', 'pissed', 'ass', 'arse', 'dick', 'prick', 'wanker', 'bollocks', 'bastard', 'douche', 'jackass', 'dumbass', 'bloody'],
+  strong: ['fuck', 'fck', 'fuk', 'shit', 'cunt', 'bitch', 'asshole', 'motherfuck', 'whore', 'slut', 'twat', 'cock', 'pussy', 'nigger', 'nigga', 'faggot', 'fag', 'retard', 'tranny', 'kike', 'spic', 'chink'],
+};
+const CUSS_OK = new Set(['shitake', 'shiitake', 'cocktail', 'cocktails', 'cockpit', 'cockpits', 'cockroach', 'cockroaches', 'cockatoo', 'cockatiel', 'cockney', 'cockerel', 'cockle', 'cockles', 'spice', 'spices', 'spiced', 'spicy', 'spicey', 'spicier', 'spiciest', 'niggard', 'niggardly', 'retardant', 'retardants', 'pussycat', 'pussywillow', 'chinking', 'chinked', 'scunthorpe', 'fagin']);
+const cussList = () => { const c = D.cussWords; return c && Array.isArray(c.mild) && Array.isArray(c.strong) ? c : DEFAULT_CUSS; };
+const LEET = { 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', 8: 'b', 9: 'g', '@': 'a', $: 's', '!': 'i', '+': 't', '|': 'i', '€': 'e' };
+const once = s => s.replace(/([a-z])\1+/g, '$1'); // "fuuuck" -> "fuck"
+function cussTokens(text) { // lower case, leetspeak undone, spaced-out or dotted letters joined ("f u c k", "f.u.c.k")
+  const s = String(text).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, ''), out = [];
+  let run = [];
+  const flush = () => { if (run.length >= 3) out.push(run.join('')); else out.push(...run); run = []; };
+  for (const w0 of s.split(/\s+/)) {
+    const w = w0.replace(/[!?.,]+$/, '').replace(/[0134578@$!+|€9]/g, c => LEET[c] || c), seg = w.split(/[^a-z*]+/).filter(Boolean); // "hell!" stays "hell", "sh!t" becomes "shit"
+    if (seg.length >= 3 && seg.every(x => x.length === 1)) { flush(); out.push(seg.join('')); continue; }
+    if (seg.length === 1 && seg[0].length === 1) { run.push(seg[0]); continue; }
+    flush(); out.push(...seg);
+  }
+  flush(); return out;
+}
+function cussHit(text, list = cussList()) { // the worst word found, or null
+  let best = null;
+  for (const t of cussTokens(text)) {
+    if (CUSS_OK.has(t) || CUSS_OK.has(once(t))) continue;
+    const vs = new Set([t, t.replace(/v/g, 'u'), t.replace(/ph/g, 'f')]);
+    for (const sev of ['strong', 'mild']) {
+      for (const w0 of list[sev]) {
+        const w = String(w0).toLowerCase().trim(); if (!w) continue;
+        const hit = [...vs].some(v => {
+          if (v.includes('*')) return v.length === w.length && v.replace(/\*/g, '').length >= 2 && new RegExp('^' + v.replace(/\*/g, '[a-z]') + '$').test(w);
+          if (v === w || (v !== once(v) && once(v) === once(w) && once(w).length >= 3)) return true; // exact, or stretched out ("shiiiit")
+          return sev === 'strong' && w.length >= 4 && (v.startsWith(w) || once(v).startsWith(once(w))); // "fucking", "shitty"
+        });
+        if (hit) { if (sev === 'strong') return { sev, word: w }; best ||= { sev, word: w }; }
+      }
+    }
+  }
+  return best;
+}
+const INVITE_RE = /(discord(?:app)?\.(?:gg|com\/invite)|dsc\.gg)\/[\w-]+/i, EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}/i, PHONE_RE = /(?<![\w+])\+?\d(?:[\s().-]?\d){8,13}(?!\w)/;
+const GARBLE_RE = /[^\p{L}\p{N}\p{Extended_Pictographic}\s.,!?'"()\-:;‍️]{8,}/u, ZALGO_RE = /[̀-ͯ҉]{3,}/;
+function chatFlags(msgs) { // why each message is worth a look. Stored with the box; staff decide what to do
+  const cw = cussList(), sp = rule('spam'), cp = rule('caps');
+  return msgs.map((m, i) => {
+    const t = String(m.text || ''), f = [], c = cussHit(t, cw);
+    if (c) f.push(c.sev);
+    if (INVITE_RE.test(t)) f.push('invite'); else if (isLink(t.replace(new RegExp(EMAIL_RE.source, 'gi'), ' '))) f.push('link'); // an email address is personal info, not a link
+    if (EMAIL_RE.test(t) || PHONE_RE.test(t)) f.push('pii');
+    if (isShout(t, cp.percent)) f.push('caps');
+    if (msgs.slice(0, i + 1).filter(x => x.userId === m.userId && nz(x.text) === nz(t)).length >= 3) f.push('repeat');
+    if (burst(msgs, m.userId, m.t, sp.seconds) >= Math.min(sp.messages, BOX_N)) f.push('spam');
+    if (t.length >= 150) f.push('long');
+    if (GARBLE_RE.test(t) || ZALGO_RE.test(t)) f.push('garble');
+    const { flags, ...rest } = m; return f.length ? { ...rest, flags: f } : rest;
+  });
+}
+function boxClose(j, at) {
+  const o = CBO[j]; delete CBO[j]; if (!o || !o.msgs.length) return;
+  const msgs = chatFlags(o.msgs), types = [...new Set(msgs.flatMap(m => m.flags || []))];
+  const row = { id: o.id, wid: CTX.wid, opened_at: new Date(o.opened).toISOString(), closed_at: new Date(at).toISOString(), server: String(j).slice(0, 8), user_ids: [...new Set(msgs.map(m => m.userId).filter(x => x > 0))],
+    names: ' ' + [...new Set(msgs.map(m => String(m.name).toLowerCase()))].join(' ') + ' ', body: msgs.map(m => String(m.text).toLowerCase()).join('\n'), flagged: types.length > 0, flag_types: types, msgs };
+  row.bytes = Buffer.byteLength(JSON.stringify(msgs)); CBQ.push(row);
+}
+function boxAdd(j, m) { // one chat message from game server j
+  let o = CBO[j]; if (o && m.t - o.last >= BOX_IDLE) { boxClose(j, o.last + BOX_IDLE); o = null; }
+  if (!o) { const open = Object.entries(CBO); if (open.length >= CB_OPEN_MAX) { const [oj, oo] = open.sort((a, b) => a[1].last - b[1].last)[0]; boxClose(oj, oo.last); } o = CBO[j] = { id: boxId(), opened: m.t, last: m.t, msgs: [] }; }
+  o.msgs.push(m); o.last = m.t; if (o.msgs.length >= BOX_N) boxClose(j, m.t);
+}
+const boxSweep = now => { for (const [j, o] of Object.entries(CBO)) if (now - o.last >= BOX_IDLE) boxClose(j, o.last + BOX_IDLE); }; // a quiet server still produces boxes
+async function cbFetch(path, o = {}) { const { ms, headers, ...rest } = o; return fetch(`${SB_URL}/rest/v1/${path}`, { ...rest, headers: { ...sbHeaders(), ...(headers || {}) }, signal: AbortSignal.timeout(ms || 4000) }); }
+async function ownBoxes(ids) { // the chat box IDs that exist in this workspace
+  const ok = [...new Set(ids.map(x => String(x).toUpperCase()).filter(x => BOX_ID_RE.test(x)))].slice(0, 5); if (!ok.length) return [];
+  try { const r = await cbFetch(`chat_boxes?select=id&wid=eq.${CTX.wid}&id=in.(${ok.join(',')})`, { ms: 3000 }); if (!r.ok) return []; const have = new Set((await r.json()).map(x => x.id)); return ok.filter(x => have.has(x)); } catch { return []; }
+}
+const boxOut = b => ({ id: b.id, t: Date.parse(b.closed_at), opened: Date.parse(b.opened_at), server: b.server, users: b.user_ids || [], flagged: !!b.flagged, types: b.flag_types || [], msgs: b.msgs || [] });
+const cbClean = (s, n) => String(s || '').replace(/[%*,()\\:."'{}\[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n); // nothing that means something to the database query
+async function chatLogs(url, p, res) { // GET /api/chatlogs (search, newest first) and /api/chatlogs/box?id=
+  const sp = url.searchParams, days = chatDays(), page = clampInt(sp.get('page'), 0, 500) || 0, terms = [];
+  boxSweep(Date.now()); await sendBoxes(); // close quiet servers' boxes now, so they show up
+  const f = [`wid=eq.${CTX.wid}`, `closed_at=gte.${new Date(Date.now() - days * 864e5).toISOString()}`];
+  if (p === '/api/chatlogs/box') { const id = String(sp.get('id') || '').toUpperCase().trim(); if (!BOX_ID_RE.test(id)) return send(res, 400, { error: 'That is not a chat box ID.' }); f.push(`id=eq.${id}`); }
+  else {
+    const q = String(sp.get('q') || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 18); if (q) { f.push(BOX_ID_RE.test(q) ? `id=eq.${q}` : `id=ilike.*${q}*`); terms.push(q); }
+    const us = cbClean(sp.get('user'), 40).toLowerCase(); if (us) { if (/^\d{1,19}$/.test(us)) f.push(`user_ids=cs.%7B${us}%7D`); else { f.push(`names=ilike.*${encodeURIComponent(us)}*`); terms.push(us); } }
+    const kws = cbClean(sp.get('kw'), 60).toLowerCase().split(' ').filter(Boolean).slice(0, 3);
+    if (kws.length) { f.push(kws.length === 1 ? `body=ilike.*${encodeURIComponent(kws[0])}*` : `and=(${kws.map(k => `body.ilike.*${encodeURIComponent(k)}*`).join(',')})`); terms.push(...kws); }
+    const day = k => { const v = String(sp.get(k) || ''); return /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(Date.parse(v + 'T00:00:00Z')) ? Date.parse(v + 'T00:00:00Z') : null; };
+    const from = day('from'), to = day('to'); if (from !== null) f.push(`closed_at=gte.${new Date(from).toISOString()}`); if (to !== null) f.push(`closed_at=lt.${new Date(to + 864e5).toISOString()}`);
+    const sv = String(sp.get('server') || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 8); if (sv) f.push(`server=ilike.${sv}*`);
+    const ty = String(sp.get('type') || ''); if (ty && CHAT_FLAGS[ty]) f.push(`flag_types=cs.%7B${ty}%7D`); else if (sp.get('flagged') === '1') f.push('flagged=is.true');
+  }
+  let r = null, txt = '';
+  try { r = await cbFetch(`chat_boxes?select=id,opened_at,closed_at,server,user_ids,flagged,flag_types,msgs&${f.join('&')}&order=closed_at.desc&limit=${CB_PAGE}&offset=${page * CB_PAGE}`, { headers: { Prefer: 'count=exact' }, ms: 6000 }); if (!r.ok) txt = await r.text(); } catch (e) { txt = String(e.message || e); }
+  if (!r || !r.ok) { if ((r && r.status === 404) || /chat_boxes|42P01|PGRST20/.test(txt)) return send(res, 200, { setup: false, boxes: [], total: 0, page: 0, pages: 1, terms, days }); console.warn('[Sentinel] chat log search failed: ' + txt.slice(0, 200)); return send(res, 502, { error: 'Could not load chat logs right now. Try again in a moment.' }); }
+  const boxes = (await r.json()).map(boxOut), total = +((r.headers.get('content-range') || '').split('/')[1]) || boxes.length;
+  if (p === '/api/chatlogs/box') return boxes.length ? send(res, 200, { box: boxes[0], days }) : send(res, 404, { error: `No chat box with that ID in this workspace. Boxes are kept for ${days} days.` });
+  return send(res, 200, { setup: true, boxes, total, page, pages: Math.max(1, Math.ceil(total / CB_PAGE)), terms, days });
+}
+async function boxesOf(id) { // a player's own messages in this workspace's chat logs (for a data export)
+  try { const r = await cbFetch(`chat_boxes?select=id,closed_at,msgs&wid=eq.${CTX.wid}&user_ids=cs.%7B${id}%7D&order=closed_at.desc&limit=2000`, { ms: 6000 }); if (!r.ok) return []; return (await r.json()).flatMap(b => (b.msgs || []).filter(m => m.userId === id).map(m => ({ box: b.id, t: m.t, text: m.text }))); } catch { return []; }
+}
+async function forgetInBoxes(wid, id) { // removes one player's messages from a workspace's chat logs
+  try { const r = await cbFetch('rpc/chat_box_forget', { method: 'POST', body: JSON.stringify({ w: wid, uid: id }), ms: 6000 }); return r.ok ? +(await r.json()) || 0 : 0; } catch { return 0; }
+}
+// ---- feature flags (row g:flags): a feature can be on for chosen workspaces first, then for everyone
+const FLAG_DEF = { machineBans: { all: true, wids: [] }, chatLogs: { all: false, wids: [] } }; // machine bans shipped in 5.4, so it stays on for everyone
+const FLAG_NAMES = { machineBans: 'Machine bans', chatLogs: 'Chat logs' };
+let FC = { t: 0, v: null, ver: 0 };
+async function flagsLoad(force) { // cached for 30 seconds; a missing or unreadable row means the defaults
+  if (!force && FC.v && Date.now() - FC.t < 30000) return FC.v;
+  try { const r = (await sbGet('select=value,version&key=eq.g:flags'))[0]; const v = r && r.value && typeof r.value === 'object' ? r.value : {}; FC = { t: Date.now(), ver: r ? r.version : 0, v: Object.fromEntries(Object.keys(FLAG_DEF).map(k => [k, { all: v[k] ? !!v[k].all : FLAG_DEF[k].all, wids: v[k] && Array.isArray(v[k].wids) ? v[k].wids.filter(w => /^[a-f0-9]{12}$/.test(w)) : [] }])) }; }
+  catch { FC = { t: Date.now(), ver: FC.ver, v: FC.v || FLAG_DEF }; }
+  return FC.v;
+}
+const feat = (name, wid = CTX.wid) => { const f = (FC.v || FLAG_DEF)[name] || FLAG_DEF[name]; return !!(f && (f.all || (wid && f.wids.includes(wid)))); };
+// ---- problems for the admin console (table panel_events). Never allowed to break the request that hit them
+let EVQ = [];
+const logEvent = (kind, msg, wid = CTX.wid) => { if (EVQ.length < 20) EVQ.push({ wid: wid || '', kind, msg: String(msg || '').replace(/\s+/g, ' ').slice(0, 300) }); };
+async function sendEvents() { if (!EVQ.length) return; const rows = EVQ.splice(0); try { const r = await cbFetch('panel_events', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(rows), ms: 2500 }); if (!r.ok) throw new Error('HTTP ' + r.status); } catch (e) { console.warn('[Sentinel] panel_events insert failed: ' + String((e && e.message) || e).slice(0, 120)); } }
+// ---- abuse signals: bans and public form submissions per hour (last 48 hours)
+function abuseTick(k) { const a = (D.abuse ||= {}), h = String(Math.floor(Date.now() / 36e5)), m = (a[k] ||= {}); m[h] = (m[h] || 0) + 1; for (const x of Object.keys(m)) if (+x < +h - 48) delete m[x]; }
+async function sendBoxes() { // after the save: closed boxes go to the chat_boxes table. A missing table (SQL not run yet) must never break game sync
+  if (!CBQ.length) return; const rows = CBQ.splice(0);
+  try {
+    const ins = async list => { const r = await cbFetch('chat_boxes?on_conflict=id&select=id', { method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' }, body: JSON.stringify(list), ms: 3000 }); if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 160)); return new Set((await r.json()).map(x => x.id)); };
+    const got = await ins(rows), miss = rows.filter(x => !got.has(x.id));
+    if (miss.length) { // an id already taken: the same box saved before (skip), or another box by pure chance (new id, once)
+      const r = await cbFetch(`chat_boxes?id=in.(${miss.map(x => x.id).join(',')})&select=id,wid,opened_at`, { ms: 3000 }), have = r.ok ? await r.json() : [];
+      const again = miss.filter(x => !have.some(h => h.id === x.id && h.wid === x.wid && Date.parse(h.opened_at) === Date.parse(x.opened_at))).map(x => ({ ...x, id: boxId() }));
+      if (again.length) await ins(again);
+    }
+    await cbFetch('rpc/chat_box_trim', { method: 'POST', body: JSON.stringify({ w: rows[0].wid, max_n: CB_MAX_N, max_bytes: CB_MAX_BYTES }), ms: 3000 }).catch(() => {});
+  } catch (e) { console.warn('[Sentinel] chat_boxes insert failed: ' + String((e && e.message) || e).slice(0, 200)); }
 }
 function autoJoin(uid, name, now) { // someone joining again and again in a short time
   const rj = rule('rapidjoin'); if (!rj.enabled || !uid || isStaffId(uid)) return;
@@ -594,7 +773,7 @@ function sync(b) {
   R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160), closed: (prev && prev.closed) || 0, closeMsg: (prev && prev.closeMsg) || '' };
   for (const [j, sv] of Object.entries(R.servers)) if (now - sv.last > 6e4) delete R.servers[j];
   for (const p of players) tick({ ...p, sv: id.slice(0, 8) }, dt, now);
-  for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 100)) {
+  for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 300)) {
     if (!e) continue;
     const text = String(e.text || '').slice(0, 200), name = String(e.name || '?').slice(0, 40), uid = Number.isInteger(e.userId) ? e.userId : 0;
     if (e.type === 'join') autoJoin(uid, name, now);
@@ -611,6 +790,7 @@ function sync(b) {
     else if (e.type === 'chat') { // rolling buffer: latest 300 messages, at most 24 hours
       const flagged = D.flagWords.some(w => text.toLowerCase().includes(w));
       R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged }); if (R.chat.length > 300) R.chat.shift(); autoMod(uid, name, text, now);
+      if (text && feat('chatLogs')) boxAdd(id, { t: now, userId: uid, name, text }); // the same message also goes into this server's chat log box
       if (flagged) {
         feed(`Flagged chat from ${name}: ${text}`);
         const r = rule('flaggedmute');
@@ -629,6 +809,7 @@ function sync(b) {
       cmd({ type: 'message', kind: 'ok', title: 'Report sent', body: `Report #${call.id} sent. A moderator will respond soon.`, userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
     }
   }
+  boxSweep(now);
   const total = allPlayers().length;
   if (total > D.stats.peak) D.stats.peak = total;
   if (total > ((D.daily[dayKey(now)] || {}).p || 0)) daily().p = total;
@@ -717,10 +898,170 @@ function importBackup(data, uid, name) { // returns an error string, or '' when 
 }
 async function cronRun() {
   const t0 = Date.now(), today = bkDay(), list = await sbGet('select=key,meta:value->meta&key=like.w*:core'); let snap = 0, purged = 0, pruned = 0, partial = false;
-  const live = []; for (const r of list) { const wid = r.key.slice(1, 13); if (r.meta && r.meta.deleted) { if (Date.now() - r.meta.deleted > TRASH_MS) { await sbDel(`key=like.w${wid}:*`); await sbDel(`key=like.bk:*:${wid}:*`); purged++; } } else if (r.meta) live.push(wid); }
+  const live = []; for (const r of list) { const wid = r.key.slice(1, 13); if (r.meta && r.meta.deleted) { if (Date.now() - r.meta.deleted > TRASH_MS) { await sbDel(`key=like.w${wid}:*`); await sbDel(`key=like.bk:*:${wid}:*`); await cbFetch(`chat_boxes?wid=eq.${wid}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => {}); purged++; } } else if (r.meta) live.push(wid); }
   for (let i = 0; i < live.length; i += 4) { if (Date.now() - t0 > 9000) { partial = true; break; } snap += (await Promise.all(live.slice(i, i + 4).map(w => snapshot(w, today).catch(() => false)))).filter(Boolean).length; }
   for (const r of await sbGet('select=key&key=like.bk:*:core')) { const [, label, wid] = r.key.split(':'), age = Date.now() - labelTime(label); if ((/^\d{8}$/.test(label) && age > BK_KEEP_DAYS * 864e5 + 36e5) || (/^pre\d+$/.test(label) && age > 14 * 864e5)) { await sbDel(`key=like.bk:${label}:${wid}:*`); pruned++; } }
-  return { ok: true, snapshotted: snap, purged, pruned, partial };
+  const cc = await chatCron(t0);
+  return { ok: true, snapshotted: snap, purged, pruned, partial: partial || cc.partial, chatClosed: cc.closed, chatRemoved: cc.removed };
+}
+async function chatCron(t0) { // nightly: close the boxes of servers that went quiet, then delete boxes older than each workspace keeps them
+  const out = { closed: 0, removed: 0, partial: false };
+  try {
+    for (const row of await sbGet('select=key,value,version&key=like.w*:cbo')) {
+      if (!Object.values(row.value || {}).some(o => o && Date.now() - o.last >= BOX_IDLE)) continue;
+      if (Date.now() - t0 > 11000) { out.partial = true; break; }
+      const wid = row.key.slice(1, 13), core = (await sbGet(`select=rules:value->rules,cuss:value->cussWords&key=eq.w${wid}:core`))[0] || {};
+      CTX.wid = wid; D.rules = core.rules || {}; D.cussWords = core.cuss || null; CBO = row.value; CBQ = []; boxSweep(Date.now());
+      const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: row.key, expect: row.version, value: CBO }] }) });
+      if (r.ok && (await r.json()) === true) { out.closed += CBQ.length; await sendBoxes(); } else CBQ = [];
+    }
+    const cfgs = await sbGet('select=key,days:value->settings->chatDays,meta:value->meta&key=like.w*:core'), by = { 7: [], 14: [], 30: [] };
+    for (const c of cfgs) if (c.meta) by[[7, 14, 30].includes(c.days) ? c.days : 14].push(c.key.slice(1, 13));
+    for (const [d, ws] of Object.entries(by)) for (let i = 0; i < ws.length; i += 80) {
+      if (Date.now() - t0 > 13000) { out.partial = true; break; }
+      const r = await cbFetch(`chat_boxes?wid=in.(${ws.slice(i, i + 80).join(',')})&closed_at=lt.${new Date(Date.now() - d * 864e5).toISOString()}&select=id`, { method: 'DELETE', headers: { Prefer: 'return=representation' }, ms: 5000 });
+      if (r.ok) out.removed += (await r.json()).length;
+    }
+  } catch (e) { console.warn('[Sentinel] chat log clean-up: ' + String((e && e.message) || e).slice(0, 200)); }
+  try { await cbFetch(`panel_events?at=lt.${new Date(Date.now() - 14 * 864e5).toISOString()}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' }, ms: 4000 }); } catch {} // the admin error log keeps 14 days
+  CBO = {}; CBQ = []; D.rules = {}; D.cussWords = null; CTX.wid = null;
+  return out;
+}
+// ---- admin console: abuse, growth, errors, versions, lookup, announcements, flags, storage, data requests
+const ABUSE = { ban: 25, pub: 30 }, WS_MAX_BYTES = 25e6;
+const coreRows = async () => (await sbGet('select=key,meta:value->meta,daily:value->daily,abuse:value->abuse,settings:value->settings,hook:value->webhook->url,discord:value->discord,forms:value->forms,notices:value->notices,members:value->members&key=like.w*:core')).filter(r => r.meta).map(r => ({ ...r, wid: r.key.slice(1, 13) }));
+const weekOf = t => { const d = new Date(t), day = (d.getUTCDay() + 6) % 7; return dayKey(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - day * 864e5); };
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+async function personScan(rid, withData, from) { // every workspace that stores something about one Roblox player
+  const t0 = Date.now(), ws = (await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta && !r.meta.deleted).map(r => ({ wid: r.key.slice(1, 13), name: r.meta.name })).sort((a, b) => (a.wid < b.wid ? -1 : 1)), found = [];
+  for (let i = from; i < ws.length; i++) {
+    if (Date.now() - t0 > 11000) return { found, next: i };
+    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
+    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null;
+    let boxes = []; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,msgs&wid=eq.${w}&user_ids=cs.%7B${rid}%7D&limit=2000`, { ms: 4000 }); if (r.ok) boxes = await r.json(); } catch {}
+    const ban = (core.bans || {})[rid] || null, mute = (core.mutes || {})[rid] || null, signal = (core.signals || {})[rid] || null, appeals = (core.appeals || []).filter(a => a.uid === rid), inReports = (v.calls || []).filter(c => (c.chat || []).some(m => m.userId === rid)).length;
+    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports;
+    if (!rows) continue;
+    const x = { wid: w, name: ws[i].name, rows, logbook: logs.length, chatLogs: boxes.length, reports: calls.length + inReports, appeals: appeals.length, ban: !!ban, mute: !!mute };
+    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
+    found.push(x);
+  }
+  return { found, next: null };
+}
+async function adminMore(A, res, alog) { // the newer console tools. Returns true when it handled the request
+  const op = A.op, now = Date.now(), S = (c, o) => (send(res, c, o), true);
+  if (op === 'abuse') {
+    const items = [], seen = G.abuseSeen || {};
+    for (const r of await coreRows()) {
+      if (r.meta.deleted) continue;
+      const add = (key, kind, n, at, text) => { if (!seen[key]) items.push({ key, wid: r.wid, name: r.meta.name, kind, n, at, text, suspended: !!r.meta.suspended }); };
+      for (const k of ['ban', 'pub']) for (const [h, n] of Object.entries((r.abuse || {})[k] || {})) if (n >= ABUSE[k] && now - h * 36e5 < 48 * 36e5) add(`${r.wid}:${k}:${h}`, k, n, h * 36e5, k === 'ban' ? `${n} bans in one hour` : `${n} public reports or appeals in one hour`);
+      const d = r.daily || {}, today = dayKey(now), t = (d[today] || {}).r || 0, prev = Object.keys(d).filter(k => k < today).sort().slice(-14).map(k => d[k].r || 0), avg = prev.length ? prev.reduce((a, b) => a + b, 0) / prev.length : 0;
+      if (t >= 20 && t >= 5 * Math.max(avg, 1)) add(`${r.wid}:rep:${today}`, 'reports', t, now, `${t} reports today, against about ${avg.toFixed(1)} a day before`);
+    }
+    return S(200, { items: items.sort((a, b) => b.at - a.at), limits: ABUSE });
+  }
+  if (op === 'abuseDismiss') {
+    const k = String(A.key || ''); if (!/^[a-f0-9]{12}:(ban|pub|rep):[\d-]+$/.test(k)) return S(400, { error: 'bad key' });
+    G.abuseSeen ||= {}; G.abuseSeen[k] = now; for (const [x, t] of Object.entries(G.abuseSeen)) if (now - t > 7 * 864e5) delete G.abuseSeen[x];
+    alog('Dismissed an abuse flag for workspace ' + k.slice(0, 12)); return S(200, { ok: true });
+  }
+  if (op === 'growth') {
+    const rows = (await coreRows()).filter(r => !r.meta.deleted), weeks = {}, days = {};
+    for (let i = 11; i >= 0; i--) weeks[weekOf(now - i * 7 * 864e5)] = 0;
+    for (let i = 29; i >= 0; i--) days[dayKey(now - i * 864e5)] = { active: 0, actions: 0, reports: 0, joins: 0 };
+    const fu = { connected: 0, openCloud: 0, machineBans: 0, chatLogs: 0, group: 0, discord: 0, webhook: 0, forms: 0, appeals: 0, signals: 0 };
+    for (const r of rows) {
+      const wk = weekOf(r.meta.created || 0); if (wk in weeks) weeks[wk]++;
+      for (const [k, v] of Object.entries(r.daily || {})) if (days[k]) { if ((v.u || 0) > 0 || (v.j || 0) > 0) days[k].active++; days[k].actions += v.a || 0; days[k].reports += v.r || 0; days[k].joins += v.j || 0; }
+      const m = r.meta, s = r.settings || {};
+      if (m.connectedAt) fu.connected++; if (m.oc && m.oc.key) fu.openCloud++; if (m.oc && m.oc.machine && feat('machineBans', r.wid)) fu.machineBans++; if (feat('chatLogs', r.wid)) fu.chatLogs++;
+      if (m.group && m.group.id) fu.group++; if (r.discord) fu.discord++; if (r.hook) fu.webhook++; if (Array.isArray(r.forms) && r.forms.length) fu.forms++; if (s.appeals !== false) fu.appeals++; if (s.signals !== false) fu.signals++;
+    }
+    return S(200, { total: rows.length, weeks: Object.entries(weeks).map(([k, n]) => ({ k, n })), days: Object.entries(days).map(([k, v]) => ({ k, ...v })), features: fu });
+  }
+  if (op === 'events') {
+    let r = null; try { r = await cbFetch(`panel_events?select=at,wid,kind,msg&at=gte.${new Date(now - 7 * 864e5).toISOString()}&order=at.desc&limit=2000`, { ms: 6000 }); } catch {}
+    if (!r || !r.ok) return S(200, { setup: false, groups: [] });
+    const names = Object.fromEntries((await coreRows()).map(x => [x.wid, x.meta.name])), g = {};
+    for (const e of await r.json()) {
+      const w = e.wid || '', x = (g[w] ||= { wid: w, name: w ? names[w] || '(deleted workspace)' : 'No workspace', total: 0, kinds: {} }); x.total++;
+      const k = (x.kinds[e.kind] ||= { n: 0, last: 0, msg: '' }); k.n++; const t = Date.parse(e.at); if (t > k.last) { k.last = t; k.msg = e.msg; }
+    }
+    return S(200, { setup: true, groups: Object.values(g).sort((a, b) => b.total - a.total) });
+  }
+  if (op === 'versions') {
+    const ls = latestScript(), lc = latestClient();
+    const items = (await coreRows()).filter(r => !r.meta.deleted).map(r => { const sv = r.meta.scriptV || (r.meta.connectedAt ? 1 : 0), cv = r.meta.clientV || 0, rem = (r.notices || []).filter(n => n && n.kind === 'update').map(n => n.t).sort().pop() || null; return { wid: r.wid, name: r.meta.name, owner: r.meta.owner, scriptV: sv, clientV: cv, oldScript: sv > 0 && sv < ls, oldClient: cv > 0 && cv < lc, connected: !!r.meta.connectedAt, reminded: rem }; });
+    return S(200, { latestScript: ls, latestClient: lc, items });
+  }
+  if (op === 'personLookup') {
+    const t = String(A.uid || '').trim(); if (!/^[gr]_\d{1,32}$/.test(t)) return S(400, { error: 'An account id looks like r_123456 or g_123456.' });
+    setUid(t); await need('user'); if (!U) return S(404, { error: 'No such account' });
+    const ids = (U.workspaces || []).filter(w => /^[a-f0-9]{12}$/.test(w)); let ws = [];
+    if (ids.length) {
+      const rows = await sbGet(`select=key,meta:value->meta,members:value->members,ranks:value->ranks,audit:value->audit&key=in.(${ids.map(w => `w${w}:core`).join(',')})`);
+      ws = rows.filter(r => r.meta).map(r => { const mem = (r.members || {})[t] || null, nm = mem ? mem.name : U.name; return { wid: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner === t, deleted: !!r.meta.deleted, rank: mem ? ((r.ranks || {})[mem.rank] || {}).name || mem.rank : null, members: Object.keys(r.members || {}).length, recent: (r.audit || []).filter(a => a && a.user === nm).slice(0, 20) }; });
+    }
+    alog(`Looked up account ${t}`);
+    return S(200, { id: t, name: U.name, provider: U.provider, roblox: t[0] === 'r' ? { id: t.slice(2), name: U.name } : U.roblox || null, created: U.created || null, workspaces: ws });
+  }
+  if (op === 'announcements') return S(200, { items: (G.announcements || []).filter(a => a.exp > now) });
+  if (op === 'annAdd') {
+    const text = String(A.text || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240); if (!text) return S(400, { error: 'Write the message first.' });
+    const hours = clampInt(A.hours, 1, 720) || 24, kind = A.kind === 'warn' ? 'warn' : 'info'; let target = A.target;
+    if (target === 'ws') { const w = String(A.wid || '').trim(); if (!/^[a-f0-9]{12}$/.test(w)) return S(400, { error: 'Enter the workspace id (12 characters).' }); target = 'ws:' + w; } else if (target !== 'oldScript') target = 'all';
+    G.announcements = [...(G.announcements || []).filter(a => a.exp > now), { id: rnd(6), text, kind, target, exp: now + hours * 36e5, t: now }].slice(-20);
+    alog(`Posted an announcement for ${target === 'all' ? 'every workspace' : target === 'oldScript' ? 'owners on an old script' : 'workspace ' + target.slice(3)} (${plural(hours, 'hour')})`); return S(200, { ok: true });
+  }
+  if (op === 'annDel') { G.announcements = (G.announcements || []).filter(a => a.id !== A.id); alog('Removed an announcement'); return S(200, { ok: true }); }
+  if (op === 'flags') { const v = await flagsLoad(true); return S(200, { flags: Object.entries(v).map(([k, f]) => ({ name: k, label: FLAG_NAMES[k], all: f.all, wids: f.wids })) }); }
+  if (op === 'flagSet') {
+    if (!FLAG_DEF[A.name]) return S(400, { error: 'Unknown feature' });
+    const cur = await flagsLoad(true), wids = [...new Set((Array.isArray(A.wids) ? A.wids : []).map(x => String(x).trim()).filter(w => /^[a-f0-9]{12}$/.test(w)))].slice(0, 500), val = { ...cur, [A.name]: { all: !!A.all, wids } };
+    const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: 'g:flags', expect: FC.ver, value: val }] }) });
+    if (!r.ok || (await r.json()) !== true) return S(409, { error: 'The flags changed at the same moment. Reload and try again.' });
+    FC = { t: Date.now(), v: val, ver: FC.ver + 1 };
+    alog(`Feature ${FLAG_NAMES[A.name]}: ${A.all ? 'on for everyone' : wids.length ? 'on for ' + plural(wids.length, 'chosen workspace') : 'off'}`); return S(200, { ok: true });
+  }
+  if (op === 'storage') {
+    const rows = (await coreRows()).filter(r => !r.meta.deleted); let pu = null, cu = null;
+    try { const r = await cbFetch('rpc/panel_usage', { method: 'POST', body: '{}', ms: 6000 }); if (r.ok) pu = Object.fromEntries((await r.json()).map(x => [x.wid, x])); } catch {}
+    try { const r = await cbFetch('rpc/chat_box_usage_all', { method: 'POST', body: '{}', ms: 6000 }); if (r.ok) cu = Object.fromEntries((await r.json()).map(x => [x.wid, x])); } catch {}
+    const items = rows.map(r => {
+      const m = r.meta, caps = m.caps || {}, p = pu && pu[r.wid], c = cu && cu[r.wid];
+      const mem = { n: Object.keys(r.members || {}).length, max: caps.members || CAP_DEF.members }, lb = { n: m.logN || 0, max: caps.logbook || CAP_DEF.logbook }, st = pu ? { n: p ? +p.n : 0, bytes: p ? +p.bytes : 0, max: WS_MAX_BYTES } : null, ch = cu ? { n: c ? +c.n : 0, bytes: c ? +c.bytes : 0, maxN: CB_MAX_N, maxBytes: CB_MAX_BYTES } : null, warn = [];
+      if (mem.n >= mem.max * .8) warn.push('members'); if (lb.n >= lb.max * .8) warn.push('logbook'); if (st && st.bytes >= st.max * .8) warn.push('storage'); if (ch && (ch.n >= ch.maxN * .8 || ch.bytes >= ch.maxBytes * .8)) warn.push('chat logs');
+      return { wid: r.wid, name: m.name, members: mem, logbook: lb, storage: st, chat: ch, warn };
+    }).sort((a, b) => b.warn.length - a.warn.length || ((b.storage || {}).bytes || 0) - ((a.storage || {}).bytes || 0));
+    return S(200, { setup: !!pu, chatSetup: !!cu, items });
+  }
+  if (op === 'dataReqs') return S(200, { items: G.dataReqs || [] });
+  if (['personExport', 'personDeleteCheck', 'personDelete'].includes(op)) {
+    const rid = +String(A.rid || '').trim(), who = String(A.who || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 120);
+    if (!Number.isInteger(rid) || rid < 1) return S(400, { error: 'Enter the Roblox user id (numbers only).' });
+    if (!who) return S(400, { error: 'Write who asked for this, for example their email or a ticket number.' });
+    const logReq = (kind, result) => { G.dataReqs = [{ t: Date.now(), kind, target: rid, who, result }, ...(G.dataReqs || [])].slice(0, 300); alog(`Data request (${kind}) for Roblox user ${rid}, asked by ${who}: ${result}`); };
+    if (op === 'personDelete') {
+      const tk = unpack(String(A.token || ''));
+      if (String(A.confirm || '').trim() !== String(rid)) return S(400, { error: 'Type the Roblox user id exactly to confirm.' });
+      if (!tk || tk.pd !== rid || !Array.isArray(tk.w)) return S(400, { error: 'Run the check first. A check is valid for 10 minutes.' });
+      const done = [];
+      for (const w of tk.w) for (let i = 0; i < 4; i++) {
+        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo'); if (!D.meta) break;
+        await erasePlayer(rid); audit('Site admin', `Erased stored data for Roblox user ${rid} (data request)`);
+        if (await commit()) { done.push(w); break; }
+      }
+      resetState(); await need('glob'); G.adminLog ||= []; logReq('delete', `erased in ${done.length} of ${plural(tk.w.length, 'workspace')}`);
+      return S(200, { ok: true, done: done.length, of: tk.w.length });
+    }
+    const out = await personScan(rid, op === 'personExport', clampInt(A.from, 0, 100000) || 0);
+    if (op === 'personExport') { logReq('export', `${plural(out.found.length, 'workspace')} with data${out.next !== null ? ' (first part, continue for the rest)' : ''}`); return S(200, { rid, exportedAt: new Date().toISOString(), workspaces: out.found, next: out.next }); }
+    if (out.next !== null) return S(200, { partial: true, error: 'Too many workspaces to check in one go. Try again in a quiet moment.' });
+    const rows = out.found.reduce((a, x) => a + x.rows, 0); logReq('check', `found ${plural(rows, 'record')} in ${plural(out.found.length, 'workspace')}`);
+    return S(200, { rows, workspaces: out.found.length, breakdown: out.found, token: out.found.length ? pack({ pd: rid, w: out.found.map(x => x.wid), e: Date.now() + 10 * 60000 }) : null });
+  }
+  return false;
 }
 const ADMIN_PAGE = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="color-scheme" content="dark"><title>Sentinel Admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
 :root{--bg:#07080c;--bg2:#0b0d13;--card:#10131b;--card2:#151927;--ln:#222637;--ink:#e9ebf3;--mu:#8a8fa6;--ac:#4f8bff;--ac2:#7aa7ff;--red:#ff4d5e;--amb:#f5b942;--grn:#3ddc97}
@@ -785,12 +1126,15 @@ textarea.in{height:auto;padding:10px 13px;resize:vertical;min-height:64px;font:i
 select.in{height:38px}
 .big{height:42px;font-size:15px}
 .mt{margin-top:12px}
+select.in,textarea.in{border:1px solid var(--ln);border-radius:10px;background:#0a0c12;color:var(--ink);outline:none}select.in{height:38px;padding:0 10px}textarea.in{width:100%;padding:10px 13px;resize:vertical;font:inherit}
+.tw2{overflow-x:auto}.tw2 .tb td,.tw2 .tb th{padding:8px 10px;text-align:left;border-bottom:1px solid var(--ln);vertical-align:middle}
+.mtr{height:6px;border-radius:3px;background:var(--card2);overflow:hidden}.mtr>i{display:block;height:6px;border-radius:3px;background:var(--ac)}.mtr.hi>i{background:var(--amb)}
 @media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}.top{padding:10px 14px}.w{padding:18px 14px 60px}}
 </style></head><body>
 <header class="top"><div class="br"><img src="/favicon.svg" alt=""><div><b>Sentinel Admin</b><small>Site console</small></div></div><span class="pill red"><span class="dot"></span>Restricted</span><span class="sp"></span><span class="pill red" id="pill-m" hidden>Maintenance on</span><span class="pill amb" id="pill-a" hidden>Announcement live</span><span class="pill grn" id="ss"><span class="dot"></span>Session active</span><button class="btn s" id="out">Sign out</button></header>
 <main class="w">
 <section class="stats"><div class="st"><small>Workspaces</small><b id="s1">-</b></div><div class="st" style="--c:var(--red)"><small>In recycle bin</small><b id="s2">-</b></div><div class="st" style="--c:var(--grn)"><small>Total members</small><b id="s3">-</b></div><div class="st" style="--c:var(--amb)"><small>Feedback</small><b id="s4">-</b></div></section>
-<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="lv" role="tab">Live <i id="lvn" hidden>0</i></button><button class="tab" data-t="ac" role="tab">Accounts</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="st" role="tab">Site</button><button class="tab" data-t="lg" role="tab">Audit log</button><button class="tab" data-t="tl" role="tab">Tools</button></nav>
+<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="lv" role="tab">Live <i id="lvn" hidden>0</i></button><button class="tab" data-t="ac" role="tab">Accounts</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="st" role="tab">Site</button><button class="tab" data-t="lg" role="tab">Audit log</button><button class="tab" data-t="tl" role="tab">Tools</button><button class="tab" data-t="ab" role="tab">Abuse <i id="abn" hidden>0</i></button><button class="tab" data-t="gr" role="tab">Growth</button><button class="tab" data-t="er" role="tab">Errors</button><button class="tab" data-t="vr" role="tab">Versions</button><button class="tab" data-t="sg" role="tab">Storage</button><button class="tab" data-t="ff" role="tab">Flags</button><button class="tab" data-t="dq" role="tab">Data requests</button></nav>
 <section id="p-ws"><div class="bar"><input class="in" id="q" placeholder="Search by name, id or owner" aria-label="Search workspaces"><div class="chips"><button class="chip on" data-f="all">All</button><button class="chip" data-f="live">Active</button><button class="chip" data-f="del">Deleted</button></div><span class="sp"></span><button class="btn s" id="rf">Refresh</button></div><div id="o"><div class="skel"></div><div class="skel"></div></div></section>
 <section id="p-lv" hidden><div class="bar"><span class="note" id="lvs">Loading</span><span class="sp"></span><button class="btn s" id="lvr">Refresh</button></div><div id="lvo"></div></section>
 <section id="p-ac" hidden><div class="bar"><input class="in" id="uq" placeholder="Search accounts by name, Roblox name or id" aria-label="Search accounts"><button class="btn p" id="ub">Search</button></div><div id="uo"><div class="empty">Search for an account to see their workspaces and manage them.</div></div></section>
@@ -798,6 +1142,7 @@ select.in{height:38px}
 <section id="p-st" hidden><div class="tg">
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 11v2a1 1 0 001 1h3l5 4V6L7 10H4a1 1 0 00-1 1zM16 8a5 5 0 010 8"/></svg></span>Announcement banner <span class="pill" id="anp">Off</span></h3><p>Shows a message at the top of Sentinel for everyone, like planned downtime. People can close it.</p><textarea class="in" id="ant" maxlength="240" placeholder="Sentinel will be briefly down tonight at 9pm Central."></textarea><div class="row"><select class="in" id="ank" style="width:auto"><option value="info">Info (blue)</option><option value="warn">Warning (amber)</option></select><button class="btn p" id="anb">Post</button><button class="btn" id="anr">Remove</button></div></div>
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6z"/></svg></span>Maintenance mode <span class="pill" id="mtp">Off</span></h3><p>Shows a "Back soon" page while you fix something. This console and the status page always work.</p><select class="in" id="mts"><option value="panel">Panel only (games keep syncing, in-game moderation continues)</option><option value="full">Entire website (panel, public pages, appeals, forms and games all pause)</option></select><input class="in" id="mtm" maxlength="240" placeholder="We are updating Sentinel. Back in a few minutes."><div class="row"><button class="btn d" id="mtb">Turn on</button></div></div>
+<div class="card" style="grid-column:1/-1"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h6"/></svg></span>Targeted announcements <span class="pill" id="tap">0</span></h3><p>Shown inside the panel until it expires: to every workspace, to one workspace, or only to owners whose Sentinel scripts are out of date.</p><textarea class="in" id="tat" rows="2" placeholder="Message (up to 240 characters)" maxlength="240"></textarea><div class="row mt" style="flex-wrap:wrap;gap:8px"><select class="in" id="tag" style="width:auto"><option value="all">Every workspace</option><option value="ws">One workspace</option><option value="oldScript">Owners on an old script</option></select><input class="in" id="taw" placeholder="Workspace id" style="width:170px" hidden><select class="in" id="tak" style="width:auto"><option value="info">Info</option><option value="warn">Warning</option></select><select class="in" id="tah" style="width:auto"><option value="24">For 1 day</option><option value="72">For 3 days</option><option value="168">For 7 days</option><option value="720">For 30 days</option></select><button class="btn p" id="tapost">Post</button></div><div id="tao" class="mt"></div></div>
 <div class="card" style="grid-column:1/-1"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>Health <span class="sp" style="flex:1"></span><button class="btn s" id="hb">Run checks</button></h3><div id="ho" class="note">Running checks...</div></div>
 </div></section>
 <section id="p-lg" hidden><div class="bar"><span class="note">Everything done in this console, newest first.</span><span class="sp"></span><button class="btn s" id="lgr">Refresh</button></div><div class="card lg" id="lgo"></div></section>
@@ -805,6 +1150,17 @@ select.in{height:38px}
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></span>Off-site copy</h3><p>Download every workspace and account in one file. Keep it somewhere outside Supabase, like your own computer.</p><div><button class="btn p" id="eb">Download everything</button> <span class="note" id="em"></span></div></div>
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><path d="M5 8h14M5 12h10M5 16h6M3 4h18v16H3z"/></svg></span>Discord bot</h3><p>Register the slash commands after setting the Discord variables. Run it again whenever Sentinel adds commands.</p><div><button class="btn p" id="dr">Register commands</button> <span class="note" id="dm"></span></div></div>
 <div class="card"><h3><span class="ic"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></span>Reset two-step</h3><p>Removes two-step verification from a locked-out account so the person can set it up again.</p><div style="display:flex;gap:8px"><input class="in" id="mu" placeholder="User id, like r_123456" autocomplete="off"><button class="btn d" id="mr">Reset</button></div><span class="note" id="mm"></span></div>
+</div></section>
+<section id="p-ab" hidden><div class="bar"><span class="note">Workspaces that may be misusing Sentinel in the last 48 hours: 25 or more bans in an hour, 30 or more public reports or appeals in an hour, or a sudden spike in reports.</span><span class="sp"></span><button class="btn s" id="abr">Refresh</button></div><div id="abo"></div></section>
+<section id="p-gr" hidden><div class="bar"><span class="note" id="grs">Loading</span><span class="sp"></span><button class="btn s" id="grr">Refresh</button></div><div class="tg" id="gro"></div></section>
+<section id="p-er" hidden><div class="bar"><span class="note">Failed Roblox calls, Discord webhook failures, game sync errors and rate limits from the last 7 days, by workspace.</span><span class="sp"></span><button class="btn s" id="err">Refresh</button></div><div id="ero"></div></section>
+<section id="p-vr" hidden><div class="bar"><span class="note" id="vrs">Loading</span><span class="sp"></span><label class="note" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="vro" checked> Out of date only</label><button class="btn s" id="vrr">Refresh</button></div><div class="card tw2" id="vrt"></div></section>
+<section id="p-sg" hidden><div class="bar"><span class="note" id="sgs">Loading</span><span class="sp"></span><button class="btn s" id="sgr">Refresh</button></div><div class="card tw2" id="sgt"></div></section>
+<section id="p-ff" hidden><div class="bar"><span class="note">Turn a feature on for chosen workspaces first, then for everyone. Every server picks up a change within 30 seconds.</span></div><div class="tg" id="ffo"></div></section>
+<section id="p-dq" hidden><div class="tg">
+<div class="card"><h3>Person data request</h3><p>Export or delete what every workspace stores about one Roblox player. Every request is logged with who asked.</p><input class="in" id="dqr" placeholder="Roblox user id" inputmode="numeric" autocomplete="off"><input class="in mt" id="dqw" placeholder="Who asked (their email or a ticket number)" autocomplete="off"><div class="row mt" style="gap:8px;flex-wrap:wrap"><button class="btn" id="dqe">Export</button><button class="btn d" id="dqc">Check before deleting</button></div><div id="dqo" class="mt note"></div></div>
+<div class="card"><h3>Workspace data</h3><p>To export a whole workspace, open it under Workspaces and choose Download. To delete it, move it to the recycle bin there; it is erased for good after 30 days.</p></div>
+<div class="card" style="grid-column:1/-1"><h3>Request log <span class="sp" style="flex:1"></span><button class="btn s" id="dql">Refresh</button></h3><div id="dqlo" class="note tw2"></div></div>
 </div></section>
 </main><div class="toast" id="tt" role="status"></div><div id="md"></div>
 <script>var $=function(i){return document.getElementById(i)},WS=[],FB=[],FL='all';
@@ -825,7 +1181,7 @@ html+='<div><div class="sec">Numbers</div><div class="kv">'+kv('Active bans',c.b
 html+='<div><div class="sec">Live servers ('+d.servers.length+')</div>'+(d.servers.length?'<table class="tb"><tr><th>Players</th><th>Script</th><th>Chat</th><th>Up for</th></tr>'+d.servers.map(function(s){return'<tr><td>'+s.players+'</td><td>v'+s.sv+'</td><td>'+e(s.chat||'-')+'</td><td>'+ago(s.since).replace(' ago','')+'</td></tr>'}).join('')+'</table>':'<div class="note">Nobody is connected right now.</div>')+'</div>';
 html+='<div><div class="sec">Team ('+d.members.length+')</div><table class="tb"><tr><th>Name</th><th>Rank</th><th>Id</th><th>Joined</th></tr>'+d.members.map(function(x){return'<tr><td>'+e(x.name)+(x.owner?' <span class="pill amb">Owner</span>':'')+'</td><td>'+e(x.rank)+'</td><td class="mono">'+e(x.id)+'</td><td>'+new Date(x.joined).toLocaleDateString()+'</td></tr>'}).join('')+'</table></div>';
 html+='<div><div class="sec">Recent activity</div>'+(d.audit.length?'<table class="tb">'+d.audit.map(function(a){return'<tr><td style="white-space:nowrap;color:var(--mu)">'+dt(a.t)+'</td><td>'+e(a.user)+'</td><td>'+e(a.text)+'</td></tr>'}).join('')+'</table>':'<div class="note">Nothing yet.</div>')+'</div>';
-html+='<div class="zone"><div class="sec">Manage</div><div class="row"><button class="btn s" data-o="rn" data-w="'+e(w.id)+'">Rename</button>'+(m.suspended?'<button class="btn s" data-o="us" data-w="'+e(w.id)+'">Lift suspension</button>':(m.deleted?'':'<button class="btn s" data-o="su" data-w="'+e(w.id)+'">Suspend</button>'))+'<button class="btn s" data-o="rk" data-w="'+e(w.id)+'">Make a new game code</button>'+(m.deleted?'':'<button class="btn d s" data-o="bn" data-w="'+e(w.id)+'">Move to recycle bin</button>')+'<button class="btn d s" data-o="pg" data-w="'+e(w.id)+'">Delete forever</button></div><div class="note mt" id="k'+e(w.id)+'"></div></div></div>';
+html+='<div class="zone"><div class="sec">Manage</div><div class="row"><button class="btn s" data-o="rn" data-w="'+e(w.id)+'">Rename</button>'+(m.deleted?'':'<button class="btn s" data-o="va" data-w="'+e(w.id)+'">View as owner (read-only)</button><button class="btn s" data-o="cp" data-w="'+e(w.id)+'">Limits</button>')+''+(m.suspended?'<button class="btn s" data-o="us" data-w="'+e(w.id)+'">Lift suspension</button>':(m.deleted?'':'<button class="btn s" data-o="su" data-w="'+e(w.id)+'">Suspend</button>'))+'<button class="btn s" data-o="rk" data-w="'+e(w.id)+'">Make a new game code</button>'+(m.deleted?'':'<button class="btn d s" data-o="bn" data-w="'+e(w.id)+'">Move to recycle bin</button>')+'<button class="btn d s" data-o="pg" data-w="'+e(w.id)+'">Delete forever</button></div><div class="note mt" id="k'+e(w.id)+'"></div></div></div>';
 return html}
 function drawWs(){var q=$('q').value.trim().toLowerCase(),l=WS.filter(function(w){return(FL==='all'||(FL==='del')===!!w.deleted)&&(!q||(w.name+' '+w.id+' '+w.owner).toLowerCase().indexOf(q)>=0)});
 $('o').innerHTML=l.length?l.map(function(w){return'<div class="card '+(w.deleted?'del':'')+'"><div class="ws"><div class="av">'+e((w.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(w.name)+'</b> <code>'+e(w.id)+'</code><div class="m"><span>Owner '+e(w.owner)+'</span><span>'+w.members+' member'+(w.members==1?'':'s')+'</span>'+(w.created?'<span>Created '+new Date(w.created).toLocaleDateString()+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(w.deleted?'<span class="pill red">Deleted '+new Date(w.deleted).toLocaleDateString()+'</span>':w.suspended?'<span class="pill amb">Suspended</span>':'<span class="pill grn"><span class="dot"></span>Active</span>')+'</div><div class="acts">'+(w.deleted?'<button class="btn p s" data-o="rd" data-w="'+e(w.id)+'">Restore workspace</button>':'')+'<button class="btn s" data-o="dtl" data-w="'+e(w.id)+'">'+(OPEN[w.id]?'Hide details':'Details')+'</button><button class="btn s" data-o="sn" data-w="'+e(w.id)+'">Back up now</button><button class="btn s" data-o="ls" data-w="'+e(w.id)+'">Backups</button><button class="btn s" data-o="dl" data-w="'+e(w.id)+'">Download</button><span class="note" id="s'+e(w.id)+'"></span></div>'+(OPEN[w.id]?detHtml(w):'')+'</div>'}).join(''):'<div class="empty">'+(WS.length?'No workspaces match.':'No workspaces yet.')+'</div>'}
@@ -859,7 +1215,7 @@ else if(o==='pg')ask2('Delete '+nm+' forever','This erases the workspace, its ba
 var lvT=null;function loadLive(){return call({op:'live'}).then(function(j){var items=j.items,p=items.reduce(function(a,x){return a+x.players},0),sv=items.reduce(function(a,x){return a+x.servers},0);$('lvs').textContent=p+' player'+(p==1?'':'s')+' in '+sv+' server'+(sv==1?'':'s')+' across '+items.length+' workspace'+(items.length==1?'':'s')+'. Updates every 10 seconds.';var n=$('lvn');n.hidden=!items.length;n.textContent=p;$('lvo').innerHTML=items.length?'<div class="card"><table class="tb"><tr><th>Workspace</th><th>Servers</th><th>Players</th><th>Script</th><th>Chat</th><th>Last check-in</th></tr>'+items.map(function(x){return'<tr><td><b>'+e(x.name)+'</b> <code>'+e(x.id)+'</code></td><td>'+x.servers+'</td><td>'+x.players+'</td><td>v'+x.sv+(x.sv<j.latest?' <span class="pill amb">outdated</span>':'')+'</td><td>'+e(x.chat.join(', ')||'-')+'</td><td>'+ago(x.seen)+'</td></tr>'}).join('')+'</table></div>':'<div class="empty">No game servers are connected right now.</div>'}).catch(function(x){$('lvs').textContent=x.message})}
 $('lvr').onclick=loadLive;
 /* ---- accounts ---- */
-function userCard(u){return'<div class="card"><div class="ws"><div class="av">'+e((u.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(u.name||'(no name)')+'</b> <code>'+e(u.id)+'</code><div class="m"><span>'+e(u.provider||'')+' sign-in</span>'+(u.roblox?'<span>Roblox @'+e(u.roblox)+'</span>':'')+(u.created?'<span>Joined '+new Date(u.created).toLocaleDateString()+'</span>':'')+(u.revoked?'<span>Signed out everywhere '+ago(u.revoked)+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(u.mfa?'<span class="pill grn">Two-step on</span>':'<span class="pill">No two-step</span>')+'</div>'+(u.workspaces.length?'<div class="snaps">'+u.workspaces.map(function(w){return'<span class="pill'+(w.deleted?' red':w.owner?' amb':'')+'">'+e(w.name)+(w.owner?' - owner':'')+(w.deleted?' - deleted':'')+'</span>'}).join('')+'</div>':'<div class="note mt">Not in any workspace.</div>')+'<div class="acts"><button class="btn s" data-u="so" data-i="'+e(u.id)+'">Sign out everywhere</button><button class="btn s" data-u="ex" data-i="'+e(u.id)+'">Export data</button>'+(u.mfa?'<button class="btn s" data-u="mf" data-i="'+e(u.id)+'">Reset two-step</button>':'')+'<button class="btn d s" data-u="dl" data-i="'+e(u.id)+'" data-n="'+e(u.name||'')+'">Delete account</button><span class="note" id="u'+e(u.id)+'"></span></div></div>'}
+function userCard(u){return'<div class="card"><div class="ws"><div class="av">'+e((u.name||'?').charAt(0).toUpperCase())+'</div><div class="nm"><b>'+e(u.name||'(no name)')+'</b> <code>'+e(u.id)+'</code><div class="m"><span>'+e(u.provider||'')+' sign-in</span>'+(u.roblox?'<span>Roblox @'+e(u.roblox)+'</span>':'')+(u.created?'<span>Joined '+new Date(u.created).toLocaleDateString()+'</span>':'')+(u.revoked?'<span>Signed out everywhere '+ago(u.revoked)+'</span>':'')+'</div></div><span class="sp" style="flex:1"></span>'+(u.mfa?'<span class="pill grn">Two-step on</span>':'<span class="pill">No two-step</span>')+'</div>'+(u.workspaces.length?'<div class="snaps">'+u.workspaces.map(function(w){return'<span class="pill'+(w.deleted?' red':w.owner?' amb':'')+'">'+e(w.name)+(w.owner?' - owner':'')+(w.deleted?' - deleted':'')+'</span>'}).join('')+'</div>':'<div class="note mt">Not in any workspace.</div>')+'<div class="acts"><button class="btn s" data-u="so" data-i="'+e(u.id)+'">Sign out everywhere</button><button class="btn s" data-u="lk" data-i="'+e(u.id)+'">Details</button><button class="btn s" data-u="ex" data-i="'+e(u.id)+'">Export data</button>'+(u.mfa?'<button class="btn s" data-u="mf" data-i="'+e(u.id)+'">Reset two-step</button>':'')+'<button class="btn d s" data-u="dl" data-i="'+e(u.id)+'" data-n="'+e(u.name||'')+'">Delete account</button><span class="note" id="u'+e(u.id)+'"></span></div></div>'}
 function searchUsers(){var q=$('uq').value.trim();if(q.length<2){toast('Type at least 2 characters',true);return}call({op:'userSearch',q:q}).then(function(j){$('uo').innerHTML=j.items.length?j.items.map(userCard).join(''):'<div class="empty">No accounts match.</div>'}).catch(function(x){toast(x.message,true)})}
 $('ub').onclick=searchUsers;$('uq').onkeydown=function(k){if(k.key==='Enter')searchUsers()};
 function saveJson(name,j){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(j,null,1)],{type:'application/json'}));a.download=name;a.click()}
@@ -892,7 +1248,73 @@ $('hb').onclick=runHealth;
 /* ---- audit log ---- */
 function loadLog(){call({op:'adminLog'}).then(function(j){$('lgo').innerHTML=j.items.length?j.items.map(function(l){return'<div class="e'+(l.bad?' bad':'')+'"><time>'+dt(l.t)+'</time><span>'+e(l.text)+(l.who?' <span class="note">('+e(l.who)+')</span>':'')+'</span></div>'}).join(''):'<div class="note">Nothing yet.</div>'}).catch(function(x){$('lgo').textContent=x.message})}
 $('lgr').onclick=loadLog;
-load();loadSite();loadLive();</script></body></html>
+load();loadSite();loadLive();</script>
+<script>(function(){
+function fail(x){toast(x.message,true)}
+function mb(b){return (b/1e6).toFixed(b<1e7?2:1)+' MB'}
+function meter(n,max,txt){var p=max?Math.min(100,Math.round(n/max*100)):0;return '<div style="min-width:130px"><div class="mtr'+(p>=80?' hi':'')+'"><i style="width:'+p+'%"></i></div><div class="note">'+txt+'</div></div>'}
+function bars(list,key){var max=Math.max.apply(null,list.map(function(x){return x[key]}).concat([1])),w=100/list.length;return '<svg viewBox="0 0 100 40" preserveAspectRatio="none" style="width:100%;height:90px;display:block">'+list.map(function(x,i){var h=x[key]/max*38;return '<rect x="'+(i*w+w*0.12).toFixed(2)+'" y="'+(40-Math.max(h,0.5)).toFixed(2)+'" width="'+(w*0.76).toFixed(2)+'" height="'+Math.max(h,0.5).toFixed(2)+'" fill="#4f8bff" opacity="'+(x[key]?1:0.25)+'"><title>'+e(x.k)+': '+x[key]+'</title></rect>'}).join('')+'</svg><div class="note" style="display:flex;justify-content:space-between"><span>'+e(list[0].k)+'</span><span>'+e(list[list.length-1].k)+'</span></div>'}
+function modal(title,html){var m=$('md');m.innerHTML='<div class="scrim"><div class="md" role="dialog" aria-modal="true" style="max-width:760px;width:100%;max-height:82vh;overflow:auto"><h2>'+e(title)+'</h2>'+html+'<div class="r"><button class="btn" id="mn">Close</button></div></div></div>';$('mn').onclick=function(){m.innerHTML=''}}
+function openWs(w){document.querySelector('.tab[data-t="ws"]').click();$('q').value=w;OPEN[w]=1;drawWs();call({op:'wsDetail',wid:w}).then(function(d){DET[w]=d;drawWs()}).catch(fail)}
+/* abuse */
+function loadAbuse(){$('abo').innerHTML='<div class="note">Loading...</div>';call({op:'abuse'}).then(function(j){var n=$('abn');n.hidden=!j.items.length;n.textContent=j.items.length;
+$('abo').innerHTML=j.items.length?j.items.map(function(x){return '<div class="card"><div class="ws"><div class="nm"><b>'+e(x.name)+'</b> <code>'+e(x.wid)+'</code>'+(x.suspended?' <span class="pill red">Suspended</span>':'')+'<div class="m"><span style="color:var(--amb);font-weight:600">'+e(x.text)+'</span><span>'+dt(x.at)+'</span></div></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-left:auto"><button class="btn s" data-x="rv" data-w="'+e(x.wid)+'">Review</button>'+(x.suspended?'':'<button class="btn s d" data-x="su" data-w="'+e(x.wid)+'" data-n="'+e(x.name)+'">Suspend</button>')+'<button class="btn s" data-x="ok" data-k="'+e(x.key)+'">Dismiss</button></div></div></div>'}).join(''):'<div class="empty">Nothing looks wrong right now.</div>'}).catch(function(x){$('abo').innerHTML='<div class="empty">'+e(x.message)+'</div>'})}
+$('abr').onclick=loadAbuse;
+$('abo').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;var x=b.dataset.x,w=b.dataset.w;
+if(x==='ok')call({op:'abuseDismiss',key:b.dataset.k}).then(function(){toast('Dismissed');loadAbuse()}).catch(fail);
+else if(x==='su')ask2('Suspend '+b.dataset.n,'Its team is locked out of the panel and the game stops syncing, but nothing is deleted. Write the reason they will see.','Suspend',{ph:'Reason',danger:1,opt:1}).then(function(v){if(v!==null)return call({op:'wsSuspend',wid:w,on:true,reason:v}).then(function(){toast('Suspended');load();loadAbuse()})}).catch(fail);
+else if(x==='rv')openWs(w)};
+/* growth */
+function loadGrowth(){$('grs').textContent='Loading';call({op:'growth'}).then(function(j){var f=j.features,lab={connected:'Connected a game',openCloud:'Roblox API key saved',machineBans:'Machine bans on',chatLogs:'Chat logs on',group:'Roblox group linked',discord:'Discord bot',webhook:'Discord webhook',forms:'Forms',appeals:'Appeals on',signals:'Alt-account hints on'};
+$('grs').textContent=j.total+' live workspace'+(j.total==1?'':'s');
+$('gro').innerHTML='<div class="card"><h3>New workspaces per week</h3>'+bars(j.weeks,'n')+'</div><div class="card"><h3>Active games per day</h3>'+bars(j.days,'active')+'</div><div class="card"><h3>Moderation actions per day</h3>'+bars(j.days,'actions')+'</div><div class="card"><h3>Feature use</h3><table class="tb">'+Object.keys(lab).map(function(k){var n=f[k]||0,p=j.total?Math.round(n/j.total*100):0;return '<tr><td>'+lab[k]+'</td><td style="width:40%"><div class="mtr"><i style="width:'+p+'%"></i></div></td><td style="text-align:right;white-space:nowrap">'+n+' <span class="note">'+p+'%</span></td></tr>'}).join('')+'</table></div>'}).catch(fail)}
+$('grr').onclick=loadGrowth;
+/* errors */
+var KL={oc_fail:'Roblox Open Cloud',webhook_fail:'Discord webhook',sync_error:'Game sync error',rate_limit:'Rate limit'};
+function loadEvents(){$('ero').innerHTML='<div class="note">Loading...</div>';call({op:'events'}).then(function(j){if(!j.setup){$('ero').innerHTML='<div class="empty">The error log is not set up yet. Run the new SQL in supabase.sql once in Supabase.</div>';return}
+$('ero').innerHTML=j.groups.length?j.groups.map(function(g){return '<div class="card"><div class="ws"><div class="nm"><b>'+e(g.name)+'</b>'+(g.wid?' <code>'+e(g.wid)+'</code>':'')+'<div class="m"><span>'+g.total+' problem'+(g.total==1?'':'s')+'</span></div></div></div><div class="tw2"><table class="tb mt">'+Object.keys(g.kinds).map(function(k){var x=g.kinds[k];return '<tr><td style="white-space:nowrap"><span class="pill '+(k==='rate_limit'?'amb':'red')+'">'+e(KL[k]||k)+'</span></td><td style="white-space:nowrap">'+(x.n==1?'once':x.n+' times')+'</td><td>'+e(x.msg)+'</td><td class="note" style="white-space:nowrap">'+ago(x.last)+'</td></tr>'}).join('')+'</table></div></div>'}).join(''):'<div class="empty">No problems in the last 7 days.</div>'}).catch(fail)}
+$('err').onclick=loadEvents;
+/* versions */
+var VR=null;function drawVersions(){var j=VR,only=$('vro').checked,old=j.items.filter(function(x){return x.oldScript||x.oldClient}),l=only?old:j.items;
+$('vrs').textContent='Latest game script v'+j.latestScript+', player script v'+j.latestClient+'. '+old.length+' workspace'+(old.length==1?'':'s')+' out of date.';
+$('vrt').innerHTML=l.length?'<table class="tb"><tr><th>Workspace</th><th>Game script</th><th>Player script</th><th>Reminded</th><th></th></tr>'+l.map(function(x){return '<tr><td><b>'+e(x.name)+'</b> <code>'+e(x.wid)+'</code></td><td>'+(x.scriptV?'v'+x.scriptV:'<span class="note">never connected</span>')+(x.oldScript?' <span class="pill amb">old</span>':'')+'</td><td>'+(x.clientV?'v'+x.clientV:'<span class="note">not seen</span>')+(x.oldClient?' <span class="pill amb">old</span>':'')+'</td><td class="note">'+(x.reminded?ago(x.reminded):'never')+'</td><td>'+(x.oldScript||x.oldClient?'<button class="btn s" data-w="'+e(x.wid)+'">Remind owner</button>':'')+'</td></tr>'}).join('')+'</table>':'<div class="empty">'+(only?'Every connected workspace is up to date.':'No workspaces yet.')+'</div>'}
+function loadVersions(){call({op:'versions'}).then(function(j){VR=j;drawVersions()}).catch(fail)}
+$('vro').onchange=function(){if(VR)drawVersions()};$('vrr').onclick=loadVersions;
+$('vrt').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;b.disabled=true;call({op:'wsRemind',wid:b.dataset.w}).then(function(){toast('Reminder sent. The owner sees it in their Inbox and on Home.');loadVersions()}).catch(function(x){b.disabled=false;fail(x)})};
+/* storage and limits */
+function setCaps(w,m,l){return ask2('Member limit','How many people can be on this team (1 to 5000).','Next',{val:String(m),ph:'100'}).then(function(a){if(!a)return;return ask2('Logbook limit','How many logbook entries to keep (1000 to 1000000). Above it, the oldest points and notes go first. Running bans and mutes are never removed.','Save',{val:String(l),ph:'50000'}).then(function(b){if(!b)return;return call({op:'wsCaps',wid:w,members:+a,logbook:+b}).then(function(){toast('Limits saved')})})})}
+function loadStorage(){$('sgs').textContent='Loading';call({op:'storage'}).then(function(j){var w=j.items.filter(function(x){return x.warn.length}).length;
+$('sgs').textContent=(j.setup?'':'Stored sizes need the new SQL in supabase.sql. ')+w+' workspace'+(w==1?'':'s')+' at 80% or more of a limit.';
+$('sgt').innerHTML=j.items.length?'<table class="tb"><tr><th>Workspace</th><th>Stored data</th><th>Chat logs</th><th>Members</th><th>Logbook</th><th></th></tr>'+j.items.map(function(x){return '<tr><td><b>'+e(x.name)+'</b> <code>'+e(x.wid)+'</code>'+(x.warn.length?'<div><span class="pill amb">Near the limit: '+e(x.warn.join(', '))+'</span></div>':'')+'</td><td>'+(x.storage?meter(x.storage.bytes,x.storage.max,x.storage.n+' rows, '+mb(x.storage.bytes)):'<span class="note">-</span>')+'</td><td>'+(x.chat?meter(Math.max(x.chat.n/x.chat.maxN,x.chat.bytes/x.chat.maxBytes)*1000,1000,x.chat.n+' boxes, '+mb(x.chat.bytes)):'<span class="note">-</span>')+'</td><td>'+meter(x.members.n,x.members.max,x.members.n+' of '+x.members.max)+'</td><td>'+meter(x.logbook.n,x.logbook.max,x.logbook.n+' of '+x.logbook.max)+'</td><td><button class="btn s" data-w="'+e(x.wid)+'" data-m="'+x.members.max+'" data-l="'+x.logbook.max+'">Limits</button></td></tr>'}).join('')+'</table>':'<div class="empty">No workspaces yet.</div>'}).catch(fail)}
+$('sgr').onclick=loadStorage;
+$('sgt').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;setCaps(b.dataset.w,b.dataset.m,b.dataset.l).then(loadStorage).catch(fail)};
+/* feature flags */
+function loadFlags(){call({op:'flags'}).then(function(j){$('ffo').innerHTML=j.flags.map(function(f){return '<div class="card"><h3>'+e(f.label)+' <span class="pill '+(f.all?'grn':f.wids.length?'amb':'')+'">'+(f.all?'Everyone':f.wids.length?f.wids.length+' chosen':'Off')+'</span></h3><label class="note" style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input type="checkbox" data-all="'+e(f.name)+'"'+(f.all?' checked':'')+'> On for every workspace</label><p>Chosen workspaces, one id per line. They get it while it is not on for everyone.</p><textarea class="in" rows="3" data-ws="'+e(f.name)+'">'+e(f.wids.join(String.fromCharCode(10)))+'</textarea><div class="mt"><button class="btn p s" data-save="'+e(f.name)+'">Save</button></div></div>'}).join('')}).catch(fail)}
+$('ffo').onclick=function(ev){var b=ev.target.closest('[data-save]');if(!b)return;var n=b.dataset.save,all=document.querySelector('[data-all="'+n+'"]').checked,ws=document.querySelector('[data-ws="'+n+'"]').value.split(/[^a-f0-9]+/).filter(function(x){return x.length===12});call({op:'flagSet',name:n,all:all,wids:ws}).then(function(){toast('Saved');loadFlags()}).catch(fail)};
+/* data requests */
+function rqv(){return {rid:$('dqr').value.trim(),who:$('dqw').value.trim()}}
+function loadReqs(){call({op:'dataReqs'}).then(function(j){$('dqlo').innerHTML=j.items.length?'<table class="tb">'+j.items.map(function(x){return '<tr><td style="white-space:nowrap">'+dt(x.t)+'</td><td><span class="pill">'+e(x.kind)+'</span></td><td class="mono">'+e(x.target)+'</td><td>'+e(x.who)+'</td><td>'+e(x.result)+'</td></tr>'}).join('')+'</table>':'No requests yet.'}).catch(fail)}
+$('dql').onclick=loadReqs;
+$('dqe').onclick=function(){var v=rqv(),all=[];$('dqo').textContent='Collecting...';var step=function(from){return call({op:'personExport',rid:v.rid,who:v.who,from:from}).then(function(j){all=all.concat(j.workspaces);if(j.next!==null&&j.next!==undefined)return step(j.next);saveJson('sentinel-player-'+v.rid+'.json',{robloxUserId:v.rid,exportedAt:j.exportedAt,workspaces:all});$('dqo').textContent='Export downloaded: '+all.length+' workspace'+(all.length==1?'':'s')+' with data.';loadReqs()})};step(0).catch(function(x){$('dqo').textContent=x.message})};
+$('dqc').onclick=function(){var v=rqv();$('dqo').textContent='Checking every workspace...';call({op:'personDeleteCheck',rid:v.rid,who:v.who}).then(function(j){loadReqs();if(j.partial){$('dqo').textContent=j.error;return}if(!j.rows){$('dqo').textContent='Nothing is stored about this player in any workspace.';return}
+$('dqo').innerHTML='<b>Found '+j.rows+' record'+(j.rows==1?'':'s')+' in '+j.workspaces+' workspace'+(j.workspaces==1?'':'s')+'.</b> Nothing has been deleted yet.<div class="tw2"><table class="tb mt"><tr><th>Workspace</th><th>Logbook</th><th>Chat logs</th><th>Reports</th><th>Appeals</th><th>Ban</th></tr>'+j.breakdown.map(function(x){return '<tr><td>'+e(x.name)+'</td><td>'+x.logbook+'</td><td>'+x.chatLogs+'</td><td>'+x.reports+'</td><td>'+x.appeals+'</td><td>'+(x.ban?'kept, without the name':'-')+'</td></tr>'}).join('')+'</table></div><div class="row mt" style="gap:8px;flex-wrap:wrap"><input class="in" id="dqx" placeholder="Type '+e(v.rid)+' to confirm" style="max-width:240px" autocomplete="off"><button class="btn d" id="dqd" disabled>Delete this data</button></div>';
+$('dqx').oninput=function(){$('dqd').disabled=$('dqx').value.trim()!==v.rid};
+$('dqd').onclick=function(){$('dqd').disabled=true;call({op:'personDelete',rid:v.rid,who:v.who,confirm:$('dqx').value.trim(),token:j.token}).then(function(r){$('dqo').textContent='Deleted in '+r.done+' of '+r.of+' workspace'+(r.of==1?'':'s')+'.';toast('Data deleted');loadReqs()}).catch(fail)}}).catch(function(x){$('dqo').textContent=x.message})};
+/* targeted announcements (Site tab) */
+function loadAnn(){call({op:'announcements'}).then(function(j){$('tap').textContent=j.items.length;$('tao').innerHTML=j.items.map(function(a){return '<div class="hc"><b>'+e(a.target==='all'?'Every workspace':a.target==='oldScript'?'Owners on an old script':'Workspace '+a.target.slice(3))+'</b><span class="note">'+e(a.text)+' (until '+dt(a.exp)+')</span><button class="btn s" data-a="'+e(a.id)+'">Remove</button></div>'}).join('')}).catch(fail)}
+$('tag').onchange=function(){$('taw').hidden=$('tag').value!=='ws'};
+$('tapost').onclick=function(){call({op:'annAdd',text:$('tat').value,target:$('tag').value,wid:$('taw').value,kind:$('tak').value,hours:+$('tah').value}).then(function(){$('tat').value='';toast('Announcement posted');loadAnn()}).catch(fail)};
+$('tao').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;call({op:'annDel',id:b.dataset.a}).then(function(){toast('Removed');loadAnn()}).catch(fail)};
+/* account details */
+$('uo').addEventListener('click',function(ev){var b=ev.target.closest('[data-u="lk"]');if(!b)return;var id=b.dataset.i;call({op:'personLookup',uid:id}).then(function(j){modal((j.name||id)+' ('+id+')','<p class="note">'+e(j.provider||'')+' sign-in'+(j.roblox?', Roblox @'+e(j.roblox.name||j.roblox.id):'')+'</p>'+(j.workspaces.length?j.workspaces.map(function(w){return '<div class="card" style="margin-top:10px"><b>'+e(w.name)+'</b> <code>'+e(w.wid)+'</code> '+(w.owner?'<span class="pill amb">Owner</span>':'<span class="pill">'+e(w.rank||'Member')+'</span>')+(w.deleted?' <span class="pill red">Deleted</span>':'')+'<div class="note">'+w.members+' member'+(w.members==1?'':'s')+'</div>'+(w.recent.length?'<div class="tw2"><table class="tb mt">'+w.recent.map(function(a){return '<tr><td class="note" style="white-space:nowrap">'+dt(a.t)+'</td><td>'+e(a.text)+'</td></tr>'}).join('')+'</table></div>':'<div class="note">No recent actions.</div>')+'</div>'}).join(''):'<p class="note">Not on any workspace.</p>'))}).catch(fail)});
+/* workspace panel: read-only view and limits */
+$('o').addEventListener('click',function(ev){var b=ev.target.closest('button');if(!b)return;var o=b.dataset.o,w=b.dataset.w;
+if(o==='va')ask('View as the owner?','Opens this workspace read-only, as its owner sees it, for 15 minutes. Nothing can be changed. The visit is written to the workspace audit log, which the owner can see.','Open').then(function(y){if(y)return call({op:'wsViewAs',wid:w}).then(function(){window.open('/','_blank')})}).catch(fail);
+else if(o==='cp'){var d=DET[w]||{},c=d.caps||{members:100,logbook:50000};setCaps(w,c.members,c.logbook).then(function(){return call({op:'wsDetail',wid:w}).then(function(x){DET[w]=x;drawWs()})}).catch(fail)}});
+var T={ab:loadAbuse,gr:loadGrowth,er:loadEvents,vr:loadVersions,sg:loadStorage,ff:loadFlags,dq:loadReqs};
+document.querySelector('.tabs').addEventListener('click',function(ev){var b=ev.target.closest('.tab');if(!b)return;var t=b.dataset.t;Object.keys(T).forEach(function(k){$('p-'+k).hidden=k!==t});if(T[t])T[t]();if(t==='st')loadAnn()});
+loadAbuse();
+})();</script></body></html>
 `;
 const ADMIN_GATE = () => `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><meta name="color-scheme" content="dark"><title>Sentinel Admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><style>
 :root{--bg:#07080c;--bg2:#0b0d13;--card:#10131b;--card2:#151927;--ln:#222637;--ink:#e9ebf3;--mu:#8a8fa6;--ac:#4f8bff;--ac2:#7aa7ff;--red:#ff4d5e;--amb:#f5b942;--grn:#3ddc97}
@@ -951,6 +1373,8 @@ const mkCookie = (name, val, { maxAge = 604800, sameSite = 'Strict' } = {}) => `
 const clearCookie = name => `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Secure`;
 const sessIssued = req => { const d = unpack(cookiesOf(req).sid); return (d && d.i) || 0; }; // when this sign-in began (0 for older cookies)
 const revoked = (U0, req) => !!(U0 && U0.revoked && U0.revoked > sessIssued(req));
+const annFor = u => (G.announcements || []).filter(a => a && a.exp > Date.now() && (a.target === 'all' || a.target === 'ws:' + CTX.wid || (a.target === 'oldScript' && u.isOwner && (scriptInfo().outdated || clientInfo().outdated)))).map(({ id, text, kind, exp }) => ({ id, text, kind, exp })); // admin announcements meant for this workspace
+const viewAsOf = req => { const c = cookiesOf(req), d = unpack(c.va), a = unpack(c.adm); return d && d.va === 1 && /^[a-f0-9]{12}$/.test(d.w || '') && /^[gr]_\d{1,32}$/.test(d.u || '') && a && a.a === 1 ? d : null; }; // needs the admin session too
 const sessionUid = req => { const d = unpack(cookiesOf(req).sid); return d && /^[gr]_\d{1,32}$/.test(d.u || '') ? d.u : null; };
 const ALNUM = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 const randSecret = n => { let o = ''; while (o.length < n) for (const b of crypto.randomBytes(n * 2)) if (b < 228 && o.length < n) o += ALNUM[b % ALNUM.length]; return o; };
@@ -1085,7 +1509,7 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   }
   const ev = cleanLinks(B.evidence, 5), pnote = cleanName(B.note, 500);
   const ctx = B.ctx === false || !['warn', 'kick', 'mute', 'ban'].includes(action) ? [] : R.chat.filter(m => m.userId === B.userId && Date.now() - m.t < 36e5).slice(-15).map(m => ({ t: m.t, text: m.text }));
-  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, alts: B.alts !== false, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
+  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, alts: B.alts !== false, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}), ...(Array.isArray(B.boxes) && B.boxes.length ? { boxes: B.boxes.slice(0, 5) } : {}) } });
   const mw = action === 'mute' ? muteWarn(B.hideChat !== false) : action === 'unban' ? unbanWarn() : null;
   return [200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) }];
     }
@@ -1273,7 +1697,7 @@ async function route(req, res, url, p) {
       const recent = D.appeals.filter(x => x.uid === id && Date.now() - x.t < APPEAL_WINDOW).sort((a, b) => b.t - a.t); // anti-spam: 2 appeals per player every 5 days
       if (recent.length >= APPEAL_MAX) { const wait = recent[APPEAL_MAX - 1].t + APPEAL_WINDOW - Date.now(), d = Math.ceil(wait / 864e5), h = Math.ceil(wait / 36e5); return send(res, 429, { error: `You have used both appeals for now. You can send another in ${d > 1 ? d + ' days' : h > 1 ? h + ' hours' : 'about an hour'}.` }); }
       const aid = crypto.randomBytes(4).toString('hex'), tok = rnd(9);
-      D.appeals.unshift({ id: aid, tok, uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null, entry: ban.entry || null }); D.appeals.length = Math.min(D.appeals.length, 200);
+      abuseTick('pub'); D.appeals.unshift({ id: aid, tok, uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null, entry: ban.entry || null }); D.appeals.length = Math.min(D.appeals.length, 200);
       feed(`Ban appeal from ${ban.name || uname}`);
       if (!botPost({ embeds: [dEmbed(`Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason], ['Banned by', ban.by]], 0x0a7aff)], components: [{ type: 1, components: [dBtn('Accept and unban', `ap:${aid}:a`, 3), dBtn('Deny', `ap:${aid}:d`, 4)] }] })) notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
       return send(res, 200, { ok: true, check: `${site(req)}/appeal/${wid}?r=${aid}.${tok}` });
@@ -1298,7 +1722,7 @@ async function route(req, res, url, p) {
       const rid = rname && /^\w{3,20}$/.test(rname) ? await findId(rname) : null;
       const call = { id: ++D.callSeq, t: Date.now(), from: { userId: rid || 0, name: rid ? rname : 'Web report' }, text: `Reporting ${tname}: ${text}${link ? '\nEvidence: ' + link : ''}`, server: 'web', status: 'open', by: null, note: '', chat: [], web: true, target: { userId: tid, name: tname } };
       D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
-      feed(`Web report #${call.id} about ${tname}`); notify('reports', `Web report #${call.id} about ${tname}`, text, [['From', rid ? rname : 'Anonymous']], 0x635bff);
+      abuseTick('pub'); feed(`Web report #${call.id} about ${tname}`); notify('reports', `Web report #${call.id} about ${tname}`, text, [['From', rid ? rname : 'Anonymous']], 0x635bff);
       return send(res, 200, { ok: true });
     }
     if (req.method === 'GET' && p === '/api/publiclog') {
@@ -1345,6 +1769,7 @@ async function route(req, res, url, p) {
       const A = await body(req), wid = String(A.wid || ''); await need('glob'); G.adminLog ||= [];
       const alog = t => { G.adminLog.unshift({ t: Date.now(), text: t }); G.adminLog.length = Math.min(G.adminLog.length, 300); };
       const WID = /^[a-f0-9]{12}$/, UID = /^[gr]_\d{1,32}$/;
+      if (await adminMore(A, res, alog)) return;
       if (A.op === 'list') { const rows = await sbGet('select=key,meta:value->meta,members:value->members&key=like.w*:core'); return send(res, 200, { workspaces: rows.filter(r => r.meta).map(r => ({ id: r.key.slice(1, 13), name: r.meta.name, owner: r.meta.owner, created: r.meta.created, deleted: r.meta.deleted || null, suspended: r.meta.suspended || null, members: Object.keys(r.members || {}).length })).sort((a, b) => (a.deleted ? 1 : 0) - (b.deleted ? 1 : 0) || b.created - a.created) }); }
       if (A.op === 'exportAll') {
         alog('Downloaded the full site export');
@@ -1368,7 +1793,7 @@ async function route(req, res, url, p) {
         return ok(res);
       }
       // ---- workspace controls ----
-      if (['wsDetail', 'wsRename', 'wsBin', 'wsPurge', 'wsRotate', 'wsSuspend'].includes(A.op)) {
+      if (['wsDetail', 'wsRename', 'wsBin', 'wsPurge', 'wsRotate', 'wsSuspend', 'wsViewAs', 'wsCaps', 'wsRemind'].includes(A.op)) {
         if (!WID.test(wid)) return send(res, 400, { error: 'bad workspace' });
         setWid(wid); await need('core', ...(A.op === 'wsDetail' ? ['live'] : [])); if (!D.meta) return send(res, 404, { error: 'No such workspace' });
         const nm = D.meta.name;
@@ -1378,7 +1803,22 @@ async function route(req, res, url, p) {
             meta: { id: wid, name: nm, owner: D.meta.owner, created: D.meta.created, deleted: D.meta.deleted || null, suspended: D.meta.suspended || null, rot: D.meta.rot || 0, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, scriptV: D.meta.scriptV || 0, latestScript: latestScript(), connectedAt: D.meta.connectedAt || null, openCloud: !!D.meta.oc, group: (D.meta.group && D.meta.group.name) || null, require2fa: !!D.meta.require2fa, discord: !!(D.discord && D.discord.guild) },
             members: Object.entries(D.members).map(([id, m]) => ({ id, name: m.name, rank: (D.ranks[m.rank] || {}).name || m.rank, joined: m.joined, owner: id === D.meta.owner })).sort((a, b) => (b.owner ? 1 : 0) - (a.owner ? 1 : 0) || a.joined - b.joined),
             counts: { bans: cnt(D.bans), mutes: cnt(D.mutes), appeals: D.appeals.length, openAppeals: D.appeals.filter(a => a.status === 'open').length, forms: D.forms.length, ranks: Object.keys(D.ranks).length, rules: D.rulebook.length, shifts: D.shifts.length },
-            servers: lv.map(x => ({ players: (x.players || []).length, sv: x.sv, chat: x.chat || '', since: x.first || x.last })), audit: D.audit.slice(0, 15) });
+            servers: lv.map(x => ({ players: (x.players || []).length, sv: x.sv, chat: x.chat || '', since: x.first || x.last })), audit: D.audit.slice(0, 15), caps: { members: capOf('members'), logbook: capOf('logbook') }, usage: { members: Object.keys(D.members).length, logbook: D.meta.logN || 0 } });
+        }
+        if (A.op === 'wsViewAs') { // read-only support view, 15 minutes, written to the workspace's own audit log
+          if (D.meta.deleted) return send(res, 400, { error: 'This workspace is in the recycle bin.' });
+          const exp = Date.now() + 15 * 60000; audit('Site admin', 'Opened a read-only support view of this workspace (15 minutes)'); alog(`Opened a read-only support view of "${nm}" (${wid})`);
+          res.setHeader('Set-Cookie', mkCookie('va', pack({ va: 1, w: wid, u: D.meta.owner, e: exp }), { maxAge: 900 })); return send(res, 200, { ok: true, exp });
+        }
+        if (A.op === 'wsCaps') {
+          const mN = +A.members, lN = +A.logbook; if (!Number.isInteger(mN) || mN < 1 || mN > 5000 || !Number.isInteger(lN) || lN < 1000 || lN > 1000000) return send(res, 400, { error: 'Members 1 to 5000, logbook 1000 to 1000000.' });
+          D.meta.caps = { members: mN, logbook: lN }; audit('Site admin', `Set limits: ${mN} members, ${lN} logbook entries`); alog(`Set limits for "${nm}" (${wid}): ${mN} members, ${lN} logbook entries`); return ok(res);
+        }
+        if (A.op === 'wsRemind') { // an Inbox notice and Home banner for the owner
+          const sv = scriptInfo().outdated, cv = clientInfo().outdated; if (!sv && !cv) return send(res, 400, { error: 'This workspace is up to date.' });
+          const text = `A newer Sentinel ${sv && cv ? 'game script and player script are' : sv ? 'game script is' : 'player script is'} available. Open Settings, then Game, and paste the new version into your game.`;
+          D.notices = [...(D.notices || []).filter(n => n && n.kind !== 'update' && n.exp > Date.now()), { id: rnd(6), kind: 'update', t: Date.now(), exp: Date.now() + 14 * 864e5, title: 'Please update your Sentinel scripts', text }];
+          audit('Site admin', 'Sent a reminder to update the Sentinel scripts'); alog(`Reminded "${nm}" (${wid}) to update its scripts`); return ok(res);
         }
         if (A.op === 'wsRename') { const n2 = cleanName(A.name); if (n2.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = n2; audit('Site admin', `Renamed the workspace from "${nm}"`); alog(`Renamed workspace ${wid} from "${nm}" to "${n2}"`); return ok(res); }
         if (A.op === 'wsSuspend') {
@@ -1408,7 +1848,7 @@ async function route(req, res, url, p) {
         const q = String(A.q || '').trim().toLowerCase(); if (q.length < 2) return send(res, 400, { error: 'Type at least 2 characters.' });
         const rows = await sbGet('select=key,name:value->name,provider:value->provider,workspaces:value->workspaces,roblox:value->roblox,mfaOn:value->mfa->on,revoked:value->revoked,created:value->created&key=like.u:*');
         const names = Object.fromEntries((await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta).map(r => [r.key.slice(1, 13), { name: r.meta.name, deleted: !!r.meta.deleted, owner: r.meta.owner }]));
-        const hit = rows.filter(r => { const id = r.key.slice(2); return id.toLowerCase().includes(q) || String(r.name || '').toLowerCase().includes(q) || String((r.roblox && r.roblox.name) || '').toLowerCase().includes(q); }).slice(0, 30);
+        const hit = rows.filter(r => { const id = r.key.slice(2); return id.toLowerCase().includes(q) || String(r.name || '').toLowerCase().includes(q) || String((r.roblox && r.roblox.name) || '').toLowerCase().includes(q) || String((r.roblox && r.roblox.id) || '') === q; }).slice(0, 30); // name, Roblox name or Roblox id
         return send(res, 200, { items: hit.map(r => { const id = r.key.slice(2); return { id, name: r.name, provider: r.provider, roblox: r.roblox ? r.roblox.name || null : null, mfa: !!r.mfaOn, revoked: r.revoked || null, created: r.created || null, workspaces: (r.workspaces || []).filter(w => names[w]).map(w => ({ id: w, name: names[w].name, deleted: names[w].deleted, owner: names[w].owner === id })) }; }) });
       }
       if (['userSignOut', 'userDelete', 'userExport'].includes(A.op)) {
@@ -1521,11 +1961,11 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
       const b = await body(req), k = String(b.key || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
       if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
-      const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 40, 60000) || limit('sync:' + wid, 400, 60000); if (w1) return tooMany(res, w1);
+      const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 40, 60000) || limit('sync:' + wid, 400, 60000); if (w1) { logEvent('rate_limit', 'Game sync from server ' + job.slice(0, 8) + ' was slowed down', wid); return tooMany(res, w1); }
       setWid(wid);
       const ev = Array.isArray(b.events) ? b.events : [], chatty = ev.some(e => e && (e.type === 'chat' || e.type === 'modcall'));
       const shards = [...new Set([...(Array.isArray(b.players) ? b.players : []), ...ev].map(x => x && Number.isInteger(x.userId) && x.userId > 0 ? shOf(x.userId) : null).filter(Boolean))];
-      await need('core', 'play', 'live', 'cmds', ...shards, ...(chatty ? ['chat'] : []), ...(ev.some(e => e && e.type === 'modcall') ? ['calls'] : []));
+      await need('core', 'play', 'live', 'cmds', 'cbo', ...shards, ...(chatty ? ['chat'] : []), ...(ev.some(e => e && e.type === 'modcall') ? ['calls'] : []));
       if (!D.meta || D.meta.deleted) return send(res, 403, { error: 'bad key' });
       if (D.meta.suspended) return send(res, 403, { error: 'This workspace is suspended. Contact the Sentinel team.' });
       if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
@@ -1547,7 +1987,12 @@ async function route(req, res, url, p) {
     // ---- the website ----
     if (!p.startsWith('/api/') && p !== '/logout') return send(res, 404, { error: 'not found' });
     const w0 = limit('ip:' + ip, 300, 60000); if (w0) return tooMany(res, w0);
-    const ck = cookiesOf(req), uid = sessionUid(req);
+    const ck = cookiesOf(req), VA = viewAsOf(req), uid = VA ? VA.u : sessionUid(req);
+    if (VA) { // the site admin's read-only support view of one workspace, as its owner
+      ck.ws = VA.w; CTX.ro = true;
+      if (p === '/logout') { res.setHeader('Set-Cookie', clearCookie('va')); return ok(res); }
+      if (req.method !== 'GET') return send(res, 403, { error: 'This is a read-only support view. Nothing can be changed here.', code: 'readonly' });
+    }
     if (req.method === 'POST' && p === '/logout') { res.setHeader('Set-Cookie', [clearCookie('sid'), clearCookie('ws'), clearCookie('mp')]); return ok(res); }
 
     if (req.method === 'POST' && p === '/api/mfa/login') {
@@ -1562,7 +2007,7 @@ async function route(req, res, url, p) {
       const base = { providers: providers(), signupsOpen: SIGNUPS_OPEN, user: null, workspaces: [], current: null, maxPerUser: MAX_PER_USER, announce: G.announce || null, maint: G.maint && G.maint.on ? { message: G.maint.message || '', full: !!G.maint.full } : null };
       if (!uid) { const mp = unpack(cookiesOf(req).mp); return send(res, 200, mp && /^[gr]_\d{1,32}$/.test(mp.u || '') ? { ...base, pending2fa: true } : base); }
       setUid(uid); await need('user'); if (!U) return send(res, 200, base);
-      if (revoked(U, req)) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 200, base); }
+      if (!VA && revoked(U, req)) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 200, base); }
       const ids = U.workspaces.filter(w => /^[a-f0-9]{12}$/.test(w)); let list = [], rows0 = [];
       if (ids.length) {
         const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,meta:value->meta,members:value->members,ranks:value->ranks&key=in.(${ids.map(w => `w${w}:core`).join(',')})`, { headers: sbHeaders() });
@@ -1574,7 +2019,7 @@ async function route(req, res, url, p) {
       const cur = list.find(x => x.id === ck.ws) ? ck.ws : (list[0] && list[0].id) || null;
       if (cur && cur !== ck.ws) res.setHeader('Set-Cookie', mkCookie('ws', cur, { maxAge: 31536000 }));
       const roblox = uid[0] === 'r' ? { id: uid.slice(2), name: U.name, viaLogin: true } : U.roblox || null;
-      return send(res, 200, { ...base, user: { id: uid, name: U.name, provider: U.provider, roblox, mfa: !!(U.mfa && U.mfa.on) }, workspaces: list, current: cur });
+      return send(res, 200, { ...base, ...(VA ? { viewAs: { exp: VA.e, workspace: VA.w } } : {}), user: { id: uid, name: U.name, provider: U.provider, roblox, mfa: !!(U.mfa && U.mfa.on) }, workspaces: list, current: cur });
     }
     if (p === '/api/gjoin/info') {
       const w = limit('gjinfo:' + ip, 30, 60000); if (w) return tooMany(res, w);
@@ -1634,6 +2079,7 @@ async function route(req, res, url, p) {
       setWid(code.slice(0, 12)); await need('user', 'core'); if (!U) return send(res, 401, { error: 'Please sign in', code: 'signin' });
       if (D.meta && D.members[uid]) { res.setHeader('Set-Cookie', mkCookie('ws', CTX.wid, { maxAge: 31536000 })); return send(res, 200, { ok: true, id: CTX.wid }); }
       const inv = D.meta && !D.meta.deleted && D.invites[code]; if (!inv || inv.exp < Date.now()) return send(res, 404, { error: 'This invite has expired or was already used.' });
+      if (Object.keys(D.members).length >= capOf('members')) return send(res, 403, { error: 'This workspace has reached its member limit. Ask the owner to contact the Sentinel team.' });
       const irank = D.ranks[inv.rank];
       if (irank && irank.perms.some(x => ADMINP.includes(x)) && !inv.lock) return send(res, 403, { error: 'This invite is for a rank with admin powers but is not locked to a Roblox account, so it cannot be used. Ask for a new one.' });
       if (inv.lock) { // only the Roblox account the invite was made for can use it
@@ -1670,7 +2116,7 @@ async function route(req, res, url, p) {
     if (!/^[a-f0-9]{12}$/.test(ck.ws || '')) return send(res, 409, { error: 'Choose a workspace', code: 'no_workspace' });
     setWid(ck.ws); await need('core', 'user', 'glob', ...(NEEDS[p] || []));
     if (G.maint && G.maint.on) return send(res, 503, { error: G.maint.message || 'Sentinel is down for a short maintenance break. Please check back soon.', code: 'maintenance' });
-    if (!U || revoked(U, req)) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 401, { error: 'Please sign in again.', code: 'signin' }); }
+    if (!U || (!VA && revoked(U, req))) { res.setHeader('Set-Cookie', clearCookie('sid')); return send(res, 401, { error: 'Please sign in again.', code: 'signin' }); }
     if (!D.meta || D.meta.deleted) return send(res, 404, { error: 'That workspace no longer exists', code: 'no_workspace' });
     const mem = D.members[uid]; if (!mem) return send(res, 403, { error: 'You are not a member of this workspace', code: 'no_workspace' });
     if (D.meta.suspended) return send(res, 403, { error: 'This workspace is suspended' + (D.meta.suspended.reason ? ': ' + D.meta.suspended.reason : '.') + ' Contact the Sentinel team if you think this is a mistake.', code: 'suspended' });
@@ -1679,7 +2125,7 @@ async function route(req, res, url, p) {
       const rid = uid[0] === 'r' ? uid.slice(2) : (U.roblox && U.roblox.id) || null; if ((mem.robloxId || null) !== rid) mem.robloxId = rid;
     }
     const u = who(uid);
-    if (D.meta.require2fa && isAdminLevel(u) && !(U && U.mfa && U.mfa.on)) { // this workspace requires two-step for administrators
+    if (!VA && D.meta.require2fa && isAdminLevel(u) && !(U && U.mfa && U.mfa.on)) { // this workspace requires two-step for administrators
       if (p === '/api/state') return send(res, 200, { need2fa: true, me: { uid, name: mem.name, owner: u.isOwner, pos: 0, perms: [], rank: mem.rank }, workspace: { id: CTX.wid, name: D.meta.name } });
       return send(res, 403, { error: 'This workspace requires two-step verification for your role. Turn it on in Settings, Security.', code: 'need2fa' });
     }
@@ -1703,7 +2149,7 @@ async function route(req, res, url, p) {
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000) })),
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
-        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
+        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), features: { chatLogs: feat('chatLogs'), machineBans: feat('machineBans') }, ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
         invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by, lock: i.lock ? i.lock.name : null })) : [],
@@ -1715,7 +2161,7 @@ async function route(req, res, url, p) {
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
-        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, approvals: D.settings.approvals || {}, pending: (D.pending || []).filter(x => now - x.t < APPR_MS).map(x => ({ id: x.id, kind: x.kind, text: x.text, by: x.by, t: x.t, reason: x.reason, mine: x.byUid === uid, can: canApprove(x, u, uid) })).filter(x => x.mine || x.can), sync: has(u, 'automations.manage') ? { from: (D.settings.sync || {}).from || [] } : null, signalsDone: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status !== 'open').sort((a, b) => (b[1].done || b[1].t) - (a[1].done || a[1].t)).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], watch: D.watch,
+        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, cuss: has(u, 'automations.manage') ? cussList() : null, cussDefault: !D.cussWords, chatDays: chatDays(), notices: (u.isOwner || has(u, 'automations.manage')) ? (D.notices || []).filter(n => n.exp > Date.now()) : [], announcements: annFor(u), limits: u.isOwner ? { members: { n: Object.keys(D.members).length, max: capOf('members') }, logbook: { n: D.meta.logN || 0, max: capOf('logbook') } } : null, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, approvals: D.settings.approvals || {}, pending: (D.pending || []).filter(x => now - x.t < APPR_MS).map(x => ({ id: x.id, kind: x.kind, text: x.text, by: x.by, t: x.t, reason: x.reason, mine: x.byUid === uid, can: canApprove(x, u, uid) })).filter(x => x.mine || x.can), sync: has(u, 'automations.manage') ? { from: (D.settings.sync || {}).from || [] } : null, signalsDone: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status !== 'open').sort((a, b) => (b[1].done || b[1].t) - (a[1].done || a[1].t)).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], watch: D.watch,
         staffWeek: Object.entries(D.audit.filter(a => a.t > now - 7 * 864e5 && a.user && a.user !== 'Automation').reduce((m, a) => (m[a.user] = (m[a.user] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([user, n]) => ({ user, n })),
         rules: Object.fromEntries(Object.keys(DEFAULT_RULES).map(k => [k, rule(k)])), stats: { ...D.stats, activeBans: bans.length, activeMutes: mutes.length } });
     }
@@ -1746,7 +2192,10 @@ async function route(req, res, url, p) {
       if (q) all = all.filter(e => `${e.name} ${e.reason} ${e.by}`.toLowerCase().includes(q));
       all.sort((a, b) => b.time - a.time); return send(res, 200, { entries: all.slice(0, 200).map(e => ({ ...e, ...entryState(e, e.userId) })), total: all.length });
     }
-    if (req.method === 'POST' && p === '/api/action') { const [c, o] = doAction(u, uid, B); return send(res, c, o); }
+    if (req.method === 'POST' && p === '/api/action') {
+      if (Array.isArray(B.boxes) && B.boxes.length) B.boxes = feat('chatLogs') ? await ownBoxes(B.boxes) : []; // chat log boxes attached as evidence, only this workspace's
+      const [c, o] = doAction(u, uid, B); return send(res, c, o);
+    }
     if (req.method === 'GET' && p === '/api/entry') {
       const id = +url.searchParams.get('userId'), e = (D.logs[id] || []).find(x => x.id === url.searchParams.get('id'));
       return e ? send(res, 200, { entry: { ...e, userId: id, ...entryState(e, id) } }) : send(res, 404, { error: 'That entry no longer exists.' });
@@ -1794,15 +2243,38 @@ async function route(req, res, url, p) {
       }
       return ok(res);
     }
+    if (req.method === 'POST' && p === '/api/call' && B.op === 'fromBox') { // "Report this box" from Chat logs: a new report with the box attached
+      if (!feat('chatLogs')) return send(res, 404, { error: 'Chat logs are not turned on for this workspace yet.' });
+      if (!has(u, 'chatlogs.view')) return deny(res);
+      const id = String(B.id || '').toUpperCase(); if (!BOX_ID_RE.test(id)) return send(res, 400, { error: 'That is not a chat box ID.' });
+      let bx = null; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,server,msgs&wid=eq.${CTX.wid}&id=eq.${id}`, { ms: 4000 }); if (r.ok) bx = (await r.json())[0] || null; } catch {}
+      if (!bx) return send(res, 404, { error: 'No chat box with that ID in this workspace.' });
+      const note = cleanName(B.note, 200), msgs = (bx.msgs || []).slice(0, 15);
+      const call = { id: ++D.callSeq, t: Date.now(), from: { userId: 0, name: u.user }, staff: true, text: `Chat box ${id} reported by ${u.user}${note ? ': ' + note : ''}`, server: String(bx.server || '').slice(0, 8), status: 'open', by: null, note: '', box: id, chat: msgs.map(m => ({ t: m.t, userId: m.userId, name: m.name, text: m.text, flagged: !!(m.flags && m.flags.length) })) };
+      D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++; feed(`Report #${call.id}: chat box ${id}`, u.user); audit(u.user, `Reported chat box ${id}`);
+      return send(res, 200, { ok: true, id: call.id });
+    }
     if (req.method === 'POST' && p === '/api/call') {
       if (!has(u, 'reports.handle')) return deny(res);
       const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
-      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
+      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; if (c.from.userId > 0) cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
       else if (B.op === 'resolve' && c.status !== 'resolved') {
         c.status = 'resolved'; c.by = c.by || u.user; c.note = cleanName(B.note, 200); c.resolved = Date.now();
-        cmd({ type: 'message', kind: 'ok', title: 'Report resolved', body: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}`, userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
+        if (c.from.userId > 0) cmd({ type: 'message', kind: 'ok', title: 'Report resolved', body: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}`, userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
       }
       return ok(res);
+    }
+    if (p.startsWith('/api/chatlogs') && !feat('chatLogs')) return send(res, 404, { error: 'Chat logs are not turned on for this workspace yet.', off: true });
+    if (p === '/api/chatlogs' || p === '/api/chatlogs/box') { if (!has(u, 'chatlogs.view')) return deny(res); return chatLogs(url, p, res); }
+    if (p === '/api/chatlogs/usage') { // Settings: how much of the chat log limit this workspace uses
+      if (!u.isOwner && !has(u, 'chatlogs.view')) return deny(res);
+      let x = null; try { const r = await cbFetch('rpc/chat_box_usage', { method: 'POST', body: JSON.stringify({ w: CTX.wid }), ms: 4000 }); if (r.ok) x = (await r.json())[0] || { n: 0, bytes: 0 }; } catch {}
+      return send(res, 200, x ? { setup: true, days: chatDays(), n: +x.n || 0, bytes: +x.bytes || 0, maxN: CB_MAX_N, maxBytes: CB_MAX_BYTES } : { setup: false, days: chatDays() });
+    }
+    if (req.method === 'POST' && p === '/api/cusswords') { // the swear word and slur list behind the chat log flags
+      if (!has(u, 'automations.manage')) return deny(res);
+      const tidy = a => [...new Set((Array.isArray(a) ? a : []).map(w => String(w).toLowerCase().replace(/[^a-z*]/g, '').slice(0, 30)).filter(w => w.length >= 2))].slice(0, 300);
+      D.cussWords = B.reset ? null : { mild: tidy(B.mild), strong: tidy(B.strong) }; audit(u.user, B.reset ? 'Reset the chat log word list' : 'Updated the chat log word list'); return ok(res);
     }
     if (req.method === 'POST' && p === '/api/flagwords') {
       if (!has(u, 'automations.manage')) return deny(res);
@@ -1853,6 +2325,7 @@ async function route(req, res, url, p) {
         const r = D.ranks[B.rank]; if (!r) return send(res, 400, { error: 'Pick a rank' });
         if (!above(u, r.pos)) return send(res, 403, { error: 'You can only invite people to ranks below your own.' });
         if (Object.keys(D.invites).length >= 20) return send(res, 400, { error: 'Too many open invites. Revoke some first.' });
+        if (Object.keys(D.members).length >= capOf('members')) return send(res, 400, { error: `Your workspace has reached its limit of ${capOf('members')} members.` });
         if (Object.keys(D.members).length >= 50) return send(res, 400, { error: 'This workspace is full (50 people).' });
         const hrs = [1, 24, 72, 168].includes(+B.hours) ? +B.hours : 24, uname = cleanName(B.roblox, 40).replace(/^@/, '');
         let lock = null;
@@ -2196,6 +2669,7 @@ async function route(req, res, url, p) {
         D.meta.oc = { ...(D.meta.oc || {}), ...(key ? { key: ocEnc(key) } : {}), universe: uni, last: null }; delete D.meta.oc.uni; audit(u.user, 'Saved the Roblox Open Cloud key'); return ok(res);
       }
       if (B.op === 'ocmachine') { if (!D.meta.oc || !D.meta.oc.key) return send(res, 400, { error: 'Save a Roblox API key first.' }); D.meta.oc.machine = !!B.on; audit(u.user, B.on ? 'Turned on machine bans (Roblox alt detection)' : 'Turned off machine bans'); return ok(res); }
+      if (B.op === 'chatdays') { const d = +B.days; if (![7, 14, 30].includes(d)) return send(res, 400, { error: 'Pick 7, 14 or 30 days.' }); D.settings.chatDays = d; audit(u.user, `Set chat logs to be kept for ${d} days`); return ok(res); }
       if (B.op === 'occlear') { delete D.meta.oc; audit(u.user, 'Removed the Roblox Open Cloud key'); return ok(res); }
       if (B.op === 'rename') { const nm = cleanName(B.name); if (nm.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = nm; audit(u.user, 'Renamed the workspace'); return ok(res); }
       if (B.op === 'rotatekey') { D.meta.rot = (D.meta.rot || 0) + 1; const nc = newCode(CTX.wid); D.meta.codeHash = nc.hash; audit(u.user, 'Made a new game code'); return send(res, 200, { ok: true, code: nc.code }); }
@@ -2219,24 +2693,16 @@ async function route(req, res, url, p) {
       const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
       const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
-        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id) };
+        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id) };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
     }
     if (req.method === 'POST' && p === '/api/erase') {
       if (!has(u, 'privacy.manage')) return deny(res);
       const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
-      const names = new Set([D.play[id]?.name, D.bans[id]?.name, D.mutes[id]?.name, ...D.calls.filter(c => c.from.userId === id).map(c => c.from.name), ...R.chat.filter(m => m.userId === id).map(m => m.name), ...(D.logs[id] || []).map(e => e.name)].filter(Boolean));
-      await need(shOf(id)); if (D.hist[id % SH]) delete D.hist[id % SH][id];
-      delete D.logs[id]; delete D.play[id]; delete D.mutes[id];
-      if (D.bans[id]) D.bans[id] = { userId: id, name: 'User ' + id, reason: 'Retained for community safety', time: D.bans[id].time, expires: D.bans[id].expires };
-      D.calls = D.calls.filter(c => c.from.userId !== id); D.calls.forEach(c => c.chat = c.chat.filter(m => m.userId !== id)); R.chat = R.chat.filter(m => m.userId !== id);
-      if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
-      const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
-      D.feed.forEach(f => f.text = scrub(f.text)); D.audit.forEach(a => a.text = scrub(a.text));
-      audit(u.user, `Erased stored data for user ${id}`); return ok(res);
+      await erasePlayer(id); audit(u.user, `Erased stored data for user ${id}`); return ok(res);
     }
     send(res, 404, { error: 'not found' });
-  } catch (e) { res.failed = true; send(res, 500, { error: String(e) }); await opsAlert('Sentinel server error', `${req.method} ${String(req.url || '').split('?')[0].slice(0, 80)}\n${String((e && e.message) || e).slice(0, 400)}`); }
+  } catch (e) { res.failed = true; if (p === '/game/sync') logEvent('sync_error', String((e && e.message) || e)); send(res, 500, { error: String(e) }); await opsAlert('Sentinel server error', `${req.method} ${String(req.url || '').split('?')[0].slice(0, 80)}\n${String((e && e.message) || e).slice(0, 400)}`); }
 }
 
 // ---- one request: read body, run, save, replay if another request got there first ----
@@ -2257,9 +2723,11 @@ async function handle(req, res) {
   for (let attempt = 0; attempt < 6; attempt++) {
     resetState();
     const out = makeOut();
+    await flagsLoad().catch(() => {});
     await route(req, out, url, p);
+    if (CTX.ro) { await sendEvents(); return flush(out, res); } // read-only support view: nothing is saved, sent to games or posted
     if (!out.failed) await runOC().catch(() => {});
-    if (out.failed || await commit()) { await sendHooks(); await sendBot(); for (const f of out.after) await f().catch(() => {}); return flush(out, res); }
+    if (out.failed || await commit()) { await sendHooks(); await sendBot(); if (!out.failed) await sendBoxes(); await sendEvents(); for (const f of out.after) await f().catch(() => {}); return flush(out, res); }
     await new Promise(r => setTimeout(r, 25 + Math.random() * 100)); // lost a race with another request: run again on fresh data
   }
   res.statusCode = 503; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'Busy, please try again' }));
