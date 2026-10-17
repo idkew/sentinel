@@ -28,7 +28,7 @@ local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
 local MODCALL_COOLDOWN = 30 -- seconds between ModCalls per player
-local LOGO_IMAGE = 0 -- the Sentinel logo on in-game banners: upload logo-512.png in Studio (Asset Manager, Images) and put its image id here. 0 = no logo
+local LOGO_IMAGE = 125769810744796 -- the Sentinel logo on in-game banners: upload logo-512.png in Studio (Asset Manager, Images) and put its image id here. 0 = no logo
 
 local pending, muted, busy = {}, {}, false
 local chatOff = {} -- muted players whose chat box is taken away (the rest of the muted can type, but nobody sees it)
