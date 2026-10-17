@@ -322,8 +322,10 @@ async function ocPatch(uni, userId, key, mask) {
   return { r, text: (await r.text().catch(() => '')).slice(0, 300) };
 }
 async function runOC() {
+  if (D.meta && D.meta.oc && D.meta.oc.retry) { const now = Date.now(), r = D.meta.oc.retry.filter(x => now - x.first < KEEP_MS); D.meta.oc.retry = r.filter(x => x.at > now); r.filter(x => x.at <= now).forEach(x => OCQ.push(x.id)); if (!D.meta.oc.retry.length) delete D.meta.oc.retry; } // unbans Roblox refused with 429 are tried again later
   if (!OCQ.length || !D.meta || !D.meta.oc) { OCQ = []; return; }
   const ids = [...new Set(OCQ)].slice(0, 5); OCQ = []; const o = D.meta.oc, key = ocDec(o.key);
+  const retryLater = id => { const old = (o.retry || []).find(x => x.id === id); o.retry = (o.retry || []).filter(x => x.id !== id).concat({ id, at: Date.now() + 120000, first: old ? old.first : Date.now() }).slice(-50); };
   for (const id of ids) {
     let ok = false, msg = '';
     try {
@@ -331,7 +333,8 @@ async function runOC() {
       const uni = o.universe || o.uni || await ocUniverse(); let x = await ocPatch(uni, id, key, true);
       if (x.r.status === 400) x = await ocPatch(uni, id, key, false);
       ok = x.r.ok; msg = ok ? 'Lifted' : `Roblox said ${x.r.status}${x.r.status === 401 || x.r.status === 403 ? ' (check the key, its permission, and that it covers this experience)' : x.r.status === 404 ? ' (that player has no Roblox ban here, or the Universe ID is wrong)' : ''}: ${x.text.replace(/\s+/g, ' ').slice(0, 140)}`;
-      if (x.r.status === 429) msg = 'Roblox is limiting changes to this player because they were banned or unbanned moments ago. A running game server still lifts the ban; otherwise lift it again in a few minutes.';
+      if (x.r.status === 429) { retryLater(id); msg = 'Roblox asked Sentinel to slow down for this player (they were banned or unbanned moments ago). Sentinel will try again in a couple of minutes, and a running game server can also lift it.'; }
+      else if (ok) o.retry = (o.retry || []).filter(r => r.id !== id);
       if (x.r.status === 404 && /not.?found/i.test(x.text)) { ok = true; msg = 'No ban found on Roblox, so nothing to lift'; }
     } catch (e) { msg = String(e.message || e).slice(0, 200); }
     o.last = { t: Date.now(), userId: id, ok, msg }; if (!ok) audit('Sentinel', `Could not lift the Roblox ban on ${id}: ${msg}`);
