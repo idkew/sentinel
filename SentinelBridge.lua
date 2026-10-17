@@ -23,11 +23,12 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 18 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 19 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
 local MODCALL_COOLDOWN = 30 -- seconds between ModCalls per player
+local LOGO_IMAGE = 0 -- the Sentinel logo on in-game banners: upload logo-512.png in Studio (Asset Manager, Images) and put its image id here. 0 = no logo
 
 local pending, muted, busy = {}, {}, false
 local chatOff = {} -- muted players whose chat box is taken away (the rest of the muted can type, but nobody sees it)
@@ -56,6 +57,14 @@ local NOTICE_STYLES = {
 	blue = { color = Color3.fromRGB(10, 132, 255), glyph = "i", title = "Notice" },
 	green = { color = Color3.fromRGB(48, 209, 88), glyph = "\u{2713}", title = "Done" },
 }
+-- the Sentinel logo on every banner. The game script puts its LOGO_IMAGE on ReplicatedStorage.SentinelNotice, so both scripts show the same one
+local function noticeLogo()
+	local ev = ReplicatedStorage:FindFirstChild("SentinelNotice")
+	local id = ev and ev:GetAttribute("Logo")
+	if typeof(id) == "string" then id = tonumber(string.match(id, "%d+")) end
+	if typeof(id) == "number" and id > 0 then return "rbxassetid://" .. string.format("%d", id) end
+	return nil
+end
 local RING_R, RING_T, RING_M = 18, 2, 8 -- corner radius, line thickness, spare room round the card so the line is never cut off
 
 -- Which parts of the card's border are drawn once the timer is p (0 to 1) of the way round.
@@ -106,6 +115,7 @@ end
 
 local function buildNotice(gui, text, kind, title, fixed)
 	local st = NOTICE_STYLES[kind] or NOTICE_STYLES.red
+	local logo = noticeLogo()
 	local R, T, M = RING_R, RING_T, RING_M
 	local function make(class, props, parent)
 		local o = Instance.new(class)
@@ -147,7 +157,10 @@ local function buildNotice(gui, text, kind, title, fixed)
 		inner.Size = UDim2.new(1, 0, 0, 0)
 		inner.AutomaticSize = Enum.AutomaticSize.Y
 	end
-	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 18) }, inner)
+	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, logo and 40 or 18) }, inner)
+	if logo then
+		make("ImageLabel", { Name = "Logo", Image = logo, BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromOffset(20, 20), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), ScaleType = Enum.ScaleType.Fit, ZIndex = 2 }, card)
+	end
 	local row = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, inner)
 	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, row)
 
@@ -233,6 +246,7 @@ if not noticeEvent then
 	noticeEvent.Name = "SentinelNotice"
 	noticeEvent.Parent = ReplicatedStorage
 end
+noticeEvent:SetAttribute("Logo", LOGO_IMAGE)
 local clientReady, clientVer, activeBanner = {}, {}, {}
 noticeEvent.OnServerEvent:Connect(function(plr, msg, ver)
 	if msg ~= "ready" then return end
@@ -250,7 +264,7 @@ end
 local function serverBanner(plr, pg, text, kind, title)
 	if activeBanner[plr] then activeBanner[plr]:Destroy() end
 	local okSize, size = pcall(function()
-		return TextService:GetTextSize(text, 13, Enum.Font.GothamMedium, Vector2.new(340 - 14 - 18 - 42, 1000))
+		return TextService:GetTextSize(text, 13, Enum.Font.GothamMedium, Vector2.new(340 - 14 - (noticeLogo() and 40 or 18) - 42, 1000))
 	end)
 	local bodyH = okSize and size.Y or 16 * math.ceil(#text / 36)
 	local gui = Instance.new("ScreenGui")
