@@ -73,7 +73,7 @@ const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhoo
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
@@ -104,7 +104,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -168,7 +168,7 @@ function migrate() { // bring older workspaces up to date
   if (!D.meta.v4) { D.meta.v4 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('mod.unban') && !r.perms.includes('appeals.review')) r.perms.push('appeals.review'); }
   D.rulebook ||= []; D.loa ||= []; if (!D.daily || Array.isArray(D.daily)) D.daily = {};
   D.discordCodes ||= {}; D.pending ||= []; D.syncSeen ||= {}; if (D.webhook && D.webhook.events && !('approvals' in D.webhook.events)) D.webhook.events.approvals = true;
-  D.signals ||= {}; if (D.webhook && D.webhook.events && !('signals' in D.webhook.events)) D.webhook.events.signals = true;
+  D.signals ||= {}; if (!D.meta.v8) { D.meta.v8 = 1; D.kicks ||= []; } D.kicks ||= []; if (D.webhook && D.webhook.events && !('signals' in D.webhook.events)) D.webhook.events.signals = true;
   D.shifts ||= []; if (D.webhook && D.webhook.events && !('shifts' in D.webhook.events)) D.webhook.events.shifts = true;
   if (!D.meta.v6) { D.meta.v6 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage') && !r.perms.includes('shifts.manage')) r.perms.push('shifts.manage'); }
   D.forms ||= []; D.formsNew ||= 0; if (D.webhook && D.webhook.events && !('forms' in D.webhook.events)) D.webhook.events.forms = true;
@@ -282,6 +282,7 @@ const isAdminLevel = u => !!u && (u.isOwner || ADMINP.some(x => u.perms.has(x)))
 const RBX_USERS = env.RBXUSERS_TEST_BASE || 'https://users.roblox.com'; // the override is for tests only
 // ---- Roblox group rank sync (one way: the group decides Sentinel ranks; Sentinel never changes the group) ----
 const RBX_GROUPS = env.RBXGROUPS_TEST_BASE || 'https://groups.roblox.com'; // the override is for tests only
+const RBX_FRIENDS = env.RBXFRIENDS_TEST_BASE || 'https://friends.roblox.com'; // the override is for tests only
 const gget = async u => { const r = await fetch(RBX_GROUPS + u, { signal: AbortSignal.timeout(5000) }); if (!r.ok) throw new Error(`Roblox groups said ${r.status}`); return r.json(); };
 async function groupInfo(id) { const [g, r] = await Promise.all([gget(`/v1/groups/${id}`), gget(`/v1/groups/${id}/roles`)]); return { id: String(id), name: cleanName(g.name, 60), roles: (r.roles || []).filter(x => x.rank > 0).map(x => ({ id: String(x.id), name: cleanName(x.name, 40), rank: x.rank })).sort((a, b) => b.rank - a.rank) }; }
 async function groupRoleOf(gid, robloxId) { const j = await gget(`/v2/users/${robloxId}/groups/roles`); const e = (j.data || []).find(x => x.group && String(x.group.id) === String(gid)); return e ? String(e.role.id) : null; }
@@ -312,34 +313,41 @@ async function rbxUser(name) { // the real Roblox account behind a username, or 
   try { const r = await j(RBX_USERS + '/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [name], excludeBannedUsers: false }) }); const u = r.data && r.data[0]; if (u && u.id) return { id: String(u.id), name: cleanName(u.name || name, 40) }; } catch {}
   return null;
 }
-const unbanCmd = userId => { cmd({ type: 'unban', userId }); if (D.meta && D.meta.oc) OCQ.push(+userId); };
+const unbanCmd = userId => { cmd({ type: 'unban', userId }); if (D.meta && D.meta.oc) OCQ.push({ id: +userId, active: false }); };
+const machineOn = () => !!(D.meta && D.meta.oc && D.meta.oc.key && D.meta.oc.machine); // machine bans: Roblox also bans the accounts it links to this player (Roblox does the matching, Sentinel stores no device data)
 async function ocUniverse() {
   const o = D.meta.oc; if (o.universe) return o.universe;
   const place = D.meta.placeId || D.meta.lastPlace; if (!place) throw new Error('Sentinel does not know your game yet. Enter your Universe ID, or start the game once.');
   const r = await sbf(`${RBX_API}/universes/v1/places/${encodeURIComponent(place)}/universe`); const j = await r.json().catch(() => ({}));
   if (!r.ok || !j.universeId) throw new Error('Could not find the universe for place ' + place); o.uni = String(j.universeId); return o.uni;
 }
-async function ocPatch(uni, userId, key, mask) {
-  const r = await sbf(`${RBX_API}/cloud/v2/universes/${uni}/user-restrictions/${userId}${mask ? '?updateMask=gameJoinRestriction' : ''}`, { method: 'PATCH', headers: { 'x-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ gameJoinRestriction: { active: false } }) });
+async function ocPatch(uni, op, key, mask) {
+  const g = op.active ? { active: true, ...(op.seconds > 0 ? { duration: op.seconds + 's' } : {}), privateReason: String(op.private || '').slice(0, 1000), displayReason: String(op.display || '').slice(0, 400), excludeAltAccounts: !op.alts } : { active: false };
+  const r = await sbf(`${RBX_API}/cloud/v2/universes/${uni}/user-restrictions/${op.id}${mask ? '?updateMask=gameJoinRestriction' : ''}`, { method: 'PATCH', headers: { 'x-api-key': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ gameJoinRestriction: g }) });
   return { r, text: (await r.text().catch(() => '')).slice(0, 300) };
 }
 async function runOC() {
-  if (D.meta && D.meta.oc && D.meta.oc.retry) { const now = Date.now(), r = D.meta.oc.retry.filter(x => now - x.first < KEEP_MS); D.meta.oc.retry = r.filter(x => x.at > now); r.filter(x => x.at <= now).forEach(x => OCQ.push(x.id)); if (!D.meta.oc.retry.length) delete D.meta.oc.retry; } // unbans Roblox refused with 429 are tried again later
+  if (D.meta && D.meta.oc && D.meta.oc.retry) { const now = Date.now(), r = D.meta.oc.retry; D.meta.oc.retry = r.filter(x => x.at > now); r.filter(x => x.at <= now).forEach(x => OCQ.push({ id: x.id, active: false, tries: x.tries })); if (!D.meta.oc.retry.length) delete D.meta.oc.retry; } // unbans Roblox refused with 429: at most 3 tries in all
   if (!OCQ.length || !D.meta || !D.meta.oc) { OCQ = []; return; }
-  const ids = [...new Set(OCQ)].slice(0, 5); OCQ = []; const o = D.meta.oc, key = ocDec(o.key);
-  const retryLater = id => { const old = (o.retry || []).find(x => x.id === id); o.retry = (o.retry || []).filter(x => x.id !== id).concat({ id, at: Date.now() + 120000, first: old ? old.first : Date.now() }).slice(-50); };
-  for (const id of ids) {
-    let ok = false, msg = '';
+  const last = new Map(); for (const op of OCQ) last.set(op.id, op); // the newest decision for a player wins
+  const ops = [...last.values()].slice(0, 5); OCQ = []; const o = D.meta.oc, key = ocDec(o.key);
+  for (const op of ops) {
+    const id = op.id, what = op.active ? 'apply the Roblox alt ban to' : 'lift the Roblox ban on'; let ok = false, msg = '';
     try {
       if (!key) throw new Error('The saved Roblox key could not be read. Save it again.');
-      const uni = o.universe || o.uni || await ocUniverse(); let x = await ocPatch(uni, id, key, true);
-      if (x.r.status === 400) x = await ocPatch(uni, id, key, false);
-      ok = x.r.ok; msg = ok ? 'Lifted' : `Roblox said ${x.r.status}${x.r.status === 401 || x.r.status === 403 ? ' (check the key, its permission, and that it covers this experience)' : x.r.status === 404 ? ' (that player has no Roblox ban here, or the Universe ID is wrong)' : ''}: ${x.text.replace(/\s+/g, ' ').slice(0, 140)}`;
-      if (x.r.status === 429) { retryLater(id); msg = 'Roblox asked Sentinel to slow down for this player (they were banned or unbanned moments ago). Sentinel will try again in a couple of minutes, and a running game server can also lift it.'; }
-      else if (ok) o.retry = (o.retry || []).filter(r => r.id !== id);
-      if (x.r.status === 404 && /not.?found/i.test(x.text)) { ok = true; msg = 'No ban found on Roblox, so nothing to lift'; }
+      const uni = o.universe || o.uni || await ocUniverse(); let x = await ocPatch(uni, op, key, true);
+      if (x.r.status === 400) x = await ocPatch(uni, op, key, false);
+      ok = x.r.ok; msg = ok ? (op.active ? 'Machine ban applied' : 'Lifted') : `Roblox said ${x.r.status}${x.r.status === 401 || x.r.status === 403 ? ' (check the key, that it has the User Restrictions write permission, and that it covers this experience)' : x.r.status === 404 ? ' (that player has no Roblox ban here, or the Universe ID is wrong)' : ''}: ${x.text.replace(/\s+/g, ' ').slice(0, 140)}`;
+      if (x.r.status === 429) {
+        const tries = (op.tries || 1) + 1, again = !op.active && tries <= 3; // bans are never retried; an unban gets at most 3 tries, 2 minutes apart
+        if (again) o.retry = (o.retry || []).filter(r => r.id !== id).concat({ id, at: Date.now() + 120000, tries }).slice(-50); else if (!op.active) o.retry = (o.retry || []).filter(r => r.id !== id);
+        msg = 'Roblox asked Sentinel to slow down for this player (they were banned or unbanned moments ago).' + (again ? ' Sentinel will try again in a couple of minutes, and a running game server can also lift it.' : op.active ? ' The normal ban still applies.' : ' A running game server can still lift it, or lift it again later.');
+      } else if (ok && o.retry) o.retry = o.retry.filter(r => r.id !== id);
+      if (!op.active && x.r.status === 404 && /not.?found/i.test(x.text)) { ok = true; msg = 'No ban found on Roblox, so nothing to lift'; }
     } catch (e) { msg = String(e.message || e).slice(0, 200); }
-    o.last = { t: Date.now(), userId: id, ok, msg }; if (!ok) audit('Sentinel', `Could not lift the Roblox ban on ${id}: ${msg}`);
+    o.last = { t: Date.now(), userId: id, ok, msg, ...(op.active ? { machine: true } : {}) };
+    if (!ok) audit('Sentinel', `Could not ${what} ${id}: ${msg}`);
+    if (op.active && op.entry) { const e = (D.logs[id] || []).find(x => x.id === op.entry); if (e) { if (ok) delete e.machineErr; else e.machineErr = msg.slice(0, 200); } }
   }
 }
 const MOD_TYPES = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'];
@@ -409,24 +417,36 @@ async function banSyncPull() { // copy new bans from the owner's other games (ne
   if (n) feed(`Ban sync added ${n} ban${n > 1 ? 's' : ''}`, 'Ban sync');
   const ks = Object.keys(D.syncSeen); if (ks.length > 3000) for (const k of ks.sort((a, b) => D.syncSeen[a] - D.syncSeen[b]).slice(0, ks.length - 3000)) delete D.syncSeen[k];
 }
-async function signalCheck(req, fresh, joined) {
+async function signalCheck(req, fresh, joined) { // alt-account hints for staff. Only public Roblox data; never an automatic action
   if (D.settings.signals === false || !joined.length) return;
   const now = Date.now(), staff = new Set(Object.entries(D.members).map(([mid, m]) => String(m.robloxId || (mid[0] === 'r' ? mid.slice(2) : '')))), bans = Object.values(D.bans).filter(live);
   const cand = [...new Set(joined)].filter(id => !staff.has(String(id)) && !(D.bans[id] && live(D.bans[id])) && !(D.signals[id] && now - D.signals[id].t < 864e5)).slice(0, 20);
-  req._ages ||= {}; let fetched = 0;
+  req._ages ||= {}; req._grp ||= {}; let fetched = 0, calls = 0; const budget = () => calls < 8 && ++calls;
+  const groupsOf = async uid => { if (uid in req._grp) return req._grp[uid]; if (!budget()) return null; let g = null; try { const x = await j(RBX_GROUPS + '/v2/users/' + uid + '/groups/roles'); g = (x && Array.isArray(x.data) ? x.data : []).map(d => d.group || {}).filter(g => g.id && Number.isInteger(g.memberCount) && g.memberCount > 0 && g.memberCount < 500).map(g => ({ id: g.id, name: String(g.name || g.id).slice(0, 60) })); } catch { g = null; } return (req._grp[uid] = g); };
+  const recentBans = bans.slice().sort((a, b) => (b.time || 0) - (a.time || 0)).slice(0, 10);
   for (const id of cand) {
-    const name = (D.play[id] || {}).name || String(id), reasons = [];
-    const sim = bans.find(bn => bn.userId !== id && nameLike(name, bn.name)); let of = null; if (sim) { of = { userId: sim.userId, name: sim.name }; reasons.push({ k: 'name', text: `Name looks like ${sim.name}, who is banned` }); }
+    const name = (D.play[id] || {}).name || String(id), reasons = []; let of = null;
+    const add = (k, w, text, who) => { reasons.push({ k, w, text }); if (who) of ||= { userId: who.userId, name: who.name }; };
+    const sim = bans.find(bn => bn.userId !== id && nameLike(name, bn.name)); if (sim) add('name', 4, `Name looks like ${sim.name}, who is banned`, sim);
     if (fresh.has(id)) {
-      const rb = bans.filter(bn => bn.time && now - bn.time < 36e5 && bn.userId !== id).sort((a, b) => b.time - a.time)[0];
-      if (rb) { of ||= { userId: rb.userId, name: rb.name }; reasons.push({ k: 'ban', text: `First joined ${Math.max(1, Math.round((now - rb.time) / 60000))} min after ${rb.name} was banned` }); }
+      const rb = bans.filter(bn => bn.time && now - bn.time < 36e5 && bn.userId !== id).sort((a, b) => b.time - a.time)[0], rk = (D.kicks || []).filter(k => now - k.t < 36e5 && k.userId !== id).sort((a, b) => b.t - a.t)[0];
+      const last = rb && (!rk || rb.time >= rk.t) ? { who: rb, t: rb.time, what: 'banned' } : rk ? { who: rk, t: rk.t, what: 'kicked' } : null;
+      if (last) add('ban', 2, `First joined ${Math.max(1, Math.round((now - last.t) / 60000))} min after ${last.who.name} was ${last.what}`, last.who);
       if (id in req._ages || fetched < 3) {
         if (!(id in req._ages)) { fetched++; try { const x = await j(RBX_USERS + '/v1/users/' + id); req._ages[id] = x && x.created ? Date.parse(x.created) : null; } catch { req._ages[id] = null; } }
-        const c = req._ages[id]; if (c) { const d = Math.floor((now - c) / 864e5); if (d < 7) reasons.push({ k: 'age', text: `Roblox account is ${d < 1 ? 'less than a day' : d + (d === 1 ? ' day' : ' days')} old` }); }
+        const c = req._ages[id]; if (c) { const d = Math.floor((now - c) / 864e5); if (d < 7) add('age', 1, `Roblox account is ${d < 1 ? 'less than a day' : d + (d === 1 ? ' day' : ' days')} old`); }
+      }
+      if (bans.length && budget()) { // friends with a banned player (public friends list)
+        try { const x = await j(RBX_FRIENDS + '/v1/users/' + id + '/friends'); const ids = new Set((x && Array.isArray(x.data) ? x.data : []).map(f => Number(f.id)));
+          const fb = bans.find(bn => bn.userId !== id && ids.has(Number(bn.userId))); if (fb) add('friend', 3, `Is friends with ${fb.name}, who is banned`, fb); } catch {}
+      }
+      if (recentBans.length) { // a small group (under 500 members) shared with a recently banned player
+        const mine = await groupsOf(id);
+        if (mine && mine.length) for (const bn of recentBans) { if (bn.userId === id) continue; const theirs = await groupsOf(bn.userId); if (!theirs) break; const g = mine.find(x => theirs.some(y => y.id === x.id)); if (g) { add('group', 2, `In the small group ${g.name} with ${bn.name}, who is banned`, bn); break; } }
       }
     }
-    const kinds = new Set(reasons.map(r => r.k));
-    if (kinds.has('name') || kinds.size >= 2) { D.signals[id] = { t: now, name, reasons, status: 'open', strength: kinds.size >= 3 || (kinds.has('name') && kinds.size >= 2) ? 'strong' : 'likely', ...(of ? { of } : {}) }; feed(`Worth a look: ${name}`); notify('signals', `Worth a look: ${name}`, reasons.map(r => '• ' + r.text).join('\n') + '\nThese are hints, not proof. Check before acting.', [], 0xf5a524); }
+    const score = reasons.reduce((n, r) => n + r.w, 0), strength = score >= 6 ? 'strong' : score >= 4 ? 'likely' : score >= 3 ? 'weak' : null; // weights: name 4, friend 3, small group 2, joined after a ban or kick 2, new account 1. One weak sign alone is never a hint
+    if (strength) { D.signals[id] = { t: now, name, reasons, score, status: 'open', strength, ...(of ? { of } : {}) }; feed(`Worth a look: ${name}`); notify('signals', `Worth a look (${strength}): ${name}`, reasons.map(r => '• ' + r.text).join('\n') + '\nThese are hints, not proof. Check before acting.', [], 0xf5a524); }
   }
   const keys = Object.keys(D.signals).sort((a, b) => D.signals[b].t - D.signals[a].t); for (const [i, k] of keys.entries()) if (i >= 100 || now - D.signals[k].t > 14 * 864e5) delete D.signals[k];
 }
@@ -528,17 +548,18 @@ function allPlayers() {
   for (const [j, s] of Object.entries(R.servers)) { if (now - s.last > LIVE_MS) continue; for (const p of s.players) out.push({ ...p, server: j.slice(0, 8) }); }
   return out;
 }
-function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null, extra = null, hide = true }) {
+function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null, extra = null, hide = true, alts = true }) {
   const expires = minutes > 0 ? Date.now() + minutes * 60000 : null;
   const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId, ...(extra || {}) }); feed(`${type}: ${name} (${reason})`, by); return e; };
   if (action === 'ban') {
-    const e = log(expires ? 'Suspended' : 'Banned'); D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
+    const mb = machineOn() && alts !== false, e = log(expires ? 'Suspended' : 'Banned'); if (mb) e.machine = true; D.bans[userId] = { userId, name, reason, time: Date.now(), expires, entry: e.id, by };
     { const sg = D.signals[userId]; if (sg && sg.status === 'open') { sg.status = 'confirmed'; sg.by = by; sg.done = Date.now(); } } // an alt-account hint that ended in a ban
-    cmd({ type: 'ban', userId, reason, display: banText(D.bans[userId], true), seconds: minutes > 0 ? minutes * 60 : -1 }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
+    cmd({ type: 'ban', userId, reason, display: banText(D.bans[userId], true), seconds: minutes > 0 ? minutes * 60 : -1, alts: mb });
+    if (mb) OCQ.push({ id: +userId, active: true, seconds: minutes > 0 ? minutes * 60 : 0, display: banText(D.bans[userId], true), private: `${reason} (by ${by})`, alts: true, entry: e.id }); notify('bans', `${expires ? 'Suspended' : 'Banned'} ${name}`, reason, [['Length', fmtMin(minutes)], ['By', by]], 0xe5484d);
   } else if (action === 'unban') { delete D.bans[userId]; log('Unbanned'); unbanCmd(userId); notify('bans', `Unbanned ${name}`, reason, [['By', by]], 0x30a46c); }
   else if (action === 'mute') { const e = log('Muted'); D.mutes[userId] = { userId, name, reason, expires, entry: e.id, hide: hide !== false }; const len = expires ? 'for ' + fmtMin(minutes) : 'until a moderator lifts it'; const mt = hide !== false ? `You can't chat ${len}. Reason: ${reason}` : `You are muted ${len}. You can still type, but nobody can see your messages. Reason: ${reason}`; cmd({ type: 'message', kind: 'warn', title: 'You were muted', body: mt, userId, text: mt }); }
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
-  else if (action === 'kick') { D.stats.kicks++; log('Kicked'); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
+  else if (action === 'kick') { D.stats.kicks++; log('Kicked'); D.kicks = (D.kicks || []).filter(k => Date.now() - k.t < 36e5).concat({ userId: +userId, name, t: Date.now() }).slice(-50); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
   else if (action === 'warn') {
     log('Warned'); cmd({ type: 'message', kind: 'warn', title: 'Warning', body: reason, userId, text: 'Warning: ' + reason }); notify('warns', `Warned ${name}`, reason, [['By', by]], 0xffc53d);
     let n = 0; // active warnings since the last suspension or ban
@@ -1053,7 +1074,7 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   }
   if (action === 'points') { const amt = clampInt(B.amount, -100000, 100000); if (!amt) return [400, { error: 'Enter a points amount' }]; addPoints(B.userId, nm, amt, reason, u.user, uid); return [200, { ok: true }]; }
   if (action === 'ban' && !(minutes > 0) && !u.isOwner && approvalOn('permBan')) { // permanent bans can need a second person
-    const pl = { userId: B.userId, name: nm, reason, ruleId, ev: cleanLinks(B.evidence, 5), note: cleanName(B.note, 500) };
+    const pl = { userId: B.userId, name: nm, reason, ruleId, ev: cleanLinks(B.evidence, 5), note: cleanName(B.note, 500), ...(B.alts === false ? { alts: false } : {}) };
     if (approverExists('permBan', uid, pl)) { const it = propose('permBan', u, uid, pl, `permanently ban ${nm}`, reason); if (!it) return [429, { error: 'Too many requests are waiting for approval. Ask someone to clear them first.' }]; return [200, { ok: true, pending: true, msg: PEND_MSG }]; }
   }
   if (action === 'unban' && needSecond(u, D.bans[B.userId])) {
@@ -1064,7 +1085,7 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   }
   const ev = cleanLinks(B.evidence, 5), pnote = cleanName(B.note, 500);
   const ctx = B.ctx === false || !['warn', 'kick', 'mute', 'ban'].includes(action) ? [] : R.chat.filter(m => m.userId === B.userId && Date.now() - m.t < 36e5).slice(-15).map(m => ({ t: m.t, text: m.text }));
-  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
+  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, alts: B.alts !== false, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}) } });
   const mw = action === 'mute' ? muteWarn(B.hideChat !== false) : action === 'unban' ? unbanWarn() : null;
   return [200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) }];
     }
@@ -1682,7 +1703,7 @@ async function route(req, res, url, p) {
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000) })),
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
-        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
+        workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
         invites: has(u, 'team.manage') ? Object.entries(D.invites).map(([code, i]) => ({ code, rank: i.rank, exp: i.exp, by: i.by, lock: i.lock ? i.lock.name : null })) : [],
@@ -1948,7 +1969,7 @@ async function route(req, res, url, p) {
         m.rank = pl.rank; audit(u.user, `Approved: set ${m.name} to ${D.ranks[pl.rank].name} (asked by ${it.by})`);
       } else if (it.kind === 'permBan') {
         if (D.bans[pl.userId] && live(D.bans[pl.userId]) && !D.bans[pl.userId].expires) { D.pending = D.pending.filter(x => x !== it); return send(res, 409, { error: `${pl.name} is already permanently banned.` }); }
-        act({ action: 'ban', userId: pl.userId, name: pl.name, reason: cleanName(`${pl.reason} (approved by ${u.user})`, 400), minutes: 0, by: it.by, byUid: it.byUid, ruleId: pl.ruleId || null, extra: { ...(pl.ev && pl.ev.length ? { ev: pl.ev } : {}), ...(pl.note ? { note: pl.note } : {}) } });
+        act({ action: 'ban', userId: pl.userId, name: pl.name, reason: cleanName(`${pl.reason} (approved by ${u.user})`, 400), minutes: 0, by: it.by, byUid: it.byUid, ruleId: pl.ruleId || null, alts: pl.alts !== false, extra: { ...(pl.ev && pl.ev.length ? { ev: pl.ev } : {}), ...(pl.note ? { note: pl.note } : {}) } });
         audit(u.user, `Approved: permanently ban ${pl.name} (asked by ${it.by})`);
       } else if (it.kind === 'wsDelete') {
         await need('glob'); G.workspaces = Math.max(0, G.workspaces - 1); D.meta.deleted = now; audit(u.user, `Approved: delete the workspace (asked by ${it.by})`);
@@ -2110,7 +2131,7 @@ async function route(req, res, url, p) {
       return send(res, 400, { error: 'bad request' });
     }
     // ---- owner only: the game connection ----
-    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null, oc: D.meta.oc ? { universe: D.meta.oc.universe || '', last: D.meta.oc.last || null } : null }); }
+    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null, oc: D.meta.oc ? { universe: D.meta.oc.universe || '', last: D.meta.oc.last || null, machine: !!D.meta.oc.machine } : null }); }
     if (p === '/api/bridge') {
       if (!u.isOwner) return ownerOnly(res);
       if (url.searchParams.get('client')) { // the small optional LocalScript that hides a muted player's chat bar
@@ -2174,6 +2195,7 @@ async function route(req, res, url, p) {
         if (key && (key.length < 20 || key.length > 4000 || !/^[\x21-\x7e]+$/.test(key))) return send(res, 400, { error: key.length < 20 ? 'That key is too short. Copy the whole key from Roblox.' : 'That key has characters a Roblox key never has. Copy it again from Roblox.' });
         D.meta.oc = { ...(D.meta.oc || {}), ...(key ? { key: ocEnc(key) } : {}), universe: uni, last: null }; delete D.meta.oc.uni; audit(u.user, 'Saved the Roblox Open Cloud key'); return ok(res);
       }
+      if (B.op === 'ocmachine') { if (!D.meta.oc || !D.meta.oc.key) return send(res, 400, { error: 'Save a Roblox API key first.' }); D.meta.oc.machine = !!B.on; audit(u.user, B.on ? 'Turned on machine bans (Roblox alt detection)' : 'Turned off machine bans'); return ok(res); }
       if (B.op === 'occlear') { delete D.meta.oc; audit(u.user, 'Removed the Roblox Open Cloud key'); return ok(res); }
       if (B.op === 'rename') { const nm = cleanName(B.name); if (nm.length < 2) return send(res, 400, { error: 'Name is too short' }); D.meta.name = nm; audit(u.user, 'Renamed the workspace'); return ok(res); }
       if (B.op === 'rotatekey') { D.meta.rot = (D.meta.rot || 0) + 1; const nc = newCode(CTX.wid); D.meta.codeHash = nc.hash; audit(u.user, 'Made a new game code'); return send(res, 200, { ok: true, code: nc.code }); }
