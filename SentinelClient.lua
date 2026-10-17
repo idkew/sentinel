@@ -25,7 +25,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local StarterGui = game:GetService("StarterGui")
 
-local CLIENT_VERSION = 3 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
+local CLIENT_VERSION = 4 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
 local player = Players.LocalPlayer
 local savedInput = nil -- what the chat bar was set to before we hid it
 local hidden = false
@@ -70,10 +70,12 @@ local REPORT_COOLDOWN = 30 -- the game script enforces this too
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local C = {
-	bg = Color3.fromRGB(24, 28, 40), card = Color3.fromRGB(36, 42, 60), text = Color3.fromRGB(235, 239, 250),
-	muted = Color3.fromRGB(150, 160, 185), accent = Color3.fromRGB(94, 124, 255), red = Color3.fromRGB(255, 120, 120),
+local C = { -- the website's dark colours
+	bg = Color3.fromRGB(28, 28, 30), card = Color3.fromRGB(44, 44, 46), line = Color3.fromRGB(255, 255, 255), text = Color3.fromRGB(245, 245, 247),
+	muted = Color3.fromRGB(152, 152, 157), accent = Color3.fromRGB(10, 132, 255), red = Color3.fromRGB(255, 105, 97),
 }
+local SANS = "rbxasset://fonts/families/BuilderSans.json" -- Roblox's clean system-style font, the closest match to the website
+local function font(weight) return Font.new(SANS, weight or Enum.FontWeight.Regular) end
 
 local function make(class, props, parent)
 	local o = Instance.new(class)
@@ -89,28 +91,30 @@ local function buildReport()
 	local gui = make("ScreenGui", { Name = "SentinelReport", ResetOnSpawn = false, DisplayOrder = 150 }, player:WaitForChild("PlayerGui"))
 
 	local open = make("TextButton", {
-		Name = "Open", Size = UDim2.fromOffset(74, 32), AnchorPoint = Vector2.new(0, 0.5), Position = BUTTON_POSITION,
-		BackgroundColor3 = C.bg, BackgroundTransparency = 0.1, Text = "Report", TextColor3 = C.text,
-		Font = Enum.Font.GothamMedium, TextSize = 14, AutoButtonColor = true,
+		Name = "Open", Size = UDim2.fromOffset(80, 32), AnchorPoint = Vector2.new(0, 0.5), Position = BUTTON_POSITION,
+		BackgroundColor3 = C.bg, BackgroundTransparency = 0.08, Text = "Report", TextColor3 = C.text,
+		FontFace = font(Enum.FontWeight.SemiBold), TextSize = 15, AutoButtonColor = false,
 	}, gui)
-	make("UICorner", { CornerRadius = UDim.new(1, 0) }, open)
-	make("UIStroke", { Color = C.accent, Thickness = 1.5, Transparency = 0.25 }, open)
+	make("UICorner", { CornerRadius = UDim.new(0, 9) }, open)
+	make("UIStroke", { Color = C.line, Thickness = 1, Transparency = 0.86, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, open)
+	open.MouseEnter:Connect(function() open.BackgroundColor3 = C.card end)
+	open.MouseLeave:Connect(function() open.BackgroundColor3 = C.bg end)
 
 	local panel = make("Frame", {
 		Name = "Panel", Visible = false, Size = UDim2.fromOffset(320, 380), AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5), BackgroundColor3 = C.bg,
 	}, gui)
 	make("UICorner", { CornerRadius = UDim.new(0, 14) }, panel)
-	make("UIStroke", { Color = C.accent, Thickness = 1, Transparency = 0.5 }, panel)
+	make("UIStroke", { Color = C.line, Thickness = 1, Transparency = 0.86, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, panel)
 
 	local function label(text, y, size, color, font)
 		return make("TextLabel", {
 			BackgroundTransparency = 1, Position = UDim2.fromOffset(16, y), Size = UDim2.fromOffset(288, size + 6), Text = text,
-			TextColor3 = color, Font = font, TextSize = size, TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = color, FontFace = font, TextSize = size, TextXAlignment = Enum.TextXAlignment.Left,
 		}, panel)
 	end
-	label("Report a problem", 12, 18, C.text, Enum.Font.GothamBold)
-	label("Who is it about? (optional)", 40, 13, C.muted, Enum.Font.Gotham)
+	label("Report a problem", 12, 18, C.text, font(Enum.FontWeight.Bold))
+	label("Who is it about? (optional)", 40, 13, C.muted, font())
 
 	local list = make("ScrollingFrame", {
 		Position = UDim2.fromOffset(16, 64), Size = UDim2.fromOffset(288, 120), BackgroundColor3 = C.card, BorderSizePixel = 0,
@@ -119,11 +123,11 @@ local function buildReport()
 	make("UICorner", { CornerRadius = UDim.new(0, 8) }, list)
 	make("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, list)
 
-	label("What happened?", 192, 13, C.muted, Enum.Font.Gotham)
+	label("What happened?", 192, 13, C.muted, font())
 	local box = make("TextBox", {
 		Position = UDim2.fromOffset(16, 216), Size = UDim2.fromOffset(288, 86), BackgroundColor3 = C.card, BorderSizePixel = 0,
 		Text = "", PlaceholderText = "Describe it in a sentence or two", PlaceholderColor3 = C.muted, TextColor3 = C.text,
-		Font = Enum.Font.Gotham, TextSize = 14, TextWrapped = true, MultiLine = true, ClearTextOnFocus = false,
+		FontFace = font(), TextSize = 14, TextWrapped = true, MultiLine = true, ClearTextOnFocus = false,
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
 	}, panel)
 	make("UICorner", { CornerRadius = UDim.new(0, 8) }, box)
@@ -132,12 +136,12 @@ local function buildReport()
 		if #box.Text > 200 then box.Text = string.sub(box.Text, 1, 200) end
 	end)
 
-	local status = label("", 306, 12, C.red, Enum.Font.Gotham)
+	local status = label("", 306, 12, C.red, font())
 
 	local function button(text, x, color)
 		local b = make("TextButton", {
 			Position = UDim2.fromOffset(x, 332), Size = UDim2.fromOffset(140, 36), BackgroundColor3 = color, Text = text,
-			TextColor3 = C.text, Font = Enum.Font.GothamMedium, TextSize = 14, AutoButtonColor = true,
+			TextColor3 = C.text, FontFace = font(Enum.FontWeight.SemiBold), TextSize = 15, AutoButtonColor = true,
 		}, panel)
 		make("UICorner", { CornerRadius = UDim.new(0, 8) }, b)
 		return b
@@ -154,7 +158,7 @@ local function buildReport()
 	local function addRow(id, text, order)
 		local row = make("TextButton", {
 			Size = UDim2.new(1, -6, 0, 28), BackgroundColor3 = C.card, BorderSizePixel = 0, Text = "  " .. text, TextColor3 = C.text,
-			Font = Enum.Font.Gotham, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = order, AutoButtonColor = false,
+			FontFace = font(), TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = order, AutoButtonColor = false,
 		}, list)
 		make("UICorner", { CornerRadius = UDim.new(0, 6) }, row)
 		row.Activated:Connect(function()
@@ -230,6 +234,14 @@ local NOTICE_STYLES = {
 	blue = { color = Color3.fromRGB(10, 132, 255), glyph = "i", title = "Notice" },
 	green = { color = Color3.fromRGB(48, 209, 88), glyph = "\u{2713}", title = "Done" },
 }
+-- the Sentinel logo on every banner. The game script puts its LOGO_IMAGE on ReplicatedStorage.SentinelNotice, so both scripts show the same one
+local function noticeLogo()
+	local ev = ReplicatedStorage:FindFirstChild("SentinelNotice")
+	local id = ev and ev:GetAttribute("Logo")
+	if typeof(id) == "string" then id = tonumber(string.match(id, "%d+")) end
+	if typeof(id) == "number" and id > 0 then return "rbxassetid://" .. string.format("%d", id) end
+	return nil
+end
 local RING_R, RING_T, RING_M = 18, 2, 8 -- corner radius, line thickness, spare room round the card so the line is never cut off
 
 -- Which parts of the card's border are drawn once the timer is p (0 to 1) of the way round.
@@ -280,6 +292,7 @@ end
 
 local function buildNotice(gui, text, kind, title, fixed)
 	local st = NOTICE_STYLES[kind] or NOTICE_STYLES.red
+	local logo = noticeLogo()
 	local R, T, M = RING_R, RING_T, RING_M
 	local function make(class, props, parent)
 		local o = Instance.new(class)
@@ -321,7 +334,10 @@ local function buildNotice(gui, text, kind, title, fixed)
 		inner.Size = UDim2.new(1, 0, 0, 0)
 		inner.AutomaticSize = Enum.AutomaticSize.Y
 	end
-	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 18) }, inner)
+	make("UIPadding", { PaddingTop = UDim.new(0, 14), PaddingBottom = UDim.new(0, 14), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, logo and 40 or 18) }, inner)
+	if logo then
+		make("ImageLabel", { Name = "Logo", Image = logo, BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.fromOffset(20, 20), AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), ScaleType = Enum.ScaleType.Fit, ZIndex = 2 }, card)
+	end
 	local row = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, inner)
 	make("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 12), SortOrder = Enum.SortOrder.LayoutOrder }, row)
 
