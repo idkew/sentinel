@@ -77,6 +77,7 @@ const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, ruleboo
   flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
+let ALT = { links: {}, leaves: [], fp: {}, stats: {} }; // linked accounts: their own row, loaded by the game sync and the Linked accounts page
 let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
@@ -137,6 +138,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
+  alts: { get: () => ALT, set: v => { ALT = v && typeof v === 'object' && v.links ? { links: v.links, leaves: v.leaves || [], fp: v.fp || {}, stats: v.stats || {} } : { links: {}, leaves: [], fp: {}, stats: {} }; } },
   vault: { get: () => VT, set: v => { VT = v && Array.isArray(v.items) ? v : { items: [] }; } }, // evidence staff keep: links, notes and copied chat boxes
   cbo: { get: () => CBO, set: v => { CBO = v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } }, // chat log boxes still filling, per game server
   chat: { get: () => ({ chat: R.chat, flagCount: R.flagCount, am: R.am }), set: v => { R.chat = v.chat || []; R.flagCount = v.flagCount || {}; R.am = v.am || {}; } },
@@ -150,13 +152,13 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault', 'alts'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts'], '/api/alts': ['alts', 'play'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -358,6 +360,7 @@ const RBX_USERS = env.RBXUSERS_TEST_BASE || 'https://users.roblox.com'; // the o
 // ---- Roblox group rank sync (one way: the group decides Sentinel ranks; Sentinel never changes the group) ----
 const RBX_GROUPS = env.RBXGROUPS_TEST_BASE || 'https://groups.roblox.com'; // the override is for tests only
 const RBX_FRIENDS = env.RBXFRIENDS_TEST_BASE || 'https://friends.roblox.com'; // the override is for tests only
+const RBX_THUMBS = env.RBXTHUMBS_TEST_BASE || 'https://thumbnails.roblox.com'; // the override is for tests only
 const gget = async u => { const r = await fetch(RBX_GROUPS + u, { signal: AbortSignal.timeout(5000) }); if (!r.ok) throw new Error(`Roblox groups said ${r.status}`); return r.json(); };
 async function groupInfo(id) { const [g, r] = await Promise.all([gget(`/v1/groups/${id}`), gget(`/v1/groups/${id}/roles`)]); return { id: String(id), name: cleanName(g.name, 60), roles: (r.roles || []).filter(x => x.rank > 0).map(x => ({ id: String(x.id), name: cleanName(x.name, 40), rank: x.rank })).sort((a, b) => b.rank - a.rank) }; }
 async function groupRoleOf(gid, robloxId) { const j = await gget(`/v2/users/${robloxId}/groups/roles`); const e = (j.data || []).find(x => x.group && String(x.group.id) === String(gid)); return e ? String(e.role.id) : null; }
@@ -491,6 +494,97 @@ async function banSyncPull() { // copy new bans from the owner's other games (ne
   }
   if (n) feed(`Ban sync added ${n} ban${n > 1 ? 's' : ''}`, 'Ban sync');
   const ks = Object.keys(D.syncSeen); if (ks.length > 3000) for (const k of ks.sort((a, b) => D.syncSeen[a] - D.syncSeen[b]).slice(0, ks.length - 3000)) delete D.syncSeen[k];
+}
+// ---- linked accounts: two accounts that look like one person, from how they join and from public Roblox profile data. Never device or connection data. Advice for staff only; nothing happens automatically
+const ALT_W = { follow: 4, switch: 4, desc: 3, dname: 3, name: 3, avatar: 2, chat: 2, friend: 2, young: 1, group: 1 };
+const ALT_B = ['follow', 'switch'], ALT_I = ['desc', 'dname', 'name', 'avatar'], ALT_TIERS = ['very', 'strong', 'likely', 'weak'];
+const altKey = (a, b) => a < b ? a + ':' + b : b + ':' + a;
+const altHash = s => hash('alt:' + s).toString('hex').slice(0, 16); // profile descriptions, avatars and chat lines are compared by a short hash, never kept as text
+const altSecs = ms => Math.max(1, Math.round(ms / 1000));
+function altScore(L) { // points from every sign; tiers: weak 4, likely 6, strong 8, very likely 10 with both a behaviour and an identity sign
+  const ev = L.ev, tg = L.tg && L.tg.n ? L.tg.n : 0, sw = ev.switch && ev.switch.n >= 2 && !tg;
+  let sc = 0; for (const [k, x] of Object.entries(ev)) sc += k === 'switch' ? (sw ? ALT_W.switch : 1) : (ALT_W[k] || 0);
+  sc -= Math.min(6, 2 * tg); // often online at the same moment: probably two people
+  const beh = !!ev.follow || sw, idn = ALT_I.some(k => ev[k]);
+  L.score = sc; L.tier = sc >= 10 && beh && idn ? 'very' : sc >= 8 ? 'strong' : sc >= 6 ? 'likely' : sc >= 4 ? 'weak' : ''; return L;
+}
+function altSign(a, an, b, bn, k, data, onlyIfLinked) {
+  if (!a || !b || a === b) return null; const key = altKey(a, b);
+  if (onlyIfLinked && !ALT.links[key]) return null;
+  const L = ALT.links[key] ||= { a: Math.min(a, b), b: Math.max(a, b), names: {}, ev: {}, status: 'open', t: Date.now() };
+  L.names[a] = an; L.names[b] = bn; if (L.status === 'not') return L; // staff said these are two people: never suggested again
+  const x = L.ev[k] ||= { n: 0 }; x.n++; x.t = Date.now(); Object.assign(x, data || {}); L.u = Date.now(); return altScore(L);
+}
+function altText(L, k, x) {
+  const nA = L.names[L.a] || 'User ' + L.a, nB = L.names[L.b] || 'User ' + L.b;
+  return ({ follow: `${x.who || nA} joined by following ${x.of || nB}, ${x.s || 1} s after ${x.of || nB} left`,
+    switch: `One joined ${x.s || 1} s after the other left, ${x.n} time${x.n === 1 ? '' : 's'}${L.tg && L.tg.n ? '' : ', and they were never online together'}`,
+    desc: 'Identical Roblox profile description', dname: x.text || 'Display name matches the other account', name: 'Very similar usernames', avatar: 'Identical Roblox avatar',
+    chat: 'Both sent the same uncommon chat message, and nobody else did', friend: 'Roblox friends, and one account is under 30 days old', young: 'Both Roblox accounts are under 7 days old', group: x.text || 'In the same small Roblox group' })[k] || k;
+}
+const altOut = L => ({ key: altKey(L.a, L.b), a: { userId: L.a, name: L.names[L.a] || 'User ' + L.a, banned: !!(D.bans[L.a] && live(D.bans[L.a])) }, b: { userId: L.b, name: L.names[L.b] || 'User ' + L.b, banned: !!(D.bans[L.b] && live(D.bans[L.b])) },
+  score: L.score, tier: L.tier, status: L.status, by: L.by || null, at: L.at || null, t: L.t, u: L.u || L.t,
+  reasons: [...Object.entries(L.ev).map(([k, x]) => ({ k, w: k === 'switch' ? (x.n >= 2 && !(L.tg && L.tg.n) ? ALT_W.switch : 1) : ALT_W[k], text: altText(L, k, x) })), ...(L.tg && L.tg.n ? [{ k: 'together', w: -Math.min(6, 2 * L.tg.n), text: `Online at the same moment ${L.tg.n} time${L.tg.n === 1 ? '' : 's'}, so probably two people` }] : [])].sort((x, y) => y.w - x.w) });
+const altRate = () => Object.fromEntries(ALT_TIERS.map(t => { const x = ALT.stats[t] || { y: 0, n: 0 }, all = x.y + x.n; return [t, { y: x.y, n: x.n, rate: all >= 10 ? Math.round(100 * x.y / all) : null }]; }));
+function altPrune(now) {
+  ALT.leaves = ALT.leaves.filter(x => now - x[1] < 864e5).slice(-500);
+  for (const [h, x] of Object.entries(ALT.fp)) if (now - x.t > 864e5) delete ALT.fp[h];
+  const fk = Object.keys(ALT.fp); if (fk.length > 3000) for (const h of fk.sort((p, q) => ALT.fp[p].t - ALT.fp[q].t).slice(0, fk.length - 3000)) delete ALT.fp[h];
+  for (const [k, L] of Object.entries(ALT.links)) if (L.status === 'open' && (!L.tier || L.tier === 'weak') && now - (L.u || L.t) > 60 * 864e5) delete ALT.links[k];
+  const lk = Object.entries(ALT.links).filter(([, L]) => L.status === 'open'); if (Object.keys(ALT.links).length > 2000) for (const [k] of lk.sort((p, q) => (p[1].score || 0) - (q[1].score || 0)).slice(0, Object.keys(ALT.links).length - 2000)) delete ALT.links[k];
+}
+async function altRun(req, b, ev) { // called on every game check-in with joins, leaves or long chat lines
+  if (D.settings.signals === false) return;
+  const now = Date.now(), job = String(b.jobId || 'studio').slice(0, 8), ok = e => e && Number.isInteger(e.userId) && e.userId > 0;
+  const joins = ev.filter(e => ok(e) && e.type === 'join').slice(0, 30), leaves = ev.filter(e => ok(e) && e.type === 'leave').slice(0, 30);
+  const chats = ev.filter(e => ok(e) && e.type === 'chat' && typeof e.text === 'string' && e.text.trim().length >= 20).slice(0, 50);
+  if (!joins.length && !leaves.length && !chats.length) return;
+  await need('alts');
+  const nm = id => (D.play[id] || {}).name || 'User ' + id, online = new Set(Object.values(R.servers).filter(x => now - x.last < LIVE_MS).flatMap(x => x.players.map(p => p.userId)));
+  for (const e of leaves) ALT.leaves.push([e.userId, now, job]);
+  for (const p of Array.isArray(b.players) ? b.players : []) if (p && Number.isInteger(p.userId) && D.play[p.userId] && typeof p.displayName === 'string' && p.displayName) D.play[p.userId].dn = p.displayName.toLowerCase().slice(0, 40);
+  let budget = 4; const touched = new Set();
+  for (const e of joins) {
+    const id = e.userId, me = nm(id), p = D.play[id] || {};
+    for (const L of Object.values(ALT.links)) if ((L.a === id || L.b === id) && online.has(L.a === id ? L.b : L.a) && now - ((L.tg || {}).t || 0) > 600000) { L.tg = { n: ((L.tg || {}).n || 0) + 1, t: now }; altScore(L); } // both online right now
+    const f = Number.isInteger(e.follow) && e.follow > 0 && e.follow !== id ? e.follow : 0; // Roblox tells the game when a player joined by following someone
+    if (f && !online.has(f)) { const lv = ALT.leaves.filter(x => x[0] === f && now - x[1] < 600000).pop(); if (lv) { const L = altSign(id, me, f, nm(f), 'follow', { who: me, of: nm(f), s: altSecs(now - lv[1]) }); if (L) touched.add(L); } }
+    const recent = ALT.leaves.filter(x => x[0] !== id && now - x[1] <= 90000 && !online.has(x[0]));
+    if (recent.length && recent.length <= 3) for (const x of recent) { const L = altSign(id, me, x[0], nm(x[0]), 'switch', { s: altSecs(now - x[1]) }); if (L) touched.add(L); } // in a busy moment many people leave, so it only counts when few did
+    if (budget > 0 && D.play[id] && now - (p.pf || 0) > 7 * 864e5) { // public Roblox profile, at most once a week per player
+      budget--; p.pf = now;
+      try { const x = await j(RBX_USERS + '/v1/users/' + id); if (x && x.created && !p.created && Date.parse(x.created)) p.created = Date.parse(x.created); const d = String((x && x.description) || '').toLowerCase().replace(/\s+/g, ' ').trim(); p.dh = d.length >= 15 ? altHash('d:' + d) : 0; if (x && typeof x.displayName === 'string') p.dn = x.displayName.toLowerCase().slice(0, 40); } catch {}
+      try { const u = (await avatars([id]))[id]; p.ah = u ? altHash('a:' + String(u).split('?')[0]) : 0; } catch {}
+      const cut = dayKey(now - 30 * 864e5), pool = Object.entries(D.play).filter(([k, x]) => +k !== id && (!x.day || x.day >= cut)).slice(-5000);
+      const few = (list, k, data, max = 1) => { if (list.length >= 1 && list.length <= max) for (const [k2] of list) { const L = altSign(id, me, +k2, nm(+k2), k, data); if (L) touched.add(L); } }; // one other account only: shared by 3 or more players means it is common (a default avatar, a template description)
+      if (p.dh) few(pool.filter(([, x]) => x.dh === p.dh), 'desc');
+      if (p.ah) few(pool.filter(([, x]) => x.ah === p.ah), 'avatar');
+      const myName = me.toLowerCase();
+      if (p.dn && p.dn !== myName) { const m = pool.filter(([, x]) => (x.name || '').toLowerCase() === p.dn || (x.dn && x.dn === p.dn && x.dn !== (x.name || '').toLowerCase())); few(m, 'dname', { text: `Display name "${p.dn}" matches the other account` }); }
+      few(pool.filter(([, x]) => x.name && nameLike(me, x.name)), 'name', null, 2);
+      if (p.created && now - p.created < 30 * 864e5 && budget > 0) { budget--; try { const x = await j(RBX_FRIENDS + '/v1/users/' + id + '/friends'); const fr = (x && Array.isArray(x.data) ? x.data : []).map(z => Number(z.id)).filter(z => D.play[z]); for (const z of fr.slice(0, 3)) { const L = altSign(id, me, z, nm(z), 'friend'); if (L) touched.add(L); } } catch {} }
+      if (p.created && now - p.created < 7 * 864e5) for (const L of Object.values(ALT.links)) { if (L.a !== id && L.b !== id) continue; const o = D.play[L.a === id ? L.b : L.a]; if (o && o.created && now - o.created < 7 * 864e5 && !L.ev.young) { altSign(L.a, L.names[L.a], L.b, L.names[L.b], 'young', null, true); touched.add(L); } }
+    }
+  }
+  for (const L of touched) if (budget > 0 && L.score >= 4 && !L.ev.group && !L.gc && L.status === 'open') { // a small Roblox group shared by both, checked once per link
+    L.gc = now; budget--; try {
+      const g = async u => { const x = await j(RBX_GROUPS + '/v2/users/' + u + '/groups/roles'); return (x && Array.isArray(x.data) ? x.data : []).map(d => d.group || {}).filter(z => z.id && Number.isInteger(z.memberCount) && z.memberCount < 500); };
+      const [ga, gb] = [await g(L.a), await g(L.b)], sh = ga.find(z => gb.some(y => y.id === z.id)); if (sh) altSign(L.a, L.names[L.a], L.b, L.names[L.b], 'group', { text: `Both in the small Roblox group ${cleanName(sh.name, 50)}` });
+    } catch {}
+  }
+  for (const e of chats) { // the same uncommon line from exactly two accounts
+    const t = e.text.toLowerCase().replace(/\s+/g, ' ').trim(); if (t.length < 20) continue;
+    const h = altHash('c:' + t), x = ALT.fp[h] ||= { u: [], t: now }; x.t = now; if (!x.u.includes(e.userId)) x.u.push(e.userId);
+    if (x.u.length === 2 && !x.done) { x.done = 1; altSign(x.u[0], nm(x.u[0]), x.u[1], nm(x.u[1]), 'chat'); } if (x.u.length > 5) x.u.length = 5;
+  }
+  for (const e of joins) { // a linked account of a banned player joined: tell staff in Worth a look
+    const id = e.userId; if (D.bans[id] && live(D.bans[id])) continue; if (D.signals[id] && now - D.signals[id].t < 864e5) continue;
+    const L = Object.values(ALT.links).find(L => (L.a === id || L.b === id) && L.status !== 'not' && (L.status === 'same' || ['very', 'strong', 'likely'].includes(L.tier)) && (o => D.bans[o] && live(D.bans[o]))(L.a === id ? L.b : L.a)); if (!L) continue;
+    const o = L.a === id ? L.b : L.a, on = L.names[o] || nm(o), st = L.status === 'same' || L.tier === 'very' || L.tier === 'strong' ? 'strong' : 'likely';
+    D.signals[id] = { t: now, name: nm(id), reasons: [{ k: 'linked', w: 6, text: `${L.status === 'same' ? 'Confirmed by staff as' : 'Looks like'} another account of ${on}, who is banned` }], score: 6, status: 'open', strength: st, of: { userId: o, name: on } };
+    feed(`Worth a look: ${nm(id)}`); notify('signals', `Worth a look (${st}): ${nm(id)}`, `Linked account of ${on}, who is banned.\nThese are hints, not proof. Check before acting.`, [], 0xf5a524);
+  }
+  altPrune(now);
 }
 async function signalCheck(req, fresh, joined) { // alt-account hints for staff. Only public Roblox data; never an automatic action
   if (D.settings.signals === false || !joined.length) return;
@@ -769,6 +863,7 @@ async function erasePlayer(id) { // everything this workspace stores about one p
   D.calls = D.calls.filter(c => c.from.userId !== id); D.calls.forEach(c => c.chat = (c.chat || []).filter(m => m.userId !== id)); R.chat = R.chat.filter(m => m.userId !== id);
   D.appeals = D.appeals.filter(a => a.uid !== id); D.kicks = (D.kicks || []).filter(k => k.userId !== id);
   await forgetInBoxes(CTX.wid, id); for (const o of Object.values(CBO)) o.msgs = o.msgs.filter(m => m.userId !== id);
+  await need('alts'); for (const [k, L] of Object.entries(ALT.links)) if (L.a === id || L.b === id) delete ALT.links[k]; ALT.leaves = ALT.leaves.filter(x => x[0] !== id); for (const x of Object.values(ALT.fp)) x.u = x.u.filter(z => z !== id);
   await need('vault'); VT.items = VT.items.filter(x => x.uid !== id); for (const x of VT.items) if (x.msgs) x.msgs = x.msgs.filter(m => m.userId !== id);
   if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
   const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
@@ -1087,7 +1182,7 @@ function sync(b) {
 const AV = new Map(), j = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(4000) }).then(r => r.json());
 async function avatars(ids) {
   const want = ids.filter(i => !AV.has(i)).slice(0, 100);
-  if (want.length) try { const r = await j(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${want.join(',')}&size=150x150&format=Png`); for (const d of r.data || []) if (d.imageUrl) AV.set(d.targetId, d.imageUrl); } catch {}
+  if (want.length) try { const r = await j(`${RBX_THUMBS}/v1/users/avatar-headshot?userIds=${want.join(',')}&size=150x150&format=Png`); for (const d of r.data || []) if (d.imageUrl) AV.set(d.targetId, d.imageUrl); } catch {}
   return Object.fromEntries(ids.filter(i => AV.has(i)).map(i => [i, AV.get(i)]));
 }
 async function findId(name) {
@@ -1202,14 +1297,14 @@ async function personScan(rid, withData, from) { // every workspace that stores 
   const t0 = Date.now(), ws = (await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta && !r.meta.deleted).map(r => ({ wid: r.key.slice(1, 13), name: r.meta.name })).sort((a, b) => (a.wid < b.wid ? -1 : 1)), found = [];
   for (let i = from; i < ws.length; i++) {
     if (Date.now() - t0 > 11000) return { found, next: i };
-    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', 'vault', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
-    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null, vault = ((v.vault || {}).items || []).filter(x => x.uid === rid || (x.msgs || []).some(m => m.userId === rid));
+    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', 'vault', 'alts', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
+    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null, altl = Object.values(((v.alts || {}).links) || {}).filter(L => L.a === rid || L.b === rid).map(L => ({ other: L.a === rid ? L.b : L.a, score: L.score, tier: L.tier, status: L.status, signs: Object.keys(L.ev || {}) })), vault = ((v.vault || {}).items || []).filter(x => x.uid === rid || (x.msgs || []).some(m => m.userId === rid));
     let boxes = []; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,msgs&wid=eq.${w}&user_ids=cs.%7B${rid}%7D&limit=2000`, { ms: 4000 }); if (r.ok) boxes = await r.json(); } catch {}
     const ban = (core.bans || {})[rid] || null, mute = (core.mutes || {})[rid] || null, signal = (core.signals || {})[rid] || null, appeals = (core.appeals || []).filter(a => a.uid === rid), inReports = (v.calls || []).filter(c => (c.chat || []).some(m => m.userId === rid)).length;
-    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports + vault.length;
+    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports + vault.length + altl.length;
     if (!rows) continue;
     const x = { wid: w, name: ws[i].name, rows, logbook: logs.length, chatLogs: boxes.length, reports: calls.length + inReports, appeals: appeals.length, ban: !!ban, mute: !!mute };
-    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
+    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, linkedAccounts: altl, evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
     found.push(x);
   }
   return { found, next: null };
@@ -1333,7 +1428,7 @@ async function adminMore(A, res, alog) { // the newer console tools. Returns tru
       if (!tk || tk.pd !== rid || !Array.isArray(tk.w)) return S(400, { error: 'Run the check first. A check is valid for 10 minutes.' });
       const done = [];
       for (const w of tk.w) for (let i = 0; i < 4; i++) {
-        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo', 'vault'); if (!D.meta) break;
+        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts'); if (!D.meta) break;
         await erasePlayer(rid); audit('Site admin', `Erased stored data for Roblox user ${rid} (data request)`);
         if (await commit()) { done.push(w); break; }
       }
@@ -2294,7 +2389,7 @@ async function route(req, res, url, p) {
       if (ev.some(e => e && e.type === 'ack')) await need('logs');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
-      const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await banSyncPull();
+      const out = sync(b); healthSync(Date.now()); await altRun(req, b, ev); await signalCheck(req, fresh, joined); await banSyncPull();
       return send(res, 200, out);
     }
 
@@ -2557,6 +2652,32 @@ async function route(req, res, url, p) {
         notify('sessions', `${s.type} ended`, `${Object.keys(s.attendees).length} attended`, [['Host', s.host]], 0x12a594);
       }
       return ok(res);
+    }
+    if (req.method === 'GET' && p === '/api/alts') { // linked accounts, with how often staff agreed with each tier
+      if (!has(u, 'mod.kick')) return deny(res);
+      const id = +url.searchParams.get('userId') || 0, all = Object.values(ALT.links);
+      const list = (id ? all.filter(L => (L.a === id || L.b === id) && L.status !== 'not' && (L.tier || L.status === 'same')) : all.filter(L => L.tier || L.status !== 'open')).map(altOut);
+      list.sort((x, y) => (y.status === 'open') - (x.status === 'open') || (ALT_TIERS.indexOf(x.tier) + 1 || 9) - (ALT_TIERS.indexOf(y.tier) + 1 || 9) || y.score - x.score);
+      return send(res, 200, { links: list.slice(0, 300), stats: altRate(), on: D.settings.signals !== false });
+    }
+    if (req.method === 'POST' && p === '/api/alts') {
+      if (!has(u, 'mod.kick')) return deny(res);
+      const L = ALT.links[String(B.key || '')]; if (!L) return send(res, 404, { error: 'That link is not there any more.' });
+      const nA = L.names[L.a] || 'User ' + L.a, nB = L.names[L.b] || 'User ' + L.b;
+      if (B.op === 'same' || B.op === 'not') {
+        if (L.status !== 'open') return send(res, 409, { error: 'This link was already reviewed.' });
+        const t = L.tier || 'none', x = ALT.stats[t] ||= { y: 0, n: 0 }; if (B.op === 'same') x.y++; else x.n++; // counts toward the hit rate of the tier it had
+        L.status = B.op; L.rt = t; L.by = u.user; L.at = Date.now(); audit(u.user, `Marked ${nA} and ${nB} as ${B.op === 'same' ? 'the same person' : 'not linked'}`); return ok(res);
+      }
+      if (B.op === 'reopen') {
+        if (L.status === 'open') return ok(res); const x = ALT.stats[L.rt || 'none']; if (x) { if (L.status === 'same') x.y = Math.max(0, x.y - 1); else x.n = Math.max(0, x.n - 1); }
+        L.status = 'open'; delete L.by; delete L.at; delete L.rt; altScore(L); audit(u.user, `Reopened the link between ${nA} and ${nB}`); return ok(res);
+      }
+      if (B.op === 'watch') {
+        for (const [id, n] of [[L.a, nA], [L.b, nB]]) if (!D.watch[id]) { if (Object.keys(D.watch).length >= 200) return send(res, 400, { error: 'The watchlist is full (200 players).' }); D.watch[id] = { name: n, by: u.user, t: Date.now(), reason: cleanName(`Possible other account of ${id === L.a ? nB : nA}`, 200) }; }
+        audit(u.user, `Watching ${nA} and ${nB} (possible linked accounts)`); return ok(res);
+      }
+      return send(res, 400, { error: 'bad request' });
     }
     if (req.method === 'GET' && p === '/api/reputation') { // one player's standing, for staff only. Advice: nothing here acts on its own
       const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
@@ -3193,7 +3314,7 @@ async function route(req, res, url, p) {
       const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
       const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
-        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x) };
+        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x), linkedAccounts: Object.values(ALT.links).filter(L => L.a === id || L.b === id).map(altOut) };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
     }
     if (req.method === 'POST' && p === '/api/erase') {
