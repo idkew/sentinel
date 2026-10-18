@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 22 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 23 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -658,7 +658,7 @@ syncSoon = function() -- at most one extra check-in a second, so busy chat never
 end
 
 Players.PlayerAdded:Connect(function(p)
-	queue({ type = "join", userId = p.UserId, name = p.Name })
+	queue({ type = "join", userId = p.UserId, name = p.Name, follow = (p.FollowUserId and p.FollowUserId > 0) and p.FollowUserId or nil }) -- follow: the player they joined by following, if any (helps spot one person switching accounts)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
