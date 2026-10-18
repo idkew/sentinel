@@ -53,7 +53,7 @@ const PERMS = [
   ['mod.warn', 'Warn players', 'Moderation'], ['mod.kick', 'Kick players', 'Moderation'], ['mod.mute', 'Mute and unmute players', 'Moderation'],
   ['mod.ban', 'Suspend players (timed bans)', 'Moderation', 1], ['mod.permban', 'Ban players permanently', 'Moderation', 1], ['mod.unban', 'Unban players', 'Moderation', 1],
   ['logbook.note', 'Add private notes to players', 'Moderation'], ['logbook.revert', 'Revert logbook entries', 'Moderation', 1],
-  ['reports.handle', 'Claim and resolve reports', 'Reports'], ['appeals.review', 'Review ban appeals', 'Reports'], ['chat.view', 'Read live chat', 'Reports'], ['chatlogs.view', 'Read and search chat logs', 'Reports', 1],
+  ['reports.handle', 'Claim and resolve reports', 'Reports'], ['appeals.review', 'Review ban appeals', 'Reports'], ['chat.view', 'Read live chat', 'Reports'], ['chatlogs.view', 'Read and search chat logs', 'Reports', 1], ['training.use', 'Use the training page', 'Team'],
   ['announce', 'Announce to every server', 'Game'], ['sessions.host', 'Host sessions', 'Activity'], ['shifts.manage', 'Create shifts and see attendance', 'Activity'], ['points.manage', 'Give and remove points', 'Activity'],
   ['loa.review', 'Approve or deny leave requests', 'Team'], ['team.manage', 'Invite, remove and re-rank members below them', 'Team', 1], ['ranks.manage', 'Create and edit ranks below their own', 'Team', 1],
   ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
@@ -64,16 +64,17 @@ const PERMS = [
 const ALLP = PERMS.map(p => p[0]);
 const defaultRanks = () => ({
   admin: { name: 'Administrator', color: '#635bff', pos: 30, perms: ALLP.slice(), quota: 0, limit: 0 },
-  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
-  helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'sessions.host'], quota: 60, limit: 15 },
+  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'training.use', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
+  helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'training.use', 'sessions.host'], quota: 60, limit: 15 },
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true } });
+const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false } }); // alerts, digest and health start off; only the owner turns them on
+const OWNER_EVENTS = ['alerts', 'digest', 'health']; // webhook events only the owner can switch
 const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
 
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
@@ -104,7 +105,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -124,7 +125,7 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live'], '/api/chatlogs': ['cbo'], '/api/chatlogs/box': ['cbo'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live'], '/api/chatlogs': ['cbo'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
@@ -175,6 +176,11 @@ function migrate() { // bring older workspaces up to date
   D.forms ||= []; D.formsNew ||= 0; if (D.webhook && D.webhook.events && !('forms' in D.webhook.events)) D.webhook.events.forms = true;
   if (!D.meta.v5) { D.meta.v5 = 1; for (const r of Object.values(D.ranks)) if (r.perms.includes('team.manage')) for (const x of ['forms.manage', 'forms.review']) if (!r.perms.includes(x)) r.perms.push(x); }
   D.strikes ||= [];
+  D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
+  D.alertWords ||= []; D.alerts ||= [];
+  if (!D.meta.v13) { D.meta.v13 = 1; if (D.webhook && D.webhook.events) for (const k of ['digest', 'health']) if (!(k in D.webhook.events)) D.webhook.events[k] = false; } // the daily summary and game health reach Discord only once the owner turns them on
+  if (!D.meta.v12) { D.meta.v12 = 1; if (D.webhook && D.webhook.events && !('alerts' in D.webhook.events)) D.webhook.events.alerts = false; } // chat alerts reach Discord only once the owner turns them on
+  if (!D.meta.v11) { D.meta.v11 = 1; for (const id of Object.keys(D.members)) if (id !== D.meta.owner) D.onboard.skip[id] = true; for (const k of ['helper', 'mod']) { const r = D.ranks[k]; if (r && !r.perms.includes('training.use')) r.perms.push('training.use'); } } // staff from before checklists skip them; trainees get the training page
   if (!D.meta.v10) { D.meta.v10 = 1; D.abuse ||= {}; D.notices ||= []; } // abuse counters and notices from the Sentinel team
   D.abuse ||= {}; D.notices ||= [];
   if (!D.meta.v9) { D.meta.v9 = 1; const elev = new Set(PERMS.filter(p => p[3]).map(p => p[0])); for (const r of Object.values(D.ranks)) if (r.perms.includes('reports.handle') && r.perms.some(x => elev.has(x)) && !r.perms.includes('chatlogs.view')) r.perms.push('chatlogs.view'); } // chat logs: Moderator and up
@@ -438,7 +444,7 @@ async function signalCheck(req, fresh, joined) { // alt-account hints for staff.
       if (last) add('ban', 2, `First joined ${Math.max(1, Math.round((now - last.t) / 60000))} min after ${last.who.name} was ${last.what}`, last.who);
       if (id in req._ages || fetched < 3) {
         if (!(id in req._ages)) { fetched++; try { const x = await j(RBX_USERS + '/v1/users/' + id); req._ages[id] = x && x.created ? Date.parse(x.created) : null; } catch { req._ages[id] = null; } }
-        const c = req._ages[id]; if (c) { const d = Math.floor((now - c) / 864e5); if (d < 7) add('age', 1, `Roblox account is ${d < 1 ? 'less than a day' : d + (d === 1 ? ' day' : ' days')} old`); }
+        const c = req._ages[id]; if (c && D.play[id] && !D.play[id].created) D.play[id].created = c; if (c) { const d = Math.floor((now - c) / 864e5); if (d < 7) add('age', 1, `Roblox account is ${d < 1 ? 'less than a day' : d + (d === 1 ? ' day' : ' days')} old`); }
       }
       if (bans.length && budget()) { // friends with a banned player (public friends list)
         try { const x = await j(RBX_FRIENDS + '/v1/users/' + id + '/friends'); const ids = new Set((x && Array.isArray(x.data) ? x.data : []).map(f => Number(f.id)));
@@ -530,6 +536,146 @@ function propose(kind, u, uid, payload, text, reason) {
 }
 const DEFAULT_REPLIES = ['Thanks for being honest. We have lifted your ban. Please follow the rules from now on.', 'We reviewed what happened and the ban stays. You can appeal again later.', 'Bans for exploiting are not lifted on appeal.', 'Please tell us more about what happened next time you appeal.'];
 const cleanLinks = (arr, max) => (Array.isArray(arr) ? arr : []).map(x => String(x || '').trim()).filter(x => /^https?:\/\/[^\s<>"'`]{3,300}$/i.test(x)).slice(0, max);
+// ---- staff workflow: escalation (send a report, appeal or logbook entry up to a senior)
+const ESC_KINDS = { report: 'report', appeal: 'appeal', entry: 'logbook entry' };
+const escCan = (m, kind) => !!m && (kind === 'appeal' ? has(m, 'appeals.review') : has(m, 'reports.handle'));
+function escSenior(uid, x) { // may this member take, return or resolve escalation x? The owner always may
+  const m = who(uid); if (!m) return false; if (m.isOwner) return true;
+  return uid !== x.byUid && m.pos > x.byPos && has(m, 'staff.review') && escCan(m, x.kind) && (x.to === 'any' || m.rank === x.to);
+}
+function escRef(x) { // what was sent up, with its evidence
+  if (x.kind === 'report') { const c = D.calls.find(c => c.id === x.ref); return c ? { title: `Report #${c.id}`, text: c.text, who: c.target ? c.target.name : c.from.name, userId: c.target ? c.target.userId : c.from.userId, chat: c.chat || [], box: c.box || null, status: c.status } : null; }
+  if (x.kind === 'appeal') { const a = D.appeals.find(a => a.id === x.ref); return a ? { title: `Appeal from ${a.name}`, text: a.text, who: a.name, userId: a.uid, banReason: a.banReason || '', status: a.status, reply: a.reply || null } : null; }
+  const e = (D.logs[x.ref.userId] || []).find(e => e.id === x.ref.entryId);
+  return e ? { title: `${e.type}: ${e.name}`, text: e.reason, who: e.name, userId: +x.ref.userId, type: e.type, minutes: e.minutes || 0, by: e.by, ev: e.ev || [], ctx: e.ctx || [], boxes: e.boxes || [], status: e.status } : null;
+}
+const escOut = (x, uid) => ({ id: x.id, kind: x.kind, title: x.title, to: x.to, toName: x.to === 'any' ? 'Any senior' : (D.ranks[x.to] || {}).name || 'Removed rank', note: x.note, by: x.by, t: x.t, status: x.status, takenBy: x.takenBy || null, log: x.log, mine: x.byUid === uid, canAct: escSenior(uid, x) });
+const escSame = (a, b) => a.kind === b.kind && JSON.stringify(a.ref) === JSON.stringify(b.ref);
+// ---- onboarding checklist per rank. Items tick themselves when the action happens, or by hand
+const OB_DEF = [{ id: 'rulebook', label: 'Read the rulebook', auto: 'rulebook' }, { id: 'practice', label: 'Finish a practice case', auto: 'practice' }, { id: 'report', label: 'Handle a first report', auto: 'report' }, { id: 'shift', label: 'Complete a first shift', auto: 'shift' }];
+const OB_AUTO = { rulebook: 'Opens the Rulebook', practice: 'Answers a training case', report: 'Claims or resolves a report', appeal: 'Answers an appeal', shift: 'Works a shift they signed up for' };
+const obList = rank => { const l = D.onboard.lists[rank]; return Array.isArray(l) ? l : OB_DEF; };
+const obTick = (uid, ev) => { if (!uid || !D.members[uid] || !OB_AUTO[ev]) return; const d = (D.onboard.done[uid] ||= {}); if (!d['auto:' + ev]) d['auto:' + ev] = Date.now(); };
+function obState(uid) { // a new member's checklist, or null when there is none (owner, staff from before checklists, empty list)
+  const m = D.members[uid]; if (!m || uid === D.meta.owner || D.onboard.skip[uid]) return null;
+  const d = D.onboard.done[uid] || {}, shift = D.shifts.some(x => x.att && x.att[uid] > 0);
+  const items = obList(m.rank).map(i => ({ id: i.id, label: i.label, auto: i.auto || '', done: !!(d[i.id] || (i.auto && (d['auto:' + i.auto] || (i.auto === 'shift' && shift)))) }));
+  return items.length ? { items, n: items.filter(i => i.done).length } : null;
+}
+// ---- training: anonymised practice cases. Answers are recorded per trainee and never touch real players
+const TR_TYPES = { Warned: 'warn', Muted: 'mute', Kicked: 'kick', Suspended: 'ban', Banned: 'ban' };
+const trId = (userId, entryId) => 'e' + crypto.createHmac('sha256', SIGN).update('tr:' + userId + ':' + entryId).digest('base64url').slice(0, 14); // no user id inside
+function anonymiser(seed) { // every name the workspace knows becomes Player A, B, ... (staff: Staff A, B, ...); links, emails, phone and long numbers are removed
+  const staff = new Set(Object.values(D.members).map(m => String(m.name || '').toLowerCase())), names = new Set(), map = new Map(), cnt = { p: 0, s: 0 };
+  for (const p of Object.values(D.play)) { if (p && p.name) names.add(String(p.name)); if (p && p.displayName) names.add(String(p.displayName)); }
+  for (const b of [...Object.values(D.bans), ...Object.values(D.mutes)]) if (b && b.name) names.add(String(b.name));
+  for (const m of Object.values(D.members)) if (m.name) names.add(String(m.name));
+  for (const n of seed) if (n) names.add(String(n));
+  const letter = n => (n < 26 ? '' : String.fromCharCode(64 + Math.floor(n / 26))) + String.fromCharCode(65 + n % 26);
+  const label = n => { const k = n.toLowerCase(); if (!map.has(k)) map.set(k, staff.has(k) ? 'Staff ' + letter(cnt.s++) : 'Player ' + letter(cnt.p++)); return map.get(k); };
+  for (const n of seed) if (n) label(String(n)); // the case's own player is Player A
+  const list = [...names].filter(n => n.length >= 3).sort((a, b) => b.length - a.length).slice(0, 5000).map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = list.length ? new RegExp('@?(?<![A-Za-z0-9_])(' + list.join('|') + ')(?![A-Za-z0-9_])', 'gi') : null;
+  const ids = new Set([...Object.keys(D.play), ...Object.keys(D.logs), ...Object.keys(D.bans), ...Object.keys(D.mutes), ...Object.values(D.members).map(m => String(m.robloxId || ''))].filter(Boolean)); // user ids the workspace knows
+  return t => {
+    let s = String(t || ''); if (re) s = s.replace(re, (m0, n) => label(n));
+    s = s.replace(/\d{2,}/g, m => (ids.has(m) ? '[id removed]' : m));
+    s = s.replace(/\b(Mr|Mrs|Ms|Miss|Mx|Dr)\.?\s+[A-Z][\w'-]+/g, '[name removed]'); // a real-world name after a title
+    return s.replace(new RegExp(EMAIL_RE.source, 'gi'), '[email removed]').replace(/https?:\/\/\S+|www\.\S+/gi, '[link removed]').replace(new RegExp(LINK_RE.source, 'gi'), '[link removed]').replace(new RegExp(PHONE_RE.source, 'g'), '[number removed]').replace(/\d{5,}/g, '[number removed]');
+  };
+}
+function trCases() { // newest 200 real cases plus every entry marked for training, then the owner's own cases
+  const all = [];
+  for (const [pid, list] of Object.entries(D.logs)) for (const e of list) if (TR_TYPES[e.type] && e.status !== 'reverted' && e.reason) all.push([pid, e]);
+  all.sort((a, b) => b[1].time - a[1].time);
+  const pick = [...all.filter(x => x[1].train), ...all.filter(x => !x[1].train).slice(0, 200)], out = [];
+  for (const [pid, e] of pick) {
+    const anon = anonymiser([e.name]), rule = e.ruleId && (D.rulebook.find(r => r.id === e.ruleId) || {}).title, act0 = TR_TYPES[e.type];
+    out.push({ id: trId(pid, e.id), text: anon(e.reason), rule: rule ? anon(rule) : null, chat: e.train ? (e.ctx || []).map(m => anon(m.text)) : [], answer: { action: act0, minutes: act0 === 'mute' || act0 === 'ban' ? e.minutes || 0 : 0 }, note: e.train && e.note ? anon(e.note) : null, real: true, t: e.time });
+  }
+  for (const c of D.training.cases) { const anon = anonymiser([]); out.push({ id: c.id, text: anon(c.text), rule: null, chat: (c.chat || []).map(anon), answer: { action: c.action, minutes: c.minutes || 0 }, note: c.note ? anon(c.note) : null, real: false, t: c.t }); }
+  return out;
+}
+const trMatch = (p, a) => p.action === a.action && (!['mute', 'ban'].includes(a.action) || (a.minutes === 0 ? p.minutes === 0 : p.minutes > 0 && p.minutes >= a.minutes / 2 && p.minutes <= a.minutes * 2)); // same action, and a length within half to double
+// ---- chat alert words: staff are told fast when a watched word appears. An alert never takes action
+const seqIn = (toks, want) => { for (let i = 0; i + want.length <= toks.length; i++) if (want.every((w, j) => toks[i + j] === w)) return true; return false; };
+function alertHit(text, a) { // same normalising as the chat flags: leetspeak, spaced-out letters, stretched letters
+  const want = cussTokens(a.w); if (!want.length) return false;
+  const toks = cussTokens(text), t1 = toks.map(once), w1 = want.map(once);
+  if (a.whole) return seqIn(toks, want) || seqIn(t1, w1);
+  return toks.join(' ').includes(want.join(' ')) || t1.join(' ').includes(w1.join(' ')) || t1.join('').includes(w1.join(''));
+}
+function alertCheck(job, uid, name, text, now) {
+  const words = D.alertWords; if (!uid || !words || !words.length) return;
+  for (const a of words) {
+    if (!alertHit(text, a)) continue;
+    const k = 'aw:' + uid + ':' + a.id; if ((R.am[k] || 0) > now - 5 * 60000) continue; R.am[k] = now; // one alert per player per word per 5 minutes
+    const box = CBO[job] ? CBO[job].id : null, x = { id: rnd(6), t: now, word: a.w, userId: uid, name, text: String(text).slice(0, 200), server: String(job).slice(0, 8), box };
+    D.alerts = [x, ...(D.alerts || [])].slice(0, 100); feed(`Chat alert "${a.w}": ${name}`);
+    if ((D.settings.alertDest || 'inbox') !== 'inbox') notify('alerts', `Chat alert: "${a.w}"`, `${name}: ${x.text}`, [['Player', name], ['Server', x.server], ['Chat box', box || '']], 0xf5a524);
+  }
+}
+// ---- player risk score: advice for staff only, never shown to players, never acted on automatically
+const RISK_W = { Warned: 6, Muted: 10, Kicked: 12, Suspended: 18, Banned: 25, box: 4, boxStrong: 8, report: 8, hint: { weak: 10, likely: 15, strong: 20 }, newAccount: 10, halfLifeDays: 30, maxAgeDays: 90 };
+const RISK_LABEL = { Warned: ['warning', 'warnings'], Muted: ['mute', 'mutes'], Kicked: ['kick', 'kicks'], Suspended: ['suspension', 'suspensions'], Banned: ['ban', 'bans'], box: ['flagged chat box', 'flagged chat boxes'], boxStrong: ['chat box with strong language or slurs', 'chat boxes with strong language or slurs'] };
+function rkAdd(id, name, kind, eid) { // a compact history in the play row, read by riskOf
+  if (!('play' in loaded) || !RISK_W[kind]) return; const p = playOf(id, name); (p.rk ||= []).push([kind, Date.now(), eid || 0]); if (p.rk.length > 50) p.rk.splice(0, p.rk.length - 50);
+}
+function riskOf(id, now = Date.now()) { // 0 to 100, with the parts it is made of. Older activity counts less: halves every 30 days, ignored after 90
+  const p = D.play[id] || {}, parts = {}, add = (key, label, pts) => { const x = (parts[key] ||= { label, points: 0, n: 0 }); x.points += pts; x.n++; };
+  for (const [k, t] of p.rk || []) { const age = (now - t) / 864e5; if (age > RISK_W.maxAgeDays || !RISK_W[k] || !RISK_LABEL[k]) continue; add(k, RISK_LABEL[k], RISK_W[k] * Math.pow(0.5, age / RISK_W.halfLifeDays)); }
+  const open = D.calls.filter(c => c.target && c.target.userId === +id && c.status !== 'resolved').length; for (let i = 0; i < open; i++) add('report', ['open report against them', 'open reports against them'], RISK_W.report);
+  const sg = D.signals[id]; if (sg && sg.status === 'open') add('hint', [`${sg.strength || 'likely'} alt-account hint`, 'alt-account hints'], RISK_W.hint[sg.strength] || RISK_W.hint.likely);
+  if (p.created && now - p.created < 7 * 864e5) add('age', ['Roblox account under 7 days old', ''], RISK_W.newAccount);
+  const list = Object.values(parts).map(x => ({ label: x.n > 1 ? `${x.n} ${x.label[1]}` : x.label[0], points: Math.round(x.points) })).filter(x => x.points > 0).sort((a, b) => b.points - a.points);
+  return { score: Math.min(100, list.reduce((a, x) => a + x.points, 0)), parts: list };
+}
+// ---- owner visibility: game connection health and the daily summary (sent by /api/cron/tick) ----
+const DOWN_MS = 10 * 60000;
+function healthNote(kind, title, text, now) { D.notices = [...(D.notices || []).filter(n => n && n.kind !== 'health' && n.exp > now), { id: rnd(6), kind: 'health', state: kind, t: now, exp: now + (kind === 'down' ? 7 : 1) * 864e5, title, text }]; }
+function healthSync(now) { // every game check-in. Writes the core row at most once a minute, or when the game empties or fills
+  const m = D.meta, pl = allPlayers().length > 0;
+  if (now - (m.lastSyncAt || 0) >= 6e4 || !!m.livePl !== pl) { m.lastSyncAt = now; m.livePl = pl; }
+  if (pl && now - (m.activeAt || 0) >= 6e4) m.activeAt = now;
+  const h = m.health; if (!h || !h.down) return;
+  const mins = Math.max(1, Math.round((now - h.since) / 6e4)); m.health = { down: 0, log: [...(h.log || []), { since: h.since, up: now }].slice(-10) };
+  healthNote('back', 'Your game is connected again', `Sentinel heard from your game again after ${plural(mins, 'minute')} without contact.`, now);
+  notify('health', 'Game connected again', `Sentinel heard from your game again after ${plural(mins, 'minute')} without contact.`, [], 0x30a46c);
+}
+// went quiet with people still in game, more than 10 minutes ago, and was played in the last 24 hours. Empty and unused games never alert
+const healthDue = (m, now) => !!(m && !m.deleted && !m.suspended && m.lastSyncAt && m.livePl && now - m.lastSyncAt > DOWN_MS && now - (m.activeAt || 0) < 864e5 && !(m.health && m.health.down));
+function localDay(tz, t) { try { const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(t).map(x => [x.type, x.value])); return { day: `${p.year}-${p.month}-${p.day}`, hour: +p.hour % 24 }; } catch { return null; } }
+const digestSlot = (dg, now) => { const l = localDay(dg.tz || 'UTC', now); return !l ? null : l.hour >= dg.hour ? l.day : localDay(dg.tz || 'UTC', now - 864e5).day; }; // the latest local day whose chosen hour has passed
+const digestDue = (m, dg, now) => { if (!m || m.deleted || m.suspended || !dg || !dg.on) return null; const s = digestSlot(dg, now); return s && m.digestDay !== s ? s : null; };
+async function digestBuild(now) { // needs core, logs and calls loaded
+  const since = now - 864e5, iso = new Date(since).toISOString(), n = (k, w) => plural(k, w);
+  const acts = Object.values(D.logs).flat().filter(e => e.time >= since && MOD_TYPES.includes(e.type) && e.status !== 'reverted').length;
+  const reps = D.calls.filter(c => c.t >= since).length, open = D.calls.filter(c => c.status === 'open').length, apps = D.appeals.filter(a => a.status === 'open').length, alerts = (D.alerts || []).filter(a => a.t >= since).length;
+  let boxes = null; if (feat('chatLogs')) try { const r = await cbFetch(`chat_boxes?select=id&wid=eq.${CTX.wid}&flagged=is.true&closed_at=gt.${iso}&limit=1000`, { ms: 3000 }); if (r.ok) boxes = (await r.json()).length; } catch {}
+  const probs = {}; try { const r = await cbFetch(`panel_events?select=kind&wid=eq.${CTX.wid}&at=gt.${iso}&limit=500`, { ms: 3000 }); if (r.ok) for (const e of await r.json()) probs[e.kind] = (probs[e.kind] || 0) + 1; } catch {}
+  const outages = ((D.meta.health || {}).log || []).filter(x => x.up >= since).length + (D.meta.health && D.meta.health.down ? 1 : 0);
+  const PK = { oc_fail: 'failed Roblox API call', webhook_fail: 'failed Discord message', sync_error: 'game check-in error', rate_limit: 'slowed-down game check-in' };
+  const pl = [...(outages ? [`the game lost contact ${outages === 1 ? 'once' : outages + ' times'}`] : []), ...Object.entries(PK).filter(([k]) => probs[k]).map(([k, w]) => n(probs[k], w))];
+  const text = `Last 24 hours: ${n(acts, 'moderation action')}, ${n(reps, 'report')}, ${n(alerts, 'chat alert')}${boxes === null ? '' : `, ${n(boxes, 'flagged chat log')}`}. Waiting: ${n(open, 'open report')}, ${n(apps, 'ban appeal')}. Problems: ${pl.length ? pl.join(', ') : 'none'}.`;
+  return { text, fields: [['Actions', String(acts)], ['Reports', String(reps)], ['Open reports', String(open)], ['Appeals waiting', String(apps)], ['Chat alerts', String(alerts)], ['Flagged chat logs', boxes === null ? 'n/a' : String(boxes)], ['Problems', pl.length ? pl.join(', ') : 'None']] };
+}
+async function tickRun() { // every 5 minutes from an outside pinger, and once a day from the Vercel cron. Loads only the workspaces that need something
+  const t0 = Date.now(), rows = await sbGet('select=key,meta:value->meta,dg:value->settings->digest&key=like.w*:core'), out = { digests: 0, down: 0, partial: false };
+  for (const r of rows) {
+    const now = Date.now(); if (!digestDue(r.meta, r.dg, now) && !healthDue(r.meta, now)) continue;
+    if (now - t0 > 11000) { out.partial = true; break; }
+    for (let i = 0; i < 4; i++) { // the claim is saved before anything is sent, so a tick running at the same moment skips it
+      resetState(); setWid(r.key.slice(1, 13)); await need('core');
+      const t = Date.now(), dd = digestDue(D.meta, D.settings.digest, t), hd = healthDue(D.meta, t); if (!dd && !hd) break;
+      if (dd) { await need('logs', 'calls'); const d = await digestBuild(t); D.meta.digestDay = dd; D.notices = [...(D.notices || []).filter(x => x && x.kind !== 'digest' && x.exp > t), { id: rnd(6), kind: 'digest', t, exp: t + 2 * 864e5, title: 'Daily summary', text: d.text }]; notify('digest', `Daily summary: ${D.meta.name}`, d.text, d.fields); }
+      if (hd) { const since = D.meta.lastSyncAt, mins = Math.round((t - since) / 6e4); D.meta.health = { ...(D.meta.health || {}), down: t, since }; healthNote('down', 'Your game lost contact with Sentinel', `No game server has checked in for ${plural(mins, 'minute')}, while players were in game. Check that the game is running, HTTP requests are allowed and the script is in place.`, t); notify('health', 'Game lost contact', `No game server has checked in for ${plural(mins, 'minute')}, while players were in game.`, [], 0xe5484d); }
+      if (await commit()) { await sendHooks(); await sendEvents(); if (dd) out.digests++; if (hd) out.down++; break; }
+      HOOKS = []; await new Promise(z => setTimeout(z, 25 + Math.random() * 100));
+    }
+  }
+  resetState(); return out;
+}
+
 async function erasePlayer(id) { // everything this workspace stores about one player. A running ban is kept, without the name, for community safety. Needs core, logs, play, calls, chat and cbo loaded
   const names = new Set([D.play[id]?.name, D.bans[id]?.name, D.mutes[id]?.name, ...D.calls.filter(c => c.from.userId === id).map(c => c.from.name), ...R.chat.filter(m => m.userId === id).map(m => m.name), ...(D.logs[id] || []).map(e => e.name)].filter(x => x && String(x).length >= 3));
   await need(shOf(id)); if (D.hist[id % SH]) delete D.hist[id % SH][id];
@@ -559,7 +705,7 @@ function trimLogs(max, protect) { // over the logbook limit: oldest points and n
 function logEntry(userId, name, e) {
   const list = (D.logs[userId] ||= []), x = { id: rnd(6), name, status: 'active', time: Date.now(), ...e };
   list.push(x); if (list.length > 500) list.splice(0, list.length - 500);
-  if (MOD_TYPES.includes(x.type)) daily().a++;
+  if (MOD_TYPES.includes(x.type)) { daily().a++; rkAdd(userId, name, x.type, x.id); }
   if (D.meta) { const cap = capOf('logbook'); let n = logCount(); if (n > cap) { const t = trimLogs(cap, x.id); n -= t; feed(`Logbook limit reached: removed ${t} old ${t === 1 ? 'entry' : 'entries'}`, 'Sentinel'); } D.meta.logN = n; }
   return x;
 }
@@ -689,6 +835,7 @@ function boxClose(j, at) {
   const row = { id: o.id, wid: CTX.wid, opened_at: new Date(o.opened).toISOString(), closed_at: new Date(at).toISOString(), server: String(j).slice(0, 8), user_ids: [...new Set(msgs.map(m => m.userId).filter(x => x > 0))],
     names: ' ' + [...new Set(msgs.map(m => String(m.name).toLowerCase()))].join(' ') + ' ', body: msgs.map(m => String(m.text).toLowerCase()).join('\n'), flagged: types.length > 0, flag_types: types, msgs };
   row.bytes = Buffer.byteLength(JSON.stringify(msgs)); CBQ.push(row);
+  for (const id of row.user_ids) { const mine = msgs.filter(m => m.userId === id && m.flags && m.flags.length); if (mine.length) rkAdd(id, mine[0].name, mine.some(m => m.flags.includes('strong')) ? 'boxStrong' : 'box', row.id); } // feeds the risk score
 }
 function boxAdd(j, m) { // one chat message from game server j
   let o = CBO[j]; if (o && m.t - o.last >= BOX_IDLE) { boxClose(j, o.last + BOX_IDLE); o = null; }
@@ -790,7 +937,8 @@ function sync(b) {
     else if (e.type === 'chat') { // rolling buffer: latest 300 messages, at most 24 hours
       const flagged = D.flagWords.some(w => text.toLowerCase().includes(w));
       R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged }); if (R.chat.length > 300) R.chat.shift(); autoMod(uid, name, text, now);
-      if (text && feat('chatLogs')) boxAdd(id, { t: now, userId: uid, name, text }); // the same message also goes into this server's chat log box
+      if (text && feat('chatLogs')) boxAdd(id, { t: now, userId: uid, name, text });
+      if (text) alertCheck(id, uid, name, text, now); // watched words: an alert for staff, never an action // the same message also goes into this server's chat log box
       if (flagged) {
         feed(`Flagged chat from ${name}: ${text}`);
         const r = rule('flaggedmute');
@@ -848,7 +996,8 @@ async function profile(id) {
   const local = D.play[id], online = allPlayers().find(p => p.userId === id);
   if (!rb && !local && !online && !D.logs[id]) return null;
   const ban = D.bans[id], mute = D.mutes[id], ws = weekStart(Date.now());
-  return { userId: id, name: rb ? rb.name : online ? online.name : local ? local.name : 'User ' + id, displayName: rb ? rb.displayName : online ? online.displayName : '', created: rb ? rb.created : null,
+  if (rb && rb.created && local && !local.created && Date.parse(rb.created)) local.created = Date.parse(rb.created);
+  return { risk: riskOf(id), userId: id, name: rb ? rb.name : online ? online.name : local ? local.name : 'User ' + id, displayName: rb ? rb.displayName : online ? online.displayName : '', created: rb ? rb.created : null,
     avatar: (await avatars([id]))[id] || null, online: !!online, server: online ? online.server : null,
     banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, signal: D.signals[id] || null, logbook: (D.logs[id] || []).slice().reverse().map(e => ({ ...e, ...entryState(e, id) })),
     play: local ? { total: Math.round(local.total), week: local.weekStart === ws ? Math.round(local.week) : 0, points: local.points } : null,
@@ -858,7 +1007,7 @@ async function profile(id) {
 }
 
 // ---- backups: daily snapshots, owner downloads, a 30-day recycle bin and a site-admin console ----
-const BK_ROWS = ['core', 'logs', 'play', 'calls', 'forms'], BK_KEEP_DAYS = 7, TRASH_MS = 30 * 864e5, ADMIN_TOKEN = env.ADMIN_TOKEN || '', CRON_SECRET = env.CRON_SECRET || '';
+const BK_ROWS = ['core', 'logs', 'play', 'calls', 'forms'], BK_KEEP_DAYS = 7, TRASH_MS = 30 * 864e5, ADMIN_TOKEN = env.ADMIN_TOKEN || '', CRON_SECRET = env.CRON_SECRET || '', TICK_SECRET = env.TICK_SECRET || '';
 const sbGet = async q => { const r = await sbf(`${SB_URL}/rest/v1/panel_kv?${q}`, { headers: sbHeaders() }); if (!r.ok) throw new Error('Supabase read failed: HTTP ' + r.status); return r.json(); };
 const sbUpsert = async rows => { if (!rows.length) return; const r = await sbf(`${SB_URL}/rest/v1/panel_kv?on_conflict=key`, { method: 'POST', headers: { ...sbHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows) }); if (!r.ok) throw new Error('Supabase write failed: HTTP ' + r.status); };
 const sbDel = q => sbf(`${SB_URL}/rest/v1/panel_kv?${q}`, { method: 'DELETE', headers: { ...sbHeaders(), Prefer: 'return=minimal' } });
@@ -1475,7 +1624,7 @@ if (!has(u, 'appeals.review')) return [403, { error: 'Your rank does not allow t
     a.reply = reply || (first && first.reply) || null;
   }
   else if (B.decision === 'deny') { a.status = 'denied'; a.reply = reply || null; delete a.approvals; } else return [400, { error: 'bad request' }];
-  a.by = u.user; a.note = note; a.reviewed = Date.now(); audit(u.user, `${a.status === 'accepted' ? 'Accepted' : 'Denied'} the appeal from ${a.name}`); return [200, { ok: true }];
+  a.by = u.user; a.note = note; a.reviewed = Date.now(); obTick(uid, 'appeal'); audit(u.user, `${a.status === 'accepted' ? 'Accepted' : 'Denied'} the appeal from ${a.name}`); return [200, { ok: true }];
     }
 function doAction(u, uid, B) { // one moderation action, shared by the website and the Discord bot; returns [status, body]
       const reason0 = cleanName(B.reason, 300); let action = B.action, minutes = clampInt(B.minutes, 0, 525600), ruleId = null, reason = reason0 || 'No reason given';
@@ -1734,6 +1883,12 @@ async function route(req, res, url, p) {
       const counts = { bans: all.filter(e => e.type === 'Banned' || e.type === 'Suspended').length, warns: all.filter(e => e.type === 'Warned').length, mutes: all.filter(e => e.type === 'Muted').length, kicks: all.filter(e => e.type === 'Kicked').length };
       return send(res, 200, { name: D.meta.name, days: DAYS, counts, items: all.slice(0, 50).map(e => ({ t: e.time, type: e.type, who: mask(e.name), len: e.minutes > 0 ? fmtMin(e.minutes) : (e.type === 'Banned' || e.type === 'Muted' ? 'permanent' : ''), reason: String(e.reason || '').slice(0, 140) })) });
     }
+    if (p === '/api/cron/tick' && (req.method === 'GET' || req.method === 'POST')) { // daily summaries and game health. Needs TICK_SECRET (or CRON_SECRET), in the Authorization header or, only for pingers that cannot send one, ?key=
+      const w0 = limit('tick:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
+      const hk = String(req.headers.authorization || '').replace(/^Bearer /, ''), k = hk || String(url.searchParams.get('key') || '');
+      if (!k || !((TICK_SECRET.length >= 16 && same(k, TICK_SECRET)) || (CRON_SECRET.length >= 16 && same(k, CRON_SECRET)))) return send(res, 403, { error: 'Not allowed' });
+      const r0 = await tickRun(); await need('glob'); G.lastTick = { t: Date.now(), ...r0 }; return send(res, 200, r0);
+    }
     if (p === '/api/cron' && (req.method === 'GET' || req.method === 'POST')) {
       const w0 = limit('cron:' + ip, 30, 60000); if (w0) return tooMany(res, w0);
       const auth = String(req.headers.authorization || '').replace(/^Bearer /, ''); if (!(CRON_SECRET.length >= 16 && same(auth, CRON_SECRET)) && !(ADMIN_TOKEN.length >= 16 && same(auth, ADMIN_TOKEN))) return send(res, 403, { error: 'Not allowed' });
@@ -1878,7 +2033,7 @@ async function route(req, res, url, p) {
         const t0 = Date.now(); let dbOk = true, n = 0; try { n = (await sbGet('select=key&key=like.w*:core')).length; } catch { dbOk = false; }
         let dc = null; if (discordOn()) { try { const r = await fetch(`${DISCORD.api}/users/@me`, { headers: { Authorization: 'Bot ' + DISCORD.token }, signal: AbortSignal.timeout(4000) }); dc = r.ok ? 'ok' : r.status === 401 ? 'The bot token was refused' : 'Discord said ' + r.status; } catch { dc = 'Could not reach Discord'; } }
         let rb = 'ok'; try { const r = await fetch(`${RBX_USERS}/v1/users/1`, { signal: AbortSignal.timeout(4000) }); if (!r.ok && r.status >= 500) rb = 'Roblox said ' + r.status; } catch { rb = 'Could not reach Roblox'; }
-        return send(res, 200, { db: { ok: dbOk, ms: Date.now() - t0 }, workspaces: { live: G.workspaces, rows: n, max: MAX_WORKSPACES }, backups: G.lastCron || null, discord: { configured: discordOn(), status: dc }, roblox: rb, signIn: providers(), config: { signupsOpen: SIGNUPS_OPEN, maxPerUser: MAX_PER_USER, legalReviewed: !!cfg.legalReviewed, cronSecret: CRON_SECRET.length >= 16, callRetentionDays: cfg.callRetentionDays, alertWebhook: !!env.ALERT_WEBHOOK }, now: Date.now() });
+        return send(res, 200, { db: { ok: dbOk, ms: Date.now() - t0 }, workspaces: { live: G.workspaces, rows: n, max: MAX_WORKSPACES }, backups: G.lastCron || null, tick: G.lastTick || null, discord: { configured: discordOn(), status: dc }, roblox: rb, signIn: providers(), config: { signupsOpen: SIGNUPS_OPEN, maxPerUser: MAX_PER_USER, legalReviewed: !!cfg.legalReviewed, cronSecret: CRON_SECRET.length >= 16, tickSecret: TICK_SECRET.length >= 16, callRetentionDays: cfg.callRetentionDays, alertWebhook: !!env.ALERT_WEBHOOK }, now: Date.now() });
       }
       if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 400, { error: 'bad workspace' });
       if (A.op === 'snaps') return send(res, 200, { snaps: await listSnapshots(wid) });
@@ -1980,7 +2135,7 @@ async function route(req, res, url, p) {
       if (rjOn) await need('chat');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
-      const out = sync(b); await signalCheck(req, fresh, joined); await banSyncPull();
+      const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await banSyncPull();
       return send(res, 200, out);
     }
 
@@ -2134,7 +2289,7 @@ async function route(req, res, url, p) {
 
     if (p === '/api/state') {
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 6 * 36e5) await groupSync(req);
-      const now = Date.now(), players = allPlayers(), bans = Object.values(D.bans).filter(live), mutes = Object.values(D.mutes).filter(live), ws = weekStart(now);
+      const now = Date.now(), wr = x => ({ ...x, risk: riskOf(x.userId, now) }), players = allPlayers().map(wr), bans = Object.values(D.bans).filter(live).map(wr), mutes = Object.values(D.mutes).filter(live).map(wr), ws = weekStart(now);
       const days = [...Array(14)].map((_, i) => dayKey(now - (13 - i) * 864e5)), ser = f => days.map(d => (D.daily[d] || {})[f] || 0);
       const onLeave = id => D.loa.some(x => x.uid === id && x.status === 'approved' && x.start <= now && x.end >= now);
       const gm = Object.keys(D.members).filter(id => id[0] === 'g'); // Google members may have linked a Roblox account: pick that up for activity tracking
@@ -2161,7 +2316,7 @@ async function route(req, res, url, p) {
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
-        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, cuss: has(u, 'automations.manage') ? cussList() : null, cussDefault: !D.cussWords, chatDays: chatDays(), notices: (u.isOwner || has(u, 'automations.manage')) ? (D.notices || []).filter(n => n.exp > Date.now()) : [], announcements: annFor(u), limits: u.isOwner ? { members: { n: Object.keys(D.members).length, max: capOf('members') }, logbook: { n: D.meta.logN || 0, max: capOf('logbook') } } : null, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, approvals: D.settings.approvals || {}, pending: (D.pending || []).filter(x => now - x.t < APPR_MS).map(x => ({ id: x.id, kind: x.kind, text: x.text, by: x.by, t: x.t, reason: x.reason, mine: x.byUid === uid, can: canApprove(x, u, uid) })).filter(x => x.mine || x.can), sync: has(u, 'automations.manage') ? { from: (D.settings.sync || {}).from || [] } : null, signalsDone: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status !== 'open').sort((a, b) => (b[1].done || b[1].t) - (a[1].done || a[1].t)).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], watch: D.watch,
+        chat: has(u, 'chat.view') ? R.chat.slice(-100).reverse() : [], flagWords: D.flagWords, cuss: has(u, 'automations.manage') ? cussList() : null, cussDefault: !D.cussWords, chatDays: chatDays(), alertWords: has(u, 'automations.manage') ? D.alertWords : null, alertDest: D.settings.alertDest || 'inbox', digest: u.isOwner ? { on: false, hour: 9, tz: '', ...(D.settings.digest || {}) } : null, health: { last: Math.max(D.meta.lastSyncAt || 0, ...Object.values(R.servers).map(x => x.last)), active: D.meta.activeAt || 0, down: D.meta.health && D.meta.health.down ? D.meta.health.since : 0, quiet: healthDue({ ...D.meta, health: null }, now) ? D.meta.lastSyncAt : 0 }, alerts: has(u, 'chat.view') ? (D.alerts || []).filter(a => now - a.t < 7 * 864e5) : [], escal: (D.escal || []).filter(x => (x.status !== 'resolved' || Date.now() - x.t < 7 * 864e5) && (x.byUid === uid || escSenior(uid, x))).map(x => escOut(x, uid)), onboarding: obState(uid), onboardAll: u.isOwner || has(u, 'staff.review') ? Object.entries(D.members).filter(([id]) => id !== D.meta.owner).map(([id, m]) => { const o = obState(id); return { uid: id, name: m.name, rank: m.rank, skip: !!D.onboard.skip[id], n: o ? o.n : 0, total: o ? o.items.length : 0, items: o ? o.items : [] }; }) : null, obLists: u.isOwner ? Object.fromEntries(Object.keys(D.ranks).map(k => [k, obList(k)])) : null, obAuto: OB_AUTO, training: { on: !!D.settings.training, can: !!D.settings.training && (u.isOwner || has(u, 'training.use')) }, trainStats: u.isOwner || has(u, 'staff.review') ? Object.entries(D.training.results || {}).filter(([id]) => D.members[id]).map(([id, l]) => ({ uid: id, name: D.members[id].name, n: l.length, right: l.filter(r => r.match).length, last: l[0] ? l[0].t : null })) : null, notices: (u.isOwner || has(u, 'automations.manage')) ? (D.notices || []).filter(n => n.exp > Date.now()) : [], announcements: annFor(u), limits: u.isOwner ? { members: { n: Object.keys(D.members).length, max: capOf('members') }, logbook: { n: D.meta.logN || 0, max: capOf('logbook') } } : null, settings: D.settings, appealsOn: D.settings.appeals !== false, appeals: has(u, 'appeals.review') ? D.appeals.slice(0, 60).map(({ tok, ...a }) => a) : [], replies: D.settings.replies || DEFAULT_REPLIES, formsNew: has(u, 'forms.review') ? D.formsNew || 0 : 0, shiftNext: (D.shifts.filter(x => shEnd(x) > now && x.signups.some(sg => sg.uid === uid)).sort((a, b) => a.start - b.start)[0] || null), signals: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status === 'open').sort((a, b) => b[1].t - a[1].t).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], signalsOn: D.settings.signals !== false, onDuty: [...new Set(D.shifts.filter(x => x.start <= now && shEnd(x) > now).flatMap(x => x.signups.map(sg => sg.uid)))], staffForms: D.forms.filter(f => f.audience === 'staff' && f.open).map(f => ({ id: f.id, title: f.title })), twoPerson: !!D.settings.twoPerson, approvals: D.settings.approvals || {}, pending: (D.pending || []).filter(x => now - x.t < APPR_MS).map(x => ({ id: x.id, kind: x.kind, text: x.text, by: x.by, t: x.t, reason: x.reason, mine: x.byUid === uid, can: canApprove(x, u, uid) })).filter(x => x.mine || x.can), sync: has(u, 'automations.manage') ? { from: (D.settings.sync || {}).from || [] } : null, signalsDone: has(u, 'mod.kick') ? Object.entries(D.signals).filter(([, x]) => x.status !== 'open').sort((a, b) => (b[1].done || b[1].t) - (a[1].done || a[1].t)).slice(0, 30).map(([id, x]) => ({ userId: +id, ...x })) : [], watch: D.watch,
         staffWeek: Object.entries(D.audit.filter(a => a.t > now - 7 * 864e5 && a.user && a.user !== 'Automation').reduce((m, a) => (m[a.user] = (m[a.user] || 0) + 1, m), {})).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([user, n]) => ({ user, n })),
         rules: Object.fromEntries(Object.keys(DEFAULT_RULES).map(k => [k, rule(k)])), stats: { ...D.stats, activeBans: bans.length, activeMutes: mutes.length } });
     }
@@ -2203,6 +2358,7 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/entry') {
       const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       if (B.op === 'note') { if (!has(u, 'logbook.note')) return deny(res); const t = cleanName(B.text, 500); if (!t) return send(res, 400, { error: 'Write a note first' }); logEntry(id, cleanName(B.name, 40) || 'User ' + id, { type: 'Note', reason: t, by: u.user, byUid: uid, ...(B.pin ? { pin: true } : {}) }); return ok(res); }
+      if (B.op === 'train') { if (!has(u, 'staff.review')) return deny(res); const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e || !TR_TYPES[e.type]) return send(res, 404, { error: 'That entry cannot be used for training.' }); if (B.on) e.train = true; else delete e.train; audit(u.user, `${B.on ? 'Marked' : 'Unmarked'} a ${e.type.toLowerCase()} entry for training`); return ok(res); }
       if (B.op === 'pin') { if (!has(u, 'logbook.note')) return deny(res); const e = (D.logs[id] || []).find(x => x.id === B.id && x.type === 'Note'); if (!e) return send(res, 404, { error: 'That note no longer exists.' }); e.pin = !!B.on; audit(u.user, `${e.pin ? 'Pinned' : 'Unpinned'} a note on ${e.name}`); return ok(res); }
       if (B.op === 'evidence') {
         if (!has(u, 'logbook.note')) return deny(res);
@@ -2216,7 +2372,7 @@ async function route(req, res, url, p) {
         if (!has(u, 'logbook.revert')) return deny(res);
         const e = (D.logs[id] || []).find(x => x.id === B.id); if (!e || e.status === 'reverted') return send(res, 404, { error: 'Entry not found or already reverted' });
         if (e.type === 'Banned' && D.bans[id] && D.bans[id].entry === e.id && needSecond(u, D.bans[id])) return send(res, 409, { error: 'Lifting a permanent ban needs two staff members. Use Unban instead, and a second person can approve it.' });
-        e.status = 'reverted'; e.revertedBy = u.user; e.revertedAt = Date.now();
+        e.status = 'reverted'; e.revertedBy = u.user; e.revertedAt = Date.now(); if (D.play[id] && D.play[id].rk) D.play[id].rk = D.play[id].rk.filter(r => r[2] !== e.id); // a reverted entry no longer counts toward the risk score
         if ((e.type === 'Banned' || e.type === 'Suspended') && D.bans[id] && D.bans[id].entry === e.id) { delete D.bans[id]; unbanCmd(id); }
         if (e.type === 'Muted' && D.mutes[id] && D.mutes[id].entry === e.id) delete D.mutes[id];
         if (e.type === 'Points' && e.amount) playOf(id, e.name).points -= e.amount;
@@ -2257,9 +2413,9 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/call') {
       if (!has(u, 'reports.handle')) return deny(res);
       const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
-      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; if (c.from.userId > 0) cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
+      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; obTick(uid, 'report'); if (c.from.userId > 0) cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
       else if (B.op === 'resolve' && c.status !== 'resolved') {
-        c.status = 'resolved'; c.by = c.by || u.user; c.note = cleanName(B.note, 200); c.resolved = Date.now();
+        c.status = 'resolved'; c.by = c.by || u.user; obTick(uid, 'report'); c.note = cleanName(B.note, 200); c.resolved = Date.now();
         if (c.from.userId > 0) cmd({ type: 'message', kind: 'ok', title: 'Report resolved', body: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}`, userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
       }
       return ok(res);
@@ -2270,6 +2426,84 @@ async function route(req, res, url, p) {
       if (!u.isOwner && !has(u, 'chatlogs.view')) return deny(res);
       let x = null; try { const r = await cbFetch('rpc/chat_box_usage', { method: 'POST', body: JSON.stringify({ w: CTX.wid }), ms: 4000 }); if (r.ok) x = (await r.json())[0] || { n: 0, bytes: 0 }; } catch {}
       return send(res, 200, x ? { setup: true, days: chatDays(), n: +x.n || 0, bytes: +x.bytes || 0, maxN: CB_MAX_N, maxBytes: CB_MAX_BYTES } : { setup: false, days: chatDays() });
+    }
+    if (p === '/api/escalate') { // send a case up to a senior; seniors take, return or resolve it
+      D.escal ||= [];
+      if (req.method === 'GET') { const x = D.escal.find(y => y.id === url.searchParams.get('id')); if (!x || !(x.byUid === uid || escSenior(uid, x))) return send(res, 404, { error: 'That case is not there any more.' }); return send(res, 200, { item: escOut(x, uid), ref: escRef(x) }); }
+      if (B.op === 'send') {
+        const kind = B.kind; if (!ESC_KINDS[kind]) return send(res, 400, { error: 'bad request' });
+        if (!escCan(u, kind)) return deny(res);
+        let ref, title;
+        if (kind === 'report') { const c = D.calls.find(c => c.id === +B.ref); if (!c) return send(res, 404, { error: 'That report is not there any more.' }); ref = c.id; title = `Report #${c.id}`; }
+        else if (kind === 'appeal') { const a = D.appeals.find(a => a.id === B.ref); if (!a) return send(res, 404, { error: 'That appeal is not there any more.' }); ref = a.id; title = `Appeal from ${a.name}`; }
+        else { const pid = +(B.ref && B.ref.userId), e = (D.logs[pid] || []).find(e => e.id === (B.ref && B.ref.entryId)); if (!e) return send(res, 404, { error: 'That logbook entry is not there any more.' }); ref = { userId: pid, entryId: e.id }; title = `${e.type}: ${e.name}`; }
+        const to = B.to === 'any' ? 'any' : String(B.to || ''); if (to !== 'any' && !(D.ranks[to] && D.ranks[to].pos > u.pos)) return send(res, 400, { error: 'Pick a rank above yours, or any senior.' });
+        const probe = { kind, to, byPos: u.pos, byUid: uid };
+        if (u.isOwner || !Object.keys(D.members).some(m => m !== D.meta.owner && escSenior(m, probe))) return send(res, 409, { error: 'No one above you can take this.' });
+        if (D.escal.some(y => y.status !== 'resolved' && escSame(y, { kind, ref }))) return send(res, 409, { error: 'This is already sent up.' });
+        const note = cleanName(B.note, 300), x = { id: rnd(6), kind, ref, title, to, note, by: u.user, byUid: uid, byPos: u.pos, t: Date.now(), status: 'open', log: [{ t: Date.now(), who: u.user, what: 'Sent up', note }] };
+        D.escal.unshift(x); const keep = D.escal.filter(y => y.status !== 'resolved'), done = D.escal.filter(y => y.status === 'resolved').slice(0, 100); D.escal = [...keep, ...done].sort((a, b) => b.t - a.t).slice(0, 300);
+        audit(u.user, `Sent ${title} up to ${to === 'any' ? 'any senior' : D.ranks[to].name}${note ? ': ' + note : ''}`); return send(res, 200, { ok: true, id: x.id });
+      }
+      const x = D.escal.find(y => y.id === B.id); if (!x) return send(res, 404, { error: 'That case is not there any more.' });
+      const note = cleanName(B.note, 300), step = what => { x.log.push({ t: Date.now(), who: u.user, what, note }); audit(u.user, `${what}: ${x.title}${note ? ' (' + note + ')' : ''}`); };
+      if (B.op === 'resend') { if (x.byUid !== uid || x.status !== 'returned') return deny(res); x.status = 'open'; x.takenBy = null; step('Sent up again'); return ok(res); }
+      if (!escSenior(uid, x)) return deny(res);
+      if (B.op === 'take') { if (x.status !== 'open') return send(res, 409, { error: 'Someone already has this.' }); x.status = 'taken'; x.takenBy = u.user; x.takenUid = uid; step('Taken'); return ok(res); }
+      if (B.op === 'return') { if (x.status === 'resolved') return send(res, 409, { error: 'This is already resolved.' }); if (!note) return send(res, 400, { error: 'Add a note for the person who sent it.' }); x.status = 'returned'; step('Returned'); return ok(res); }
+      if (B.op === 'resolve') { if (x.status === 'resolved') return send(res, 409, { error: 'This is already resolved.' }); x.status = 'resolved'; x.takenBy ||= u.user; step('Resolved'); return ok(res); }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (req.method === 'POST' && p === '/api/onboard') {
+      D.onboard ||= { lists: {}, done: {}, skip: {} };
+      if (B.op === 'event') { if (B.ev !== 'rulebook') return send(res, 400, { error: 'bad request' }); obTick(uid, 'rulebook'); return ok(res); }
+      if (B.op === 'tick') { const st = obState(uid), it = st && st.items.find(i => i.id === B.id && !i.auto); if (!it) return send(res, 404, { error: 'Not on your checklist.' }); const d = (D.onboard.done[uid] ||= {}); if (B.on) d[it.id] = Date.now(); else delete d[it.id]; return ok(res); }
+      if (!u.isOwner) return ownerOnly(res);
+      if (B.op === 'list') {
+        if (!D.ranks[B.rank]) return send(res, 400, { error: 'Pick a rank.' });
+        const items = (Array.isArray(B.items) ? B.items : []).slice(0, 15).map(i => ({ id: /^[\w-]{1,20}$/.test(i && i.id || '') ? i.id : rnd(5), label: cleanName(i && i.label, 80), auto: OB_AUTO[i && i.auto] ? i.auto : '' })).filter(i => i.label);
+        D.onboard.lists[B.rank] = items; audit(u.user, `Changed the onboarding checklist for ${D.ranks[B.rank].name}`); return ok(res);
+      }
+      if (B.op === 'reset') { if (!D.ranks[B.rank]) return send(res, 400, { error: 'Pick a rank.' }); delete D.onboard.lists[B.rank]; audit(u.user, `Reset the onboarding checklist for ${D.ranks[B.rank].name}`); return ok(res); }
+      if (B.op === 'restart') { if (!D.members[B.uid] || B.uid === D.meta.owner) return send(res, 404, { error: 'No such member.' }); delete D.onboard.skip[B.uid]; delete D.onboard.done[B.uid]; audit(u.user, `Restarted onboarding for ${D.members[B.uid].name}`); return ok(res); }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (p === '/api/training') { // practice on anonymised cases. Never touches real players
+      D.training ||= { cases: [], results: {} };
+      if (req.method === 'POST' && B.op === 'toggle') { if (!u.isOwner) return ownerOnly(res); D.settings.training = !!B.on; audit(u.user, B.on ? 'Turned on the training page' : 'Turned off the training page'); return ok(res); }
+      if (req.method === 'POST' && ['add', 'edit', 'del'].includes(B.op)) {
+        if (!u.isOwner) return ownerOnly(res);
+        if (B.op === 'del') { D.training.cases = D.training.cases.filter(c => c.id !== B.id); audit(u.user, 'Deleted a practice case'); return ok(res); }
+        const text = cleanName(B.text, 600), action = ['warn', 'mute', 'kick', 'ban', 'none'].includes(B.action) ? B.action : null; if (!text || !action) return send(res, 400, { error: 'Write what happened and pick the right action.' });
+        const c = { id: B.op === 'edit' ? String(B.id) : 'c' + rnd(6), text, chat: (Array.isArray(B.chat) ? B.chat : []).map(x => cleanName(x, 200)).filter(Boolean).slice(0, 15), action, minutes: ['mute', 'ban'].includes(action) ? clampInt(B.minutes, 0, 525600) : 0, note: cleanName(B.note, 400), t: Date.now(), by: u.user };
+        if (B.op === 'edit') { const i = D.training.cases.findIndex(x => x.id === c.id); if (i < 0) return send(res, 404, { error: 'No such case.' }); D.training.cases[i] = c; } else { if (D.training.cases.length >= 100) return send(res, 400, { error: 'Up to 100 practice cases.' }); D.training.cases.unshift(c); }
+        audit(u.user, B.op === 'edit' ? 'Edited a practice case' : 'Wrote a practice case'); return ok(res);
+      }
+      if (!D.settings.training) return send(res, 404, { error: 'The training page is turned off.', off: true });
+      if (!has(u, 'training.use') && !u.isOwner) return deny(res);
+      const cases = trCases(), mine = D.training.results[uid] || [];
+      if (req.method === 'GET') { const seen = new Set(mine.map(r => r.id)); return send(res, 200, { cases: cases.map(({ answer, note, ...c }) => ({ ...c, answered: seen.has(c.id) })).sort((a, b) => (a.answered ? 1 : 0) - (b.answered ? 1 : 0) || b.t - a.t).slice(0, 60), done: mine.length, right: mine.filter(r => r.match).length, own: u.isOwner ? D.training.cases : undefined }); }
+      if (B.op !== 'answer') return send(res, 400, { error: 'bad request' });
+      const c = cases.find(x => x.id === B.id); if (!c) return send(res, 404, { error: 'That case is not there any more.' });
+      const pick = { action: ['warn', 'mute', 'kick', 'ban', 'none'].includes(B.action) ? B.action : 'none', minutes: clampInt(B.minutes, 0, 525600) }, match = trMatch(pick, c.answer);
+      D.training.results[uid] = [{ t: Date.now(), id: c.id, pick, answer: c.answer, match }, ...mine.filter(r => r.id !== c.id)].slice(0, 100);
+      obTick(uid, 'practice'); return send(res, 200, { ok: true, match, answer: c.answer, note: c.note });
+    }
+    if (req.method === 'POST' && p === '/api/digest') { // the owner's daily summary
+      if (!u.isOwner) return ownerOnly(res);
+      const hour = clampInt(B.hour, 0, 23), tz = String(B.tz || 'UTC').slice(0, 64); if (!Number.isInteger(hour) || !localDay(tz, Date.now())) return send(res, 400, { error: 'Pick an hour and a valid time zone.' });
+      const was = D.settings.digest || {}; D.settings.digest = { on: !!B.on, hour, tz };
+      if (B.on && (!was.on || was.hour !== hour || was.tz !== tz)) D.meta.digestDay = digestSlot(D.settings.digest, Date.now()); // the first one comes at the next chosen hour, not straight away
+      audit(u.user, B.on ? `Turned on the daily summary (${String(hour).padStart(2, '0')}:00, ${tz})` : 'Turned off the daily summary'); return ok(res);
+    }
+    if (req.method === 'POST' && p === '/api/alertwords') { // watch words for chat alerts
+      if (!has(u, 'automations.manage')) return deny(res);
+      if (B.dest !== undefined && !['inbox', 'discord', 'both'].includes(B.dest)) return send(res, 400, { error: 'Pick Inbox, Discord or both.' });
+      const seen = new Set(), words = (Array.isArray(B.words) ? B.words : []).map(x => ({ w: cleanName(x && x.w, 60).toLowerCase(), whole: !!(x && x.whole) })).filter(x => x.w && cussTokens(x.w).length && !seen.has(x.w) && seen.add(x.w)).slice(0, 100);
+      const old = Object.fromEntries((D.alertWords || []).map(a => [a.w, a.id]));
+      D.alertWords = words.map(x => ({ id: old[x.w] || rnd(5), ...x }));
+      if (B.dest !== undefined) D.settings.alertDest = B.dest;
+      audit(u.user, 'Updated the chat alert words'); return ok(res);
     }
     if (req.method === 'POST' && p === '/api/cusswords') { // the swear word and slur list behind the chat log flags
       if (!has(u, 'automations.manage')) return deny(res);
@@ -2597,7 +2831,8 @@ async function route(req, res, url, p) {
       if (!has(u, 'webhooks.manage')) return deny(res); D.webhook ||= DEFAULT_WEBHOOK();
       if (B.op === 'save') {
         if (B.url !== undefined) { const v = String(B.url || '').trim(); if (v && !HOOK_RE.test(v)) return send(res, 400, { error: 'Paste a Discord webhook URL. It starts with https://discord.com/api/webhooks/' }); D.webhook.url = v; }
-        if (B.events) for (const k of Object.keys(D.webhook.events)) if (k in B.events) D.webhook.events[k] = !!B.events[k];
+        if (B.events && !u.isOwner && OWNER_EVENTS.some(k => k in B.events && !!B.events[k] !== !!D.webhook.events[k])) return send(res, 403, { error: 'Only the workspace owner can turn this notification on or off.' });
+        if (B.events) for (const k of [...new Set([...Object.keys(D.webhook.events), ...OWNER_EVENTS])]) if (k in B.events) D.webhook.events[k] = !!B.events[k];
         audit(u.user, 'Updated Discord notifications'); return ok(res);
       }
       if (B.op === 'test') { if (!D.webhook.url) return send(res, 400, { error: 'Add a webhook URL first' }); HOOKS.push({ url: D.webhook.url, body: { username: 'Sentinel', allowed_mentions: { parse: [] }, embeds: [{ title: 'Sentinel is connected', description: `Notifications for ${D.meta.name} will appear in this channel.`, color: 0x635bff }] } }); return ok(res); }
