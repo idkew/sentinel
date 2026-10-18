@@ -25,7 +25,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local StarterGui = game:GetService("StarterGui")
 
-local CLIENT_VERSION = 5 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
+local CLIENT_VERSION = 6 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
 local player = Players.LocalPlayer
 local savedInput = nil -- what the chat bar was set to before we hid it
 local hidden = false
@@ -479,4 +479,41 @@ task.spawn(function()
 		if not ok then warn("[Sentinel] Could not show a banner: " .. tostring(err)) end
 	end)
 	noticeEvent:FireServer("ready", CLIENT_VERSION) -- tells the game script to send banners here instead of drawing them itself, and which version this is
+	task.wait(5)
+	-- Linked accounts: Roblox settings saved on this computer or phone are the same for every account on it.
+	-- Sent once. The website keeps only a one-way code of them, never the values, and never an IP address.
+	local function get(f)
+		local ok, v = pcall(f)
+		if ok then return v end
+		return nil
+	end
+	local s = get(function() return UserSettings():GetService("UserGameSettings") end)
+	local uis = game:GetService("UserInputService")
+	local lt, ut = os.date("*t"), os.date("!*t")
+	local dd = lt.yday - ut.yday
+	if dd > 1 then dd = -1 elseif dd < -1 then dd = 1 end
+	local vp = get(function() return workspace.CurrentCamera.ViewportSize end)
+	local inp = 0
+	for i, on in { uis.TouchEnabled, uis.KeyboardEnabled, uis.MouseEnabled, uis.GamepadEnabled, uis.VREnabled, get(function() return game:GetService("GuiService"):IsTenFootInterface() end) } do
+		if on then inp += 2 ^ (i - 1) end
+	end
+	local fp = {
+		ms = s and get(function() return math.floor(s.MouseSensitivity * 10000 + 0.5) end),
+		vol = s and get(function() return math.floor(s.MasterVolume * 100 + 0.5) end),
+		q = s and get(function() return s.SavedQualityLevel.Value end),
+		cm = s and get(function() return s.ComputerCameraMovementMode.Value end),
+		mm = s and get(function() return s.ComputerMovementMode.Value end),
+		tc = s and get(function() return s.TouchCameraMovementMode.Value end),
+		tm = s and get(function() return s.TouchMovementMode.Value end),
+		inv = s and get(function() return s.CameraYInverted and 1 or 0 end),
+		gs = s and get(function() return math.floor(s.GamepadCameraSensitivity * 1000 + 0.5) end),
+		full = s and get(function() return s:InFullScreen() and 1 or 0 end),
+		loc = get(function() return game:GetService("LocalizationService").SystemLocaleId end),
+		tz = dd * 1440 + (lt.hour * 60 + lt.min) - (ut.hour * 60 + ut.min),
+		vw = vp and math.floor(vp.X) or nil,
+		vh = vp and math.floor(vp.Y) or nil,
+		inp = inp,
+		now = get(function() return DateTime.now().UnixTimestampMillis end),
+	}
+	noticeEvent:FireServer("dev", fp)
 end)
