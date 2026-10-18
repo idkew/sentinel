@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 21 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 22 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -116,7 +116,7 @@ local function ringRects(W, H, r, p, pad)
 	return out
 end
 
-local function buildNotice(gui, text, kind, title, fixed)
+local function buildNotice(gui, text, kind, title, fixed, button) -- button: optional label for one button under the message, such as "I understand"
 	local st = NOTICE_STYLES[kind] or NOTICE_STYLES.red
 	local logo = noticeLogo()
 	local R, T, M = RING_R, RING_T, RING_M
@@ -184,6 +184,15 @@ local function buildNotice(gui, text, kind, title, fixed)
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
 		TextColor3 = Color3.fromRGB(176, 176, 185), Font = Enum.Font.GothamMedium, TextSize = 13, Text = text, LayoutOrder = 2,
 	}, col)
+	local btn
+	if button then
+		local hold = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 3 }, col)
+		btn = make("TextButton", {
+			Name = "Button", Size = UDim2.fromOffset(130, 30), Position = UDim2.fromOffset(0, 10), BackgroundColor3 = st.color, BorderSizePixel = 0, AutoButtonColor = true,
+			TextColor3 = Color3.fromRGB(20, 20, 23), Font = Enum.Font.GothamBold, TextSize = 13, Text = button,
+		}, hold)
+		make("UICorner", { CornerRadius = UDim.new(0, 8) }, btn)
+	end
 
 	-- the timer line: six clip windows, each showing part of a copy of the card's border
 	local ring = make("Frame", { Name = "Timer", BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(), ZIndex = 5 }, card)
@@ -196,7 +205,7 @@ local function buildNotice(gui, text, kind, title, fixed)
 		segs[i] = { clip = clip, line = line }
 	end
 
-	local n = { root = root, card = card }
+	local n = { root = root, card = card, button = btn }
 	-- p runs from 0 (nothing drawn) to 1 (the whole border drawn)
 	function n.progress(p)
 		local W, H
@@ -250,8 +259,17 @@ if not noticeEvent then
 	noticeEvent.Parent = ReplicatedStorage
 end
 noticeEvent:SetAttribute("Logo", LOGO_IMAGE)
-local clientReady, clientVer, activeBanner = {}, {}, {}
+local clientReady, clientVer, activeBanner, ackWant = {}, {}, {}, {} -- ackWant: warnings each player was asked to acknowledge
 noticeEvent.OnServerEvent:Connect(function(plr, msg, ver)
+	if msg == "ack" then -- the player pressed "I understand" on a warning. Only a warning that was sent to them counts
+		local w = ackWant[plr]
+		if type(ver) == "string" and w and w[ver] then
+			w[ver] = nil
+			queue({ type = "ack", userId = plr.UserId, name = plr.Name, entry = ver })
+			if syncSoon then syncSoon() end
+		end
+		return
+	end
 	if msg ~= "ready" then return end
 	clientReady[plr] = true
 	clientVer[plr] = (type(ver) == "number" and ver >= 1 and ver < 1000) and math.floor(ver) or 1
@@ -295,12 +313,16 @@ local function serverBanner(plr, pg, text, kind, title)
 	end)
 end
 
-local function bannerNow(plr, text, kind, title)
+local function bannerNow(plr, text, kind, title, ack)
 	local pg = plr:FindFirstChild("PlayerGui")
 	if not pg then return end
 	text = string.sub(tostring(text), 1, 300)
 	if title ~= nil then title = string.sub(tostring(title), 1, 40) end
-	if clientReady[plr] then
+	if clientReady[plr] and ack and (clientVer[plr] or 0) >= 5 then -- player script 5 or newer shows an "I understand" button; nothing is ever blocked
+		ackWant[plr] = ackWant[plr] or {}
+		ackWant[plr][ack] = true
+		noticeEvent:FireClient(plr, text, kind, title, { ack = ack })
+	elseif clientReady[plr] then
 		noticeEvent:FireClient(plr, text, kind, title)
 	else
 		serverBanner(plr, pg, text, kind, title)
@@ -308,8 +330,8 @@ local function bannerNow(plr, text, kind, title)
 end
 
 -- a banner must never be able to break anything else (like hiding a !command from chat), so errors are caught and printed instead
-local function banner(plr, text, kind, title)
-	local ok, err = pcall(bannerNow, plr, text, kind, title)
+local function banner(plr, text, kind, title, ack)
+	local ok, err = pcall(bannerNow, plr, text, kind, title, ack)
 	if not ok then warn("[Sentinel] Could not show a banner to " .. plr.Name .. ": " .. tostring(err)) end
 end
 
@@ -584,7 +606,8 @@ local function handle(c)
 		end
 	elseif c.type == "message" then
 		local kind = (c.kind == "warn" and "warn") or (c.kind == "ok" and "green") or (c.kind == "info" and "blue") or "red"
-		if plr then banner(plr, tostring(c.body or c.text), kind, c.title) end
+		local ack = type(c.ack) == "string" and #c.ack <= 40 and not muted[c.userId] and c.ack or nil -- a muted player is never asked to acknowledge
+		if plr then banner(plr, tostring(c.body or c.text), kind, c.title, ack) end
 	elseif c.type == "announce" then
 		for _, p in Players:GetPlayers() do banner(p, tostring(c.text), "blue", "Announcement") end
 	end
@@ -639,7 +662,7 @@ Players.PlayerAdded:Connect(function(p)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
-	clientReady[p], clientVer[p], activeBanner[p] = nil, nil, nil
+	clientReady[p], clientVer[p], activeBanner[p], ackWant[p] = nil, nil, nil, nil
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
