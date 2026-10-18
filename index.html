@@ -481,6 +481,7 @@ const CUSST=m=>m.cuss?` <span class="tag" title="Marked for staff only. Nothing 
 let CL=null,CLU=null,CLF={q:'',user:'',kw:'',from:'',to:'',server:'',flagged:'',type:'',page:0};
 const CLFL={strong:'Strong language or slur',mild:'Mild language',link:'Link',invite:'Discord invite',pii:'Possible personal info',caps:'Shouting',repeat:'Same message repeated',spam:'Rapid-fire spam',long:'Very long message',garble:'Strange characters'};
 const CLCOL=['#7cc4ff','#ffb86b','#9be37a','#ff8fb1','#c8a2ff','#5ee0d0','#ffd76b','#ff9f80'];
+setInterval(async()=>{if(route.page!=='chatlogs'||document.hidden||!CL||CLF.page||dwOpen())return;const was=JSON.stringify(CL);await loadChatLogs();if(JSON.stringify(CL)!==was&&route.page==='chatlogs')softRender()},3000); // open boxes fill up live
 async function loadChatLogs(){const q=new URLSearchParams();for(const [k,v] of Object.entries(CLF))if(v)q.set(k,v);CL=await api('/api/chatlogs?'+q)}
 function clHl(t,terms){ // escapes the text, then marks the searched words
  t=String(t||'');const ws=(terms||[]).map(x=>String(x).toLowerCase()).filter(x=>x.length>1);if(!ws.length)return esc(t);
@@ -491,7 +492,7 @@ function boxCard(b,terms,open){ // one chat log box: when it closed, who was in 
  const col={},seen=[];for(const m of b.msgs)if(!(m.userId in col)){col[m.userId]=CLCOL[seen.length%CLCOL.length];seen.push(m)}
  const kinds=b.types||[];
  return `<div class="cbx ${b.flagged?'fl':''} ${kinds.includes('strong')?'fs':''}" ${open?'':`data-a="cl-open" data-id="${esc(b.id)}" role="button" tabindex="0"`}>
-  <div class="cbh"><span class="cbtm">${dtime(b.t)}</span>${b.flagged?`<span class="cbf">${ic('flag')}${kinds.map(k=>esc(CLFL[k]||k)).slice(0,3).join(' · ')}${kinds.length>3?' +'+(kinds.length-3):''}</span>`:''}<span class="sp"></span>${open?`<button type="button" class="btn s cbb" data-a="cl-report" data-id="${esc(b.id)}">${ic('flag')}Report this box</button>`:''}</div>
+  <div class="cbh"><span class="cbtm">${dtime(b.t)}</span>${b.open?`<span class="bdg ok" title="This box is still filling up. It is saved for good at ${b.max} messages, or when the server shuts down.">Live · ${b.msgs.length}/${b.max}</span>`:''}${b.flagged?`<span class="cbf">${ic('flag')}${kinds.map(k=>esc(CLFL[k]||k)).slice(0,3).join(' · ')}${kinds.length>3?' +'+(kinds.length-3):''}</span>`:''}<span class="sp"></span>${open?`<button type="button" class="btn s cbb" data-a="cl-report" data-id="${esc(b.id)}">${ic('flag')}Report this box</button>`:''}</div>
   <div class="cba">${seen.map(m=>`<span title="${esc(m.name)}" style="--c:${col[m.userId]}">${av(m.userId,m.name)}</span>`).join('')}</div>
   <div class="cbm">${b.msgs.map(m=>`<div class="cbl ${m.flags?'fl':''}"><span class="cbt">${clTime(m.t)}</span><b style="color:${col[m.userId]}">[${esc(m.name)}]</b><span class="cbw">${clHl(m.text,terms)}${(m.flags||[]).map(f=>`<span class="cbr">${esc(CLFL[f]||f)}</span>`).join('')}</span>${open&&MODP()&&m.userId>0?`<button type="button" class="cbmod" data-a="cl-mod" data-uid="${m.userId}" data-n="${esc(m.name)}" data-id="${esc(b.id)}">Moderate</button>`:''}</div>`).join('')}</div>
   <div class="cbi"><span class="mono">${clHl(b.id,terms)}</span><span>server <span class="mono">${esc(b.server)}</span></span></div></div>`}
