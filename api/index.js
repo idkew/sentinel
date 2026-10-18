@@ -105,10 +105,28 @@ function muteWarn(hide = true) { // why a mute might not stop chat right now (ch
   return null;
 }
 let SITE_NOW = ''; // this request's site address, so in-game messages can include the appeal link
+function appealWait(id) { // why this player can't appeal right now, or ''
+  if (D.appeals.some(x => x.uid === id && x.status === 'open')) return 'You already have an appeal waiting for review.';
+  const recent = D.appeals.filter(x => x.uid === id && Date.now() - x.t < APPEAL_WINDOW).sort((a, b) => b.t - a.t); // anti-spam: 2 appeals per player every 5 days
+  if (recent.length < APPEAL_MAX) return '';
+  const wait = recent[APPEAL_MAX - 1].t + APPEAL_WINDOW - Date.now(), d = Math.ceil(wait / 864e5), h = Math.ceil(wait / 36e5); return `You have used both appeals for now. You can send another in ${d > 1 ? d + ' days' : h > 1 ? h + ' hours' : 'about an hour'}.`;
+}
+function appealMake(id, uname, text, via) { // a new ban appeal from the web page or the appeal game; returns [status, body]
+  const ban = id && D.bans[id];
+  if (!ban || !live(ban)) return [404, { error: 'We could not find an active ban for that username in this game.' }];
+  const why = appealWait(id); if (why) return [why.startsWith('You already') ? 409 : 429, { error: why }];
+  const aid = crypto.randomBytes(4).toString('hex'), tok = rnd(9), nm = ban.name || uname;
+  abuseTick('pub'); D.appeals.unshift({ id: aid, tok, uid: id, name: nm, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null, entry: ban.entry || null, ...(via ? { via: 'hub', hub: via } : {}) }); D.appeals.length = Math.min(D.appeals.length, 200);
+  feed(`Ban appeal from ${nm}${via ? ' (appeal game)' : ''}`);
+  const fl = [['Banned for', ban.reason], ['Banned by', ban.by], ...(via ? [['Sent from', via]] : [])];
+  if (!botPost({ embeds: [dEmbed(`Ban appeal: ${nm}`, text, fl, 0x0a7aff)], components: [{ type: 1, components: [dBtn('Accept and unban', `ap:${aid}:a`, 3), dBtn('Deny', `ap:${aid}:d`, 4)] }] })) notify('appeals', `Ban appeal: ${nm}`, text, fl.filter(x => x[0] !== 'Banned by'), 0x0a7aff);
+  return [200, { ok: true, aid, tok }];
+}
 function banText(x, plain) { // what the banned player reads: Roblox's ban screen (about 400 characters) or the kick message. Roblox runs the ban screen text through its filter and shows ##### for anything it dislikes, links included, so that one (plain) carries no link
   const len = x.expires ? `This suspension ends ${new Date(x.expires).toUTCString().slice(0, 16)} (UTC).` : 'This ban does not expire.';
   const ap = !plain && D.meta && D.settings.appeals !== false && SITE_NOW ? ` Appeal at ${SITE_NOW}/appeal/${D.meta.id}` : '';
-  return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}`.slice(0, 395);
+  const h = hubOn() ? hubMain() : null, hb = h ? (plain ? ` Appeal in the "${h.name}" game on Roblox.` : ` Or appeal in game: ${hubLink(h)}`) : ''; // the ban screen can't show links, so it names the game
+  return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}${hb}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
 const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
@@ -957,6 +975,23 @@ async function forgetInBoxes(wid, id) { // removes one player's messages from a 
 const FLAG_DEF = { machineBans: { all: true, wids: [] }, chatLogs: { all: false, wids: [] } }; // machine bans shipped in 5.4, so it stays on for everyone
 const FLAG_NAMES = { machineBans: 'Machine bans', chatLogs: 'Chat logs' };
 let FC = { t: 0, v: null, ver: 0 };
+// ---- appeal games: Roblox games run by Sentinel where a banned player can appeal to any workspace that banned them. Registered in the admin console, each with its own key
+let HC = { t: 0, ver: 0, v: [] };
+async function hubsLoad(force) { // cached for a minute; the first one in the list is the one named on ban screens
+  if (!force && HC.t && Date.now() - HC.t < 60000) return HC.v;
+  try { const r = (await sbGet('select=value,version&key=eq.g:hubs'))[0]; HC = { t: Date.now(), ver: r ? r.version : 0, v: r && r.value && Array.isArray(r.value.list) ? r.value.list : [] }; } catch { HC.t = Date.now(); }
+  return HC.v;
+}
+async function hubsSave(list) {
+  const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: 'g:hubs', expect: HC.ver, value: { list } }] }) });
+  if (!r.ok || (await r.json()) !== true) { HC.t = 0; return false; }
+  HC = { t: Date.now(), ver: HC.ver + 1, v: list }; return true;
+}
+const HUB_KEY_RE = /^hub_[a-f0-9]{8}_[\w-]{32}$/;
+const hubMain = () => (HC.v || [])[0] || null;
+const hubOn = () => !!(hubMain() && D.meta && D.settings.appeals !== false && D.settings.hubAppeals !== false); // this workspace takes appeals from the appeal game
+const hubLink = h => `https://www.roblox.com/games/${h.placeId}`;
+async function hubAuth(key) { const k = String(key || ''); if (!HUB_KEY_RE.test(k)) return null; const kh = hash('hub:' + k).toString('hex'); return (await hubsLoad()).find(h => h.kh && same(h.kh, kh)) || null; }
 async function flagsLoad(force) { // cached for 30 seconds; a missing or unreadable row means the defaults
   if (!force && FC.v && Date.now() - FC.t < 30000) return FC.v;
   try { const r = (await sbGet('select=value,version&key=eq.g:flags'))[0]; const v = r && r.value && typeof r.value === 'object' ? r.value : {}; FC = { t: Date.now(), ver: r ? r.version : 0, v: Object.fromEntries(Object.keys(FLAG_DEF).map(k => [k, { all: v[k] ? !!v[k].all : FLAG_DEF[k].all, wids: v[k] && Array.isArray(v[k].wids) ? v[k].wids.filter(w => /^[a-f0-9]{12}$/.test(w)) : [] }])) }; }
@@ -1221,6 +1256,25 @@ async function adminMore(A, res, alog) { // the newer console tools. Returns tru
     }
     return S(200, { setup: true, groups: Object.values(g).sort((a, b) => b.total - a.total) });
   }
+  if (op === 'hubList') { const l = await hubsLoad(true); return S(200, { hubs: l.map(({ kh, ...h }) => ({ ...h, link: hubLink(h) })) }); }
+  if (op === 'hubAdd' || op === 'hubKey' || op === 'hubDel' || op === 'hubTop') {
+    const l = (await hubsLoad(true)).slice(), i = l.findIndex(h => h.id === A.id), key = () => `hub_${crypto.randomBytes(4).toString('hex').slice(0, 8)}_${rnd(24)}`;
+    let shown = null;
+    if (op === 'hubAdd') {
+      const name = cleanName(A.name, 40), pl = Number(A.placeId); if (!name) return S(400, { error: 'Give the appeal game a name, as players see it on Roblox.' });
+      if (!Number.isSafeInteger(pl) || pl < 1) return S(400, { error: 'Enter the place ID (numbers only, from the game link).' }); if (l.length >= 10) return S(400, { error: 'Up to 10 appeal games.' });
+      shown = key(); l.push({ id: crypto.randomBytes(4).toString('hex'), name, placeId: pl, kh: hash('hub:' + shown).toString('hex'), t: now });
+    } else {
+      if (i < 0) return S(404, { error: 'That appeal game is not registered.' });
+      if (op === 'hubKey') { shown = key(); l[i] = { ...l[i], kh: hash('hub:' + shown).toString('hex') }; }
+      if (op === 'hubDel') l.splice(i, 1);
+      if (op === 'hubTop') l.unshift(l.splice(i, 1)[0]);
+    }
+    if (!await hubsSave(l)) return S(409, { error: 'The list changed at the same moment. Reload and try again.' });
+    const nm = op === 'hubAdd' ? A.name : (HC.v.find(h => h.id === A.id) || {}).name || 'an appeal game';
+    alog({ hubAdd: `Registered the appeal game "${cleanName(A.name, 40)}"`, hubKey: `Made a new key for the appeal game "${nm}"`, hubDel: 'Removed an appeal game', hubTop: `Made "${nm}" the appeal game named on ban screens` }[op]);
+    return S(200, { ok: true, ...(shown ? { key: shown } : {}) });
+  }
   if (op === 'versions') {
     const ls = latestScript(), lc = latestClient();
     const items = (await coreRows()).filter(r => !r.meta.deleted).map(r => { const sv = r.meta.scriptV || (r.meta.connectedAt ? 1 : 0), cv = r.meta.clientV || 0, rem = (r.notices || []).filter(n => n && n.kind === 'update').map(n => n.t).sort().pop() || null; return { wid: r.wid, name: r.meta.name, owner: r.meta.owner, scriptV: sv, clientV: cv, oldScript: sv > 0 && sv < ls, oldClient: cv > 0 && cv < lc, connected: !!r.meta.connectedAt, reminded: rem }; });
@@ -1365,7 +1419,7 @@ select.in,textarea.in{border:1px solid var(--ln);border-radius:10px;background:#
 <header class="top"><div class="br"><img src="/favicon.svg" alt=""><div><b>Sentinel Admin</b><small>Site console</small></div></div><span class="pill red"><span class="dot"></span>Restricted</span><span class="sp"></span><span class="pill red" id="pill-m" hidden>Maintenance on</span><span class="pill amb" id="pill-a" hidden>Announcement live</span><span class="pill grn" id="ss"><span class="dot"></span>Session active</span><button class="btn s" id="out">Sign out</button></header>
 <main class="w">
 <section class="stats"><div class="st"><small>Workspaces</small><b id="s1">-</b></div><div class="st" style="--c:var(--red)"><small>In recycle bin</small><b id="s2">-</b></div><div class="st" style="--c:var(--grn)"><small>Total members</small><b id="s3">-</b></div><div class="st" style="--c:var(--amb)"><small>Feedback</small><b id="s4">-</b></div></section>
-<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="lv" role="tab">Live <i id="lvn" hidden>0</i></button><button class="tab" data-t="ac" role="tab">Accounts</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="st" role="tab">Site</button><button class="tab" data-t="lg" role="tab">Audit log</button><button class="tab" data-t="tl" role="tab">Tools</button><button class="tab" data-t="ab" role="tab">Abuse <i id="abn" hidden>0</i></button><button class="tab" data-t="gr" role="tab">Growth</button><button class="tab" data-t="er" role="tab">Errors</button><button class="tab" data-t="vr" role="tab">Versions</button><button class="tab" data-t="sg" role="tab">Storage</button><button class="tab" data-t="ff" role="tab">Flags</button><button class="tab" data-t="dq" role="tab">Data requests</button></nav>
+<nav class="tabs" role="tablist"><button class="tab on" data-t="ws" role="tab">Workspaces</button><button class="tab" data-t="lv" role="tab">Live <i id="lvn" hidden>0</i></button><button class="tab" data-t="ac" role="tab">Accounts</button><button class="tab" data-t="fb" role="tab">Feedback <i id="fbn" hidden>0</i></button><button class="tab" data-t="st" role="tab">Site</button><button class="tab" data-t="lg" role="tab">Audit log</button><button class="tab" data-t="tl" role="tab">Tools</button><button class="tab" data-t="ab" role="tab">Abuse <i id="abn" hidden>0</i></button><button class="tab" data-t="gr" role="tab">Growth</button><button class="tab" data-t="er" role="tab">Errors</button><button class="tab" data-t="vr" role="tab">Versions</button><button class="tab" data-t="sg" role="tab">Storage</button><button class="tab" data-t="ff" role="tab">Flags</button><button class="tab" data-t="dq" role="tab">Data requests</button><button class="tab" data-t="hb" role="tab">Appeal games</button></nav>
 <section id="p-ws"><div class="bar"><input class="in" id="q" placeholder="Search by name, id or owner" aria-label="Search workspaces"><div class="chips"><button class="chip on" data-f="all">All</button><button class="chip" data-f="live">Active</button><button class="chip" data-f="del">Deleted</button></div><span class="sp"></span><button class="btn s" id="rf">Refresh</button></div><div id="o"><div class="skel"></div><div class="skel"></div></div></section>
 <section id="p-lv" hidden><div class="bar"><span class="note" id="lvs">Loading</span><span class="sp"></span><button class="btn s" id="lvr">Refresh</button></div><div id="lvo"></div></section>
 <section id="p-ac" hidden><div class="bar"><input class="in" id="uq" placeholder="Search accounts by name, Roblox name or id" aria-label="Search accounts"><button class="btn p" id="ub">Search</button></div><div id="uo"><div class="empty">Search for an account to see their workspaces and manage them.</div></div></section>
@@ -1393,6 +1447,7 @@ select.in,textarea.in{border:1px solid var(--ln);border-radius:10px;background:#
 <div class="card"><h3>Workspace data</h3><p>To export a whole workspace, open it under Workspaces and choose Download. To delete it, move it to the recycle bin there; it is erased for good after 30 days.</p></div>
 <div class="card" style="grid-column:1/-1"><h3>Request log <span class="sp" style="flex:1"></span><button class="btn s" id="dql">Refresh</button></h3><div id="dqlo" class="note tw2"></div></div>
 </div></section>
+<section id="p-hb" hidden><div class="card"><h3>Appeal games</h3><p>Roblox games you run where banned players appeal to any workspace that banned them. Put SentinelHub.lua (Script, ServerScriptService) and SentinelHubClient.lua (LocalScript, StarterPlayerScripts) in the game and paste its key into SentinelHub.lua. The first game in the list is the one named on ban screens.</p><input class="in" id="hbn" placeholder="Game name, as players see it on Roblox" maxlength="40" autocomplete="off"><input class="in mt" id="hbp" placeholder="Place ID (the number in the game link)" inputmode="numeric" autocomplete="off"><div class="row mt"><button class="btn" id="hba">Register game</button></div><div id="hbk" class="mt"></div><div id="hbt" class="mt tw2 note">Loading</div></div></section>
 </main><div class="toast" id="tt" role="status"></div><div id="md"></div>
 <script>var $=function(i){return document.getElementById(i)},WS=[],FB=[],FL='all';
 function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -1524,6 +1579,10 @@ function loadFlags(){call({op:'flags'}).then(function(j){$('ffo').innerHTML=j.fl
 $('ffo').onclick=function(ev){var b=ev.target.closest('[data-save]');if(!b)return;var n=b.dataset.save,all=document.querySelector('[data-all="'+n+'"]').checked,ws=document.querySelector('[data-ws="'+n+'"]').value.split(/[^a-f0-9]+/).filter(function(x){return x.length===12});call({op:'flagSet',name:n,all:all,wids:ws}).then(function(){toast('Saved');loadFlags()}).catch(fail)};
 /* data requests */
 function rqv(){return {rid:$('dqr').value.trim(),who:$('dqw').value.trim()}}
+function hubKey(k){$('hbk').innerHTML=k?'<div class="card" style="margin:0"><b>Hub key, shown once</b><p class="note">Paste it over PASTE HUB KEY HERE in SentinelHub.lua, then publish the game. If you lose it, make a new key.</p><code style="word-break:break-all">'+e(k)+'</code></div>':''}
+function loadHubs(){call({op:'hubList'}).then(function(j){$('hbt').innerHTML=j.hubs.length?'<table class="tb"><tr><th>Game</th><th>Place</th><th>Last check-in</th><th></th></tr>'+j.hubs.map(function(h,i){return '<tr><td><b>'+e(h.name)+'</b>'+(i===0?' <span class="pill">named on ban screens</span>':'')+'</td><td><a href="'+e(h.link)+'" target="_blank" rel="noopener">'+e(h.placeId)+'</a></td><td class="note">'+(h.last?ago(h.last):'never')+'</td><td style="white-space:nowrap">'+(i>0?'<button class="btn s" data-h="'+e(h.id)+'" data-o="hubTop">Name on ban screens</button> ':'')+'<button class="btn s" data-h="'+e(h.id)+'" data-o="hubKey">New key</button> <button class="btn s d" data-h="'+e(h.id)+'" data-o="hubDel">Remove</button></td></tr>'}).join('')+'</table>':'No appeal games yet. Banned players can only use the web appeal page.'}).catch(fail)}
+$('hba').onclick=function(){call({op:'hubAdd',name:$('hbn').value.trim(),placeId:$('hbp').value.trim()}).then(function(j){hubKey(j.key);$('hbn').value=$('hbp').value='';toast('Registered');loadHubs()}).catch(fail)};
+$('hbt').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;if(b.dataset.o!=='hubTop'&&!confirm(b.dataset.o==='hubDel'?'Remove this appeal game? It stops working at once.':'Make a new key? The old key stops working at once.'))return;call({op:b.dataset.o,id:b.dataset.h}).then(function(j){hubKey(j.key);toast('Done');loadHubs()}).catch(fail)};
 function loadReqs(){call({op:'dataReqs'}).then(function(j){$('dqlo').innerHTML=j.items.length?'<table class="tb">'+j.items.map(function(x){return '<tr><td style="white-space:nowrap">'+dt(x.t)+'</td><td><span class="pill">'+e(x.kind)+'</span></td><td class="mono">'+e(x.target)+'</td><td>'+e(x.who)+'</td><td>'+e(x.result)+'</td></tr>'}).join('')+'</table>':'No requests yet.'}).catch(fail)}
 $('dql').onclick=loadReqs;
 $('dqe').onclick=function(){var v=rqv(),all=[];$('dqo').textContent='Collecting...';var step=function(from){return call({op:'personExport',rid:v.rid,who:v.who,from:from}).then(function(j){all=all.concat(j.workspaces);if(j.next!==null&&j.next!==undefined)return step(j.next);saveJson('sentinel-player-'+v.rid+'.json',{robloxUserId:v.rid,exportedAt:j.exportedAt,workspaces:all});$('dqo').textContent='Export downloaded: '+all.length+' workspace'+(all.length==1?'':'s')+' with data.';loadReqs()})};step(0).catch(function(x){$('dqo').textContent=x.message})};
@@ -1542,7 +1601,7 @@ $('uo').addEventListener('click',function(ev){var b=ev.target.closest('[data-u="
 $('o').addEventListener('click',function(ev){var b=ev.target.closest('button');if(!b)return;var o=b.dataset.o,w=b.dataset.w;
 if(o==='va')ask('View as the owner?','Opens this workspace read-only, as its owner sees it, for 15 minutes. Nothing can be changed. The visit is written to the workspace audit log, which the owner can see.','Open').then(function(y){if(y)return call({op:'wsViewAs',wid:w}).then(function(){window.open('/','_blank')})}).catch(fail);
 else if(o==='cp'){var d=DET[w]||{},c=d.caps||{members:100,logbook:50000};setCaps(w,c.members,c.logbook).then(function(){return call({op:'wsDetail',wid:w}).then(function(x){DET[w]=x;drawWs()})}).catch(fail)}});
-var T={ab:loadAbuse,gr:loadGrowth,er:loadEvents,vr:loadVersions,sg:loadStorage,ff:loadFlags,dq:loadReqs};
+var T={ab:loadAbuse,gr:loadGrowth,er:loadEvents,vr:loadVersions,sg:loadStorage,ff:loadFlags,dq:loadReqs,hb:loadHubs};
 document.querySelector('.tabs').addEventListener('click',function(ev){var b=ev.target.closest('.tab');if(!b)return;var t=b.dataset.t;Object.keys(T).forEach(function(k){$('p-'+k).hidden=k!==t});if(T[t])T[t]();if(t==='st')loadAnn()});
 loadAbuse();
 })();</script></body></html>
@@ -1756,7 +1815,7 @@ h1{font-size:23px;letter-spacing:-.02em;margin:0 0 6px}p{color:var(--mu);margin:
 input,textarea{width:100%;border:0;border-radius:9px;padding:10px 12px;font:inherit;color:inherit;background:rgba(127,127,127,.12);box-shadow:inset 0 0 0 .5px var(--ln);outline:0}input:focus,textarea:focus{box-shadow:0 0 0 3px #0a7aff55}textarea{min-height:120px;resize:vertical}
 button{margin-top:20px;width:100%;height:42px;border:0;border-radius:10px;font:600 15px inherit;color:#fff;background:linear-gradient(180deg,#3d9bff,var(--ac));cursor:pointer}button[disabled]{opacity:.5}
 .m{margin-top:14px;font-size:14px;padding:10px 12px;border-radius:9px}.e{background:rgba(255,59,48,.14);color:#d70015}.o{background:rgba(48,209,88,.16);color:#1f8a3b}.x{font-size:12px;color:var(--mu);margin-top:18px;text-align:center}.n{background:rgba(10,122,255,.12);color:var(--ac)}.rp{margin-top:12px;padding:12px 14px;border-radius:10px;background:rgba(127,127,127,.12);font-size:14px;white-space:pre-wrap}.rp b{display:block;font-size:12px;color:var(--mu);margin-bottom:4px}.lk{display:block;margin-top:8px;padding:10px 12px;border-radius:9px;background:rgba(127,127,127,.12);font:13px/1.4 ui-monospace,Menlo,monospace;word-break:break-all;color:var(--ink);text-decoration:none}
-</style></head><body><div class="c" id="c"><h1 id="h">Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden novalidate><label for="u">Your Roblox username</label><input id="u" maxlength="40" autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" placeholder="Explain what happened and what you will do differently."></textarea><button id="b" disabled>Send appeal</button></form><div id="m"></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
+</style></head><body><div class="c" id="c"><h1 id="h">Appeal a ban</h1><p id="s">Loading…</p><form id="f" hidden novalidate><label for="u">Your Roblox username</label><input id="u" maxlength="40" autocomplete="off"><label for="t">Why should the ban be lifted?</label><textarea id="t" maxlength="1000" placeholder="Explain what happened and what you will do differently."></textarea><button id="b" disabled>Send appeal</button></form><div id="m"></div><div id="hub" class="rp" hidden></div><div class="x">Appeals are read by the game's staff. Sending false information may get a denied appeal.</div></div>
 <script>const w=location.pathname.split('/')[2]||'',rq=new URLSearchParams(location.search).get('r')||'',$=i=>document.getElementById(i);
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 function showStatus(j){$('f').hidden=true;$('h').textContent='Your appeal';$('s').textContent='Appeal in '+j.game+', sent '+new Date(j.t).toLocaleDateString()+'.';$('m').innerHTML='';
@@ -1764,7 +1823,7 @@ function showStatus(j){$('f').hidden=true;$('h').textContent='Your appeal';$('s'
  $('m').appendChild(el('div','m '+(j.status==='accepted'?'o':j.status==='denied'?'e':'n'),st));
  if(j.reply){const r=el('div','rp');r.appendChild(el('b','','Message from staff'));r.appendChild(el('div','',j.reply));$('m').appendChild(r)}}
 if(rq){fetch('/api/appeal/status?w='+encodeURIComponent(w)+'&r='+encodeURIComponent(rq)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}showStatus(j)}).catch(()=>$('s').textContent='Could not load this page.')}
-else fetch('/api/appeal/info?w='+encodeURIComponent(w)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}$('s').textContent='Appeal a ban in '+j.name+'. After sending, you get a private link to check the result.';$('f').hidden=false}).catch(()=>$('s').textContent='Could not load this page.');
+else fetch('/api/appeal/info?w='+encodeURIComponent(w)).then(r=>r.json()).then(j=>{if(j.error){$('s').textContent=j.error;return}$('s').textContent='Appeal a ban in '+j.name+'. After sending, you get a private link to check the result.';$('f').hidden=false;if(j.hub){const h=$('hub');h.appendChild(el('b','',"Can't use this page?"));h.appendChild(el('div','','Join the '+j.hub.name+' game on Roblox and appeal from there.'));const a=el('a','lk',j.hub.link);a.href=j.hub.link;a.target='_blank';a.rel='noopener';h.appendChild(a);h.hidden=false}}).catch(()=>$('s').textContent='Could not load this page.');
 const gate=()=>{$('b').disabled=!($('u').value.trim()&&$('t').value.trim())};$('u').oninput=$('t').oninput=gate;
 $('f').onsubmit=async e=>{e.preventDefault();if($('b').disabled)return;$('b').disabled=true;$('m').innerHTML='';try{const r=await fetch('/api/appeal',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({w,username:$('u').value.trim(),text:$('t').value.trim()})}),j=await r.json();
  if(r.ok){$('f').hidden=true;$('m').appendChild(el('div','m o','Appeal sent. Staff will review it soon.'));if(j.check){const b=el('div','rp');b.appendChild(el('b','','Save this link to check the result and read any reply from staff'));const a=el('a','lk',j.check);a.href=j.check;b.appendChild(a);$('m').appendChild(b)}}
@@ -1914,7 +1973,7 @@ async function route(req, res, url, p) {
       const w0 = limit('appinfo:' + ip, 60, 60000); if (w0) return tooMany(res, w0);
       setWid(wid); await need('core'); if (!D.meta || D.meta.deleted) return send(res, 404, { error: 'This appeal link is not valid.' });
       if (D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
-      return send(res, 200, { name: D.meta.name });
+      return send(res, 200, { name: D.meta.name, hub: hubOn() ? { name: hubMain().name, link: hubLink(hubMain()) } : null });
     }
     if (req.method === 'POST' && p === '/api/appeal') {
       const A = await body(req), wid = String(A.w || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This appeal link is not valid.' });
@@ -1922,16 +1981,30 @@ async function route(req, res, url, p) {
       const uname = cleanName(A.username, 40), text = cleanName(A.text, 1000); if (!/^\w{3,20}$/.test(uname)) return send(res, 400, { error: 'Enter your exact Roblox username.' });
       if (!text) return send(res, 400, { error: 'Write a short note for staff first.' });
       setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.meta.suspended || D.settings.appeals === false) return send(res, 403, { error: 'Appeals are closed for this game.' });
-      const id = await findId(uname), ban = id && D.bans[id];
-      if (!ban || !live(ban)) return send(res, 404, { error: 'We could not find an active ban for that username in this game.' });
-      if (D.appeals.some(x => x.uid === id && x.status === 'open')) return send(res, 409, { error: 'You already have an appeal waiting for review.' });
-      const recent = D.appeals.filter(x => x.uid === id && Date.now() - x.t < APPEAL_WINDOW).sort((a, b) => b.t - a.t); // anti-spam: 2 appeals per player every 5 days
-      if (recent.length >= APPEAL_MAX) { const wait = recent[APPEAL_MAX - 1].t + APPEAL_WINDOW - Date.now(), d = Math.ceil(wait / 864e5), h = Math.ceil(wait / 36e5); return send(res, 429, { error: `You have used both appeals for now. You can send another in ${d > 1 ? d + ' days' : h > 1 ? h + ' hours' : 'about an hour'}.` }); }
-      const aid = crypto.randomBytes(4).toString('hex'), tok = rnd(9);
-      abuseTick('pub'); D.appeals.unshift({ id: aid, tok, uid: id, name: ban.name || uname, text, t: Date.now(), status: 'open', banReason: ban.reason, banBy: ban.by || null, entry: ban.entry || null }); D.appeals.length = Math.min(D.appeals.length, 200);
-      feed(`Ban appeal from ${ban.name || uname}`);
-      if (!botPost({ embeds: [dEmbed(`Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason], ['Banned by', ban.by]], 0x0a7aff)], components: [{ type: 1, components: [dBtn('Accept and unban', `ap:${aid}:a`, 3), dBtn('Deny', `ap:${aid}:d`, 4)] }] })) notify('appeals', `Ban appeal: ${ban.name || uname}`, text, [['Banned for', ban.reason]], 0x0a7aff);
-      return send(res, 200, { ok: true, check: `${site(req)}/appeal/${wid}?r=${aid}.${tok}` });
+      const [c0, o0] = appealMake(await findId(uname), uname, text); if (c0 !== 200) return send(res, c0, o0);
+      return send(res, 200, { ok: true, check: `${site(req)}/appeal/${wid}?r=${o0.aid}.${o0.tok}` });
+    }
+    if (req.method === 'POST' && (p === '/hub/list' || p === '/hub/appeal')) { // the Sentinel appeal game: a banned player's Roblox ID comes from Roblox's own server, so no username is typed
+      const A = await body(req), h = await hubAuth(A.key); if (!h) return send(res, 403, { error: 'This appeal game is not registered with Sentinel.' });
+      const pid = A.userId; if (!Number.isInteger(pid) || pid < 1) return send(res, 400, { error: 'bad request' });
+      const w0 = limit('hub:' + h.id, 900, 60000) || limit('hubu:' + pid, 20, 60000); if (w0) return tooMany(res, w0);
+      const pname = cleanName(A.name, 40) || 'User ' + pid;
+      if (Date.now() - (h.last || 0) > 300000) res.after.push(async () => { const list = (await hubsLoad(true)).map(x => x.id === h.id ? { ...x, last: Date.now() } : x); await hubsSave(list); }); // when it last checked in, for the admin console
+      if (p === '/hub/list') { // every workspace with a running ban on this player
+        const rows = await sbGet('select=key,bans:value->bans,meta:value->meta,settings:value->settings&key=like.w*:core'), games = [];
+        for (const r of rows) {
+          const b = r.bans && r.bans[pid]; if (!r.meta || r.meta.deleted || r.meta.suspended || !b || !live(b)) continue;
+          const st = r.settings || {}, open = st.appeals !== false && st.hubAppeals !== false, aps = r.key ? ((await sbGet(`select=appeals:value->appeals&key=eq.${r.key}`))[0] || {}).appeals || [] : [], mine = aps.filter(x => x.uid === pid).sort((x, y) => y.t - x.t);
+          D.appeals = aps; const why = open ? appealWait(pid) : 'This game does not take appeals here.'; D.appeals = [];
+          games.push({ wid: r.key.slice(1, 13), game: String(r.meta.name || '').slice(0, 60), reason: String(b.reason || 'No reason given').slice(0, 160), expires: b.expires || null, can: !why, why, appeal: mine[0] ? { status: mine[0].status, t: mine[0].t, reply: mine[0].reply || null } : null });
+          if (games.length >= 20) break;
+        }
+        return send(res, 200, { games, hub: h.name });
+      }
+      const wid = String(A.wid || ''), text = cleanName(A.text, 1000); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'That game was not found.' });
+      if (text.length < 5) return send(res, 400, { error: 'Write a few words for staff first.' });
+      setWid(wid); await need('core', 'play', 'live'); if (!D.meta || D.meta.deleted || D.meta.suspended || D.settings.appeals === false || D.settings.hubAppeals === false) return send(res, 403, { error: 'This game does not take appeals here.' });
+      const [c0, o0] = appealMake(pid, pname, text, h.name); return send(res, c0, c0 === 200 ? { ok: true } : o0);
     }
     if (req.method === 'GET' && p === '/api/report/info') {
       const wid = String(url.searchParams.get('w') || ''); if (!/^[a-f0-9]{12}$/.test(wid)) return send(res, 404, { error: 'This report link is not valid.' });
@@ -2398,7 +2471,7 @@ async function route(req, res, url, p) {
         loa: { mine: D.loa.filter(x => x.uid === uid).slice(0, 20), all: has(u, 'loa.review') ? D.loa.slice(0, 80) : [] },
         webhook: has(u, 'webhooks.manage') ? { set: !!(D.webhook && D.webhook.url), hint: D.webhook && D.webhook.url ? D.webhook.url.slice(-6) : '', events: (D.webhook || DEFAULT_WEBHOOK()).events } : null,
         series: { players: ser('u'), peak: ser('p'), actions: ser('a'), reports: ser('r'), joins: ser('j'), days },
-        openCalls: new Set(D.calls.filter(c => c.status !== 'resolved').map(grpOf)).size, calls: callsOut(), vaultDays: vaultDays(), playbooks: playbooks(), mergeMin: MERGE_MIN.includes(D.settings.mergeMin) ? D.settings.mergeMin : 10,
+        openCalls: new Set(D.calls.filter(c => c.status !== 'resolved').map(grpOf)).size, calls: callsOut(), hub: hubMain() ? { name: hubMain().name, link: hubLink(hubMain()) } : null, vaultDays: vaultDays(), playbooks: playbooks(), mergeMin: MERGE_MIN.includes(D.settings.mergeMin) ? D.settings.mergeMin : 10,
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
@@ -2924,6 +2997,7 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/appeals') {
       if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.appeals = !!B.on; audit(u.user, B.on ? 'Opened ban appeals' : 'Closed ban appeals'); return ok(res); }
       if (B.op === 'webreports') { if (!has(u, 'automations.manage')) return deny(res); D.settings.webReports = !!B.on; audit(u.user, B.on ? 'Opened the web report form' : 'Closed the web report form'); return ok(res); }
+      if (B.op === 'hubappeals') { if (!has(u, 'automations.manage')) return deny(res); D.settings.hubAppeals = !!B.on; audit(u.user, B.on ? 'Banned players can appeal from the Sentinel appeal game' : 'Banned players can no longer appeal from the Sentinel appeal game'); return ok(res); }
       if (B.op === 'warnack') { if (!has(u, 'automations.manage')) return deny(res); D.settings.warnAck = !!B.on; audit(u.user, B.on ? 'Warned players are now asked to acknowledge the warning' : 'Warned players are no longer asked to acknowledge the warning'); return ok(res); }
       if (B.op === 'mergemin') { if (!has(u, 'automations.manage')) return deny(res); if (!MERGE_MIN.includes(B.min)) return send(res, 400, { error: 'Pick 5, 10 or 30 minutes.' }); D.settings.mergeMin = B.min; audit(u.user, `Reports about the same player within ${B.min} minutes are now grouped`); return ok(res); }
       if (B.op === 'publiclog') { if (!has(u, 'automations.manage')) return deny(res); D.settings.publicLog = !!B.on; audit(u.user, B.on ? 'Published the moderation log' : 'Made the moderation log private'); return ok(res); }
@@ -3149,7 +3223,7 @@ async function handle(req, res) {
   for (let attempt = 0; attempt < 6; attempt++) {
     resetState();
     const out = makeOut();
-    await flagsLoad().catch(() => {});
+    await flagsLoad().catch(() => {}); await hubsLoad().catch(() => {});
     await route(req, out, url, p);
     if (CTX.ro) { await sendEvents(); return flush(out, res); } // read-only support view: nothing is saved, sent to games or posted
     if (!out.failed) await runOC().catch(() => {});
