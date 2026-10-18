@@ -2126,7 +2126,7 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
       const b = await body(req), k = String(b.key || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
       if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
-      const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 40, 60000) || limit('sync:' + wid, 400, 60000); if (w1) { logEvent('rate_limit', 'Game sync from server ' + job.slice(0, 8) + ' was slowed down', wid); return tooMany(res, w1); }
+      const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`sync:${wid}:${job}`, 120, 60000) || limit('sync:' + wid, 1500, 60000); if (w1) { logEvent('rate_limit', 'Game sync from server ' + job.slice(0, 8) + ' was slowed down', wid); return tooMany(res, w1); } // Bridge v21 also checks in right after chat, at most once a second
       setWid(wid);
       const ev = Array.isArray(b.events) ? b.events : [], chatty = ev.some(e => e && (e.type === 'chat' || e.type === 'modcall'));
       const shards = [...new Set([...(Array.isArray(b.players) ? b.players : []), ...ev].map(x => x && Number.isInteger(x.userId) && x.userId > 0 ? shOf(x.userId) : null).filter(Boolean))];
