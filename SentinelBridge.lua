@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 24 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 25 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -50,6 +50,8 @@ end
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
 
 ------------------------------------------------------------------ notice card (the same block sits in SentinelBridge and SentinelClient)
 -- A dark card with an icon, a title and a message. A coloured line runs round its border as the timer:
@@ -603,6 +605,36 @@ local function doBan(userId, reason, seconds, why, alts)
 	end
 end
 
+local restarting, bouncing = false, {} -- bouncing: players only passing through this server after a Sentinel restart
+local function restartMove(list) -- everyone goes to a private holding server first, which sends them on to a normal server once this one is gone
+	if #list == 0 then return end
+	local opts = Instance.new("TeleportOptions")
+	opts.ShouldReserveServer = true
+	opts:SetTeleportData({ sentinelRestart = true })
+	local ok, err = pcall(function() TeleportService:TeleportAsync(game.PlaceId, list, opts) end)
+	if not ok then warn("[Sentinel] Restart could not move players: " .. tostring(err)) end
+end
+local function restartServer(msg)
+	if restarting then return end
+	restarting = true
+	for _, p in Players:GetPlayers() do banner(p, msg, "blue", "Server restarting") end
+	if RunService:IsStudio() then
+		warn("[Sentinel] Restart can't move players in Studio. Try it in a live server.")
+		restarting = false
+		return
+	end
+	print("[Sentinel] Restarting this server: moving everyone to a new one")
+	task.wait(5)
+	restartMove(Players:GetPlayers())
+	task.wait(25) -- anyone the move missed is removed, so this server can close
+	for _, p in Players:GetPlayers() do p:Kick("This server restarted. Rejoin to play in a new one.") end
+end
+local function passingThrough(p) -- arrived in the holding server from a Sentinel restart
+	if game.PrivateServerId == "" or game.PrivateServerOwnerId ~= 0 then return false end
+	local ok, d = pcall(function() return p:GetJoinData() end)
+	return ok and type(d) == "table" and type(d.TeleportData) == "table" and d.TeleportData.sentinelRestart == true
+end
+
 local function handle(c)
 	local plr = c.userId and Players:GetPlayerByUserId(c.userId)
 	if c.type == "kick" then
@@ -627,6 +659,8 @@ local function handle(c)
 		if plr then banner(plr, tostring(c.body or c.text), kind, c.title, ack) end
 	elseif c.type == "announce" then
 		for _, p in Players:GetPlayers() do banner(p, tostring(c.text), "blue", "Announcement") end
+	elseif c.type == "restart" then
+		task.spawn(restartServer, tostring(c.display or "This server is restarting. You will be moved to a new server in a few seconds."))
 	end
 end
 
@@ -636,7 +670,7 @@ local function sync()
 	lastSent = os.clock()
 	local list = {}
 	for _, p in Players:GetPlayers() do
-		table.insert(list, { userId = p.UserId, name = p.Name, displayName = p.DisplayName })
+		if not bouncing[p] then table.insert(list, { userId = p.UserId, name = p.Name, displayName = p.DisplayName }) end
 	end
 	local sent = table.clone(pending)
 	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
@@ -675,11 +709,25 @@ syncSoon = function() -- at most one extra check-in a second, so busy chat never
 end
 
 Players.PlayerAdded:Connect(function(p)
+	if passingThrough(p) then -- wait a moment so the old server is gone, then go on to a normal server
+		bouncing[p] = true
+		task.delay(8, function()
+			for attempt = 1, 3 do
+				if p.Parent ~= Players then return end
+				pcall(function() TeleportService:TeleportAsync(game.PlaceId, { p }) end)
+				task.wait(10)
+			end
+			if p.Parent == Players then p:Kick("The server restarted. Rejoin to keep playing.") end
+		end)
+		return
+	end
+	if restarting then task.defer(restartMove, { p }) end -- joined while this server is restarting: moved along too
 	queue({ type = "join", userId = p.UserId, name = p.Name, follow = (p.FollowUserId and p.FollowUserId > 0) and p.FollowUserId or nil }) -- follow: the player they joined by following, if any (helps spot one person switching accounts)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
 	clientReady[p], clientVer[p], activeBanner[p], ackWant[p], devSent[p] = nil, nil, nil, nil, nil
+	if bouncing[p] then bouncing[p] = nil return end
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
