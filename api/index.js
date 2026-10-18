@@ -2123,13 +2123,15 @@ async function route(req, res, url, p) {
       await need('core', 'play', 'live', 'cmds', 'cbo', ...shards, ...(chatty ? ['chat'] : []), ...(ev.some(e => e && e.type === 'modcall') ? ['calls'] : []));
       if (!D.meta || D.meta.deleted) return send(res, 403, { error: 'bad key' });
       if (D.meta.suspended) return send(res, 403, { error: 'This workspace is suspended. Contact the Sentinel team.' });
-      if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
+      const rej = (why, x) => { if (Date.now() - ((D.meta.reject || {}).t || 0) > 30000) D.meta.reject = { t: Date.now(), why, ...x }; }; // why the last check-in was refused, for the owner's setup page (at most twice a minute)
+      if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { rej('code'); const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
       const place = Number.isInteger(b.placeId) ? b.placeId : 0;
-      if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) return send(res, 403, { error: 'This game key is locked to a different place' });
+      if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) { rej('place', { place, want: D.meta.placeId }); return send(res, 403, { error: 'This game key is locked to a different place' }); }
       if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
       const sv = Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1; if (sv > (D.meta.scriptV || 0)) D.meta.scriptV = sv; // the highest version seen, so old servers that are still shutting down don't matter
       const cv = Number.isInteger(b.clientV) && b.clientV > 0 && b.clientV < 1000 ? b.clientV : 0; if (cv > (D.meta.clientV || 0)) D.meta.clientV = cv; // the newest player script seen, same rule
       if (!D.meta.connectedAt) D.meta.connectedAt = Date.now();
+      if (D.meta.reject) delete D.meta.reject;
       const rjOn = rule('rapidjoin').enabled && ev.some(e => e && e.type === 'join');
       if ((chatty && (rule('flaggedmute').enabled || AM_RULES.some(k => rule(k).enabled))) || rjOn) await need('logs');
       if (rjOn) await need('chat');
@@ -2839,7 +2841,7 @@ async function route(req, res, url, p) {
       return send(res, 400, { error: 'bad request' });
     }
     // ---- owner only: the game connection ----
-    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null, oc: D.meta.oc ? { universe: D.meta.oc.universe || '', last: D.meta.oc.last || null, machine: !!D.meta.oc.machine } : null }); }
+    if (p === '/api/setup') { if (!u.isOwner) return ownerOnly(res); return send(res, 200, { hasCode: !!D.meta.codeHash, origin: site(req), name: D.meta.name, placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null, connectedAt: D.meta.connectedAt || null, reject: D.meta.reject && Date.now() - D.meta.reject.t < 10 * 60000 ? D.meta.reject : null, oc: D.meta.oc ? { universe: D.meta.oc.universe || '', last: D.meta.oc.last || null, machine: !!D.meta.oc.machine } : null }); }
     if (p === '/api/bridge') {
       if (!u.isOwner) return ownerOnly(res);
       if (url.searchParams.get('client')) { // the small optional LocalScript that hides a muted player's chat bar
