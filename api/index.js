@@ -496,17 +496,19 @@ async function banSyncPull() { // copy new bans from the owner's other games (ne
   const ks = Object.keys(D.syncSeen); if (ks.length > 3000) for (const k of ks.sort((a, b) => D.syncSeen[a] - D.syncSeen[b]).slice(0, ks.length - 3000)) delete D.syncSeen[k];
 }
 // ---- linked accounts: two accounts that look like one person, from how they join and from public Roblox profile data. Never device or connection data. Advice for staff only; nothing happens automatically
-const ALT_W = { follow: 4, switch: 4, desc: 3, dname: 3, name: 3, avatar: 2, chat: 2, friend: 2, young: 1, group: 1 };
-const ALT_B = ['follow', 'switch'], ALT_I = ['desc', 'dname', 'name', 'avatar'], ALT_TIERS = ['very', 'strong', 'likely', 'weak'];
+const ALT_W = { follow: 4, switch: 4, desc: 3, dname: 3, name: 3, avatar: 2, chat: 2, friend: 2, followon: 2, fewfriends: 3, mutual: 3, young: 1, group: 1, device: 6, clock: 2 };
+const ALT_K = { beh: ['follow', 'switch'], idn: ['desc', 'dname', 'name', 'avatar'], soc: ['friend', 'followon', 'fewfriends', 'mutual'] }, ALT_TIERS = ['very', 'strong', 'likely', 'weak'];
 const altKey = (a, b) => a < b ? a + ':' + b : b + ':' + a;
 const altHash = s => hash('alt:' + s).toString('hex').slice(0, 16); // profile descriptions, avatars and chat lines are compared by a short hash, never kept as text
+const devHash = s => crypto.createHmac('sha256', SIGN).update('dev:' + s).digest('hex').slice(0, 16); // device settings: keyed, so the code can't be turned back into the settings
 const altSecs = ms => Math.max(1, Math.round(ms / 1000));
-function altScore(L) { // points from every sign; tiers: weak 4, likely 6, strong 8, very likely 10 with both a behaviour and an identity sign
-  const ev = L.ev, tg = L.tg && L.tg.n ? L.tg.n : 0, sw = ev.switch && ev.switch.n >= 2 && !tg;
-  let sc = 0; for (const [k, x] of Object.entries(ev)) sc += k === 'switch' ? (sw ? ALT_W.switch : 1) : (ALT_W[k] || 0);
-  sc -= Math.min(6, 2 * tg); // often online at the same moment: probably two people
-  const beh = !!ev.follow || sw, idn = ALT_I.some(k => ev[k]);
-  L.score = sc; L.tier = sc >= 10 && beh && idn ? 'very' : sc >= 8 ? 'strong' : sc >= 6 ? 'likely' : sc >= 4 ? 'weak' : ''; return L;
+const altNm = id => (D.play[id] || {}).name || 'User ' + id;
+const altSw = L => !!(L.ev.switch && L.ev.switch.n >= 2 && !(L.tg && L.tg.n)); // switching accounts only counts when the two were never online together
+const altW = (L, k, x) => k === 'switch' ? (altSw(L) ? ALT_W.switch : 1) : (x.w || ALT_W[k] || 0);
+function altScore(L) { // tiers: weak 4, likely 6, strong 8; very likely 10 with signs of two different kinds (how they join, who they are, friends, device)
+  const ev = L.ev; let sc = 0; for (const [k, x] of Object.entries(ev)) sc += altW(L, k, x);
+  const kinds = [!!ev.follow || altSw(L), ALT_K.idn.some(k => ev[k]), ALT_K.soc.some(k => ev[k]), (ev.device && altW(L, 'device', ev.device) >= 6) || !!ev.clock].filter(Boolean).length;
+  L.score = sc; L.tier = sc >= 10 && kinds >= 2 ? 'very' : sc >= 8 ? 'strong' : sc >= 6 ? 'likely' : sc >= 4 ? 'weak' : ''; return L;
 }
 function altSign(a, an, b, bn, k, data, onlyIfLinked) {
   if (!a || !b || a === b) return null; const key = altKey(a, b);
@@ -517,14 +519,15 @@ function altSign(a, an, b, bn, k, data, onlyIfLinked) {
 }
 function altText(L, k, x) {
   const nA = L.names[L.a] || 'User ' + L.a, nB = L.names[L.b] || 'User ' + L.b;
-  return ({ follow: `${x.who || nA} joined by following ${x.of || nB}, ${x.s || 1} s after ${x.of || nB} left`,
+  return ({ follow: `${x.who || nA} joined by following ${x.of || nB}, ${x.s || 1} s after ${x.of || nB} left`, followon: `${x.who || nA} joined by following ${x.of || nB}, who was in the server`,
     switch: `One joined ${x.s || 1} s after the other left, ${x.n} time${x.n === 1 ? '' : 's'}${L.tg && L.tg.n ? '' : ', and they were never online together'}`,
     desc: 'Identical Roblox profile description', dname: x.text || 'Display name matches the other account', name: 'Very similar usernames', avatar: 'Identical Roblox avatar',
-    chat: 'Both sent the same uncommon chat message, and nobody else did', friend: 'Roblox friends, and one account is under 30 days old', young: 'Both Roblox accounts are under 7 days old', group: x.text || 'In the same small Roblox group' })[k] || k;
+    chat: 'Both sent the same uncommon chat message, and nobody else did', friend: 'Roblox friends', fewfriends: x.text || 'Few Roblox friends, and the other account is one of them', mutual: x.text || 'They share most of their Roblox friends',
+    device: x.text || 'Same device settings', clock: x.text || 'Both device clocks are off by the same unusual amount', young: 'Both Roblox accounts are under 7 days old', group: x.text || 'In the same small Roblox group' })[k] || k;
 }
 const altOut = L => ({ key: altKey(L.a, L.b), a: { userId: L.a, name: L.names[L.a] || 'User ' + L.a, banned: !!(D.bans[L.a] && live(D.bans[L.a])) }, b: { userId: L.b, name: L.names[L.b] || 'User ' + L.b, banned: !!(D.bans[L.b] && live(D.bans[L.b])) },
   score: L.score, tier: L.tier, status: L.status, by: L.by || null, at: L.at || null, t: L.t, u: L.u || L.t,
-  reasons: [...Object.entries(L.ev).map(([k, x]) => ({ k, w: k === 'switch' ? (x.n >= 2 && !(L.tg && L.tg.n) ? ALT_W.switch : 1) : ALT_W[k], text: altText(L, k, x) })), ...(L.tg && L.tg.n ? [{ k: 'together', w: -Math.min(6, 2 * L.tg.n), text: `Online at the same moment ${L.tg.n} time${L.tg.n === 1 ? '' : 's'}, so probably two people` }] : [])].sort((x, y) => y.w - x.w) });
+  reasons: [...Object.entries(L.ev).map(([k, x]) => ({ k, w: altW(L, k, x), text: altText(L, k, x) })), ...(L.tg && L.tg.n ? [{ k: 'together', w: 0, text: `Online at the same time ${L.tg.n} time${L.tg.n === 1 ? '' : 's'}, so switching accounts does not count (could still be two devices)` }] : [])].sort((x, y) => y.w - x.w) });
 const altRate = () => Object.fromEntries(ALT_TIERS.map(t => { const x = ALT.stats[t] || { y: 0, n: 0 }, all = x.y + x.n; return [t, { y: x.y, n: x.n, rate: all >= 10 ? Math.round(100 * x.y / all) : null }]; }));
 function altPrune(now) {
   ALT.leaves = ALT.leaves.filter(x => now - x[1] < 864e5).slice(-500);
@@ -533,52 +536,99 @@ function altPrune(now) {
   for (const [k, L] of Object.entries(ALT.links)) if (L.status === 'open' && (!L.tier || L.tier === 'weak') && now - (L.u || L.t) > 60 * 864e5) delete ALT.links[k];
   const lk = Object.entries(ALT.links).filter(([, L]) => L.status === 'open'); if (Object.keys(ALT.links).length > 2000) for (const [k] of lk.sort((p, q) => (p[1].score || 0) - (q[1].score || 0)).slice(0, Object.keys(ALT.links).length - 2000)) delete ALT.links[k];
 }
-async function altRun(req, b, ev) { // called on every game check-in with joins, leaves or long chat lines
-  if (D.settings.signals === false) return;
-  const now = Date.now(), job = String(b.jobId || 'studio').slice(0, 8), ok = e => e && Number.isInteger(e.userId) && e.userId > 0;
-  const joins = ev.filter(e => ok(e) && e.type === 'join').slice(0, 30), leaves = ev.filter(e => ok(e) && e.type === 'leave').slice(0, 30);
-  const chats = ev.filter(e => ok(e) && e.type === 'chat' && typeof e.text === 'string' && e.text.trim().length >= 20).slice(0, 50);
-  if (!joins.length && !leaves.length && !chats.length) return;
-  await need('alts');
-  const nm = id => (D.play[id] || {}).name || 'User ' + id, online = new Set(Object.values(R.servers).filter(x => now - x.last < LIVE_MS).flatMap(x => x.players.map(p => p.userId)));
-  for (const e of leaves) ALT.leaves.push([e.userId, now, job]);
-  for (const p of Array.isArray(b.players) ? b.players : []) if (p && Number.isInteger(p.userId) && D.play[p.userId] && typeof p.displayName === 'string' && p.displayName) D.play[p.userId].dn = p.displayName.toLowerCase().slice(0, 40);
-  let budget = 4; const touched = new Set();
-  for (const e of joins) {
-    const id = e.userId, me = nm(id), p = D.play[id] || {};
-    for (const L of Object.values(ALT.links)) if ((L.a === id || L.b === id) && online.has(L.a === id ? L.b : L.a) && now - ((L.tg || {}).t || 0) > 600000) { L.tg = { n: ((L.tg || {}).n || 0) + 1, t: now }; altScore(L); } // both online right now
-    const f = Number.isInteger(e.follow) && e.follow > 0 && e.follow !== id ? e.follow : 0; // Roblox tells the game when a player joined by following someone
-    if (f && !online.has(f)) { const lv = ALT.leaves.filter(x => x[0] === f && now - x[1] < 600000).pop(); if (lv) { const L = altSign(id, me, f, nm(f), 'follow', { who: me, of: nm(f), s: altSecs(now - lv[1]) }); if (L) touched.add(L); } }
-    const recent = ALT.leaves.filter(x => x[0] !== id && now - x[1] <= 90000 && !online.has(x[0]));
-    if (recent.length && recent.length <= 3) for (const x of recent) { const L = altSign(id, me, x[0], nm(x[0]), 'switch', { s: altSecs(now - x[1]) }); if (L) touched.add(L); } // in a busy moment many people leave, so it only counts when few did
-    if (budget > 0 && D.play[id] && now - (p.pf || 0) > 7 * 864e5) { // public Roblox profile, at most once a week per player
-      budget--; p.pf = now;
-      try { const x = await j(RBX_USERS + '/v1/users/' + id); if (x && x.created && !p.created && Date.parse(x.created)) p.created = Date.parse(x.created); const d = String((x && x.description) || '').toLowerCase().replace(/\s+/g, ' ').trim(); p.dh = d.length >= 15 ? altHash('d:' + d) : 0; if (x && typeof x.displayName === 'string') p.dn = x.displayName.toLowerCase().slice(0, 40); } catch {}
-      try { const u = (await avatars([id]))[id]; p.ah = u ? altHash('a:' + String(u).split('?')[0]) : 0; } catch {}
-      const cut = dayKey(now - 30 * 864e5), pool = Object.entries(D.play).filter(([k, x]) => +k !== id && (!x.day || x.day >= cut)).slice(-5000);
-      const few = (list, k, data, max = 1) => { if (list.length >= 1 && list.length <= max) for (const [k2] of list) { const L = altSign(id, me, +k2, nm(+k2), k, data); if (L) touched.add(L); } }; // one other account only: shared by 3 or more players means it is common (a default avatar, a template description)
-      if (p.dh) few(pool.filter(([, x]) => x.dh === p.dh), 'desc');
-      if (p.ah) few(pool.filter(([, x]) => x.ah === p.ah), 'avatar');
-      const myName = me.toLowerCase();
-      if (p.dn && p.dn !== myName) { const m = pool.filter(([, x]) => (x.name || '').toLowerCase() === p.dn || (x.dn && x.dn === p.dn && x.dn !== (x.name || '').toLowerCase())); few(m, 'dname', { text: `Display name "${p.dn}" matches the other account` }); }
-      few(pool.filter(([, x]) => x.name && nameLike(me, x.name)), 'name', null, 2);
-      if (p.created && now - p.created < 30 * 864e5 && budget > 0) { budget--; try { const x = await j(RBX_FRIENDS + '/v1/users/' + id + '/friends'); const fr = (x && Array.isArray(x.data) ? x.data : []).map(z => Number(z.id)).filter(z => D.play[z]); for (const z of fr.slice(0, 3)) { const L = altSign(id, me, z, nm(z), 'friend'); if (L) touched.add(L); } } catch {} }
-      if (p.created && now - p.created < 7 * 864e5) for (const L of Object.values(ALT.links)) { if (L.a !== id && L.b !== id) continue; const o = D.play[L.a === id ? L.b : L.a]; if (o && o.created && now - o.created < 7 * 864e5 && !L.ev.young) { altSign(L.a, L.names[L.a], L.b, L.names[L.b], 'young', null, true); touched.add(L); } }
+const altPool = id => { const cut = dayKey(Date.now() - 30 * 864e5); return Object.entries(D.play).filter(([k, x]) => +k !== id && (!x.day || x.day >= cut)).slice(-5000); }; // players seen in the last 30 days
+async function altFriends(id) { // public Roblox friend list, user ids only
+  try { const x = await j(RBX_FRIENDS + '/v1/users/' + id + '/friends'); if (x && Array.isArray(x.data)) return x.data.map(z => Number(z.id)).filter(Number.isInteger); } catch {}
+  try { const x = await j(RBX_FRIENDS + '/v1/users/' + id + '/friends/find?limit=50'); if (x && Array.isArray(x.PageItems)) return x.PageItems.map(z => Number(z.id)).filter(Number.isInteger); } catch {}
+  return null;
+}
+async function altProfile(id, st, touched) { // public Roblox profile and friend list. st.b: Roblox calls left for this request
+  const now = Date.now(), me = altNm(id), p = D.play[id]; if (!p || st.b <= 0) return;
+  const add = (o, k, data) => { const L = altSign(id, me, o, altNm(o), k, data); if (L) touched.add(L); };
+  st.b--; p.pf = now;
+  try { const x = await j(RBX_USERS + '/v1/users/' + id); if (x && x.created && !p.created && Date.parse(x.created)) p.created = Date.parse(x.created); const d = String((x && x.description) || '').toLowerCase().replace(/\s+/g, ' ').trim(); p.dh = d.length >= 15 ? altHash('d:' + d) : 0; if (x && typeof x.displayName === 'string') p.dn = x.displayName.toLowerCase().slice(0, 40); } catch {}
+  try { const u = (await avatars([id]))[id]; p.ah = u ? altHash('a:' + String(u).split('?')[0]) : 0; } catch {}
+  const pool = altPool(id), few = (list, k, data, max = 1) => { if (list.length >= 1 && list.length <= max) for (const [k2] of list) add(+k2, k, data); }; // one other account only: shared by 3 or more players means it is common (a default avatar, a template description)
+  if (p.dh) few(pool.filter(([, x]) => x.dh === p.dh), 'desc');
+  if (p.ah) few(pool.filter(([, x]) => x.ah === p.ah), 'avatar');
+  const myName = me.toLowerCase();
+  if (p.dn && p.dn !== myName) { const m = pool.filter(([, x]) => (x.name || '').toLowerCase() === p.dn || (x.dn && x.dn === p.dn && x.dn !== (x.name || '').toLowerCase())); few(m, 'dname', { text: `Display name "${p.dn}" matches the other account` }); }
+  few(pool.filter(([, x]) => x.name && nameLike(me, x.name)), 'name', null, 2);
+  if (st.b > 0) { // Roblox friends with someone who played here; an alt usually has few friends, mostly the same ones as the main
+    st.b--; const fr = await altFriends(id);
+    if (fr) {
+      p.fc = fr.length; const seen = fr.filter(z => z !== id && D.play[z]);
+      for (const z of seen.slice(0, 5)) { add(z, 'friend'); if (fr.length <= 10) add(z, 'fewfriends', { text: `${me} has only ${fr.length} Roblox friend${fr.length === 1 ? '' : 's'}, and ${altNm(z)} is one of them` }); }
+      if (fr.length >= 4) for (const z of seen.slice(0, 2)) {
+        if (st.b <= 0) break; st.b--; const fz = await altFriends(z); if (!fz) continue;
+        const other = new Set(fz), sh = fr.filter(y => y !== z && other.has(y)).length, small = Math.min(fr.length, fz.length) - 1;
+        if (sh >= 3 && small > 0 && sh / small >= 0.6) add(z, 'mutual', { text: `They share ${sh} of ${small} Roblox friends` });
+      }
     }
   }
-  for (const L of touched) if (budget > 0 && L.score >= 4 && !L.ev.group && !L.gc && L.status === 'open') { // a small Roblox group shared by both, checked once per link
-    L.gc = now; budget--; try {
+  if (p.created && now - p.created < 7 * 864e5) for (const L of Object.values(ALT.links)) { if (L.a !== id && L.b !== id) continue; const o = D.play[L.a === id ? L.b : L.a]; if (o && o.created && now - o.created < 7 * 864e5 && !L.ev.young) { altSign(L.a, L.names[L.a], L.b, L.names[L.b], 'young', null, true); touched.add(L); } }
+}
+function altDevice(id, touched) { // the same Roblox settings, time zone and language: one computer or phone used for both accounts
+  const p = D.play[id]; if (!p || !p.fd) return; const me = altNm(id);
+  const add = (o, k, data) => { const L = altSign(id, me, o, altNm(o), k, data); if (L) touched.add(L); };
+  const pool = altPool(id).filter(([, x]) => x.fd), same = pool.filter(([, x]) => x.fd === p.fd);
+  if (same.length === 1) { // shared by 3 or more accounts means a common setup, so it says nothing
+    const [ok, o] = same[0], common = pool.filter(([, x]) => x.fs === p.fs).length >= 3, vp = !!(p.fv && p.fv === o.fv); // common: these Roblox settings alone are common, usually the defaults
+    if (!common) add(+ok, 'device', { w: 6, text: `Same device settings (Roblox settings, time zone, language${vp ? ', screen size' : ''}), and no other account has them` });
+    else if (vp) add(+ok, 'device', { w: 2, text: 'Same screen size, time zone and language, with common Roblox settings' });
+  }
+  if (Number.isFinite(p.sk) && Math.abs(p.sk) >= 2000) {
+    const m = pool.filter(([, x]) => Number.isFinite(x.sk) && Math.abs(x.sk) >= 2000 && Math.abs(x.sk - p.sk) <= 300 && Math.abs((x.dt || 0) - (p.dt || 0)) < 7 * 864e5);
+    if (m.length === 1) add(+m[0][0], 'clock', { text: `Both device clocks are off by the same ${(p.sk / 1000).toFixed(1)} s` });
+  }
+}
+async function altGroups(touched, st) { // a small Roblox group shared by both, checked once per link
+  const now = Date.now();
+  for (const L of touched) if (st.b > 0 && L.score >= 4 && !L.ev.group && !L.gc && L.status === 'open') {
+    L.gc = now; st.b--; try {
       const g = async u => { const x = await j(RBX_GROUPS + '/v2/users/' + u + '/groups/roles'); return (x && Array.isArray(x.data) ? x.data : []).map(d => d.group || {}).filter(z => z.id && Number.isInteger(z.memberCount) && z.memberCount < 500); };
       const [ga, gb] = [await g(L.a), await g(L.b)], sh = ga.find(z => gb.some(y => y.id === z.id)); if (sh) altSign(L.a, L.names[L.a], L.b, L.names[L.b], 'group', { text: `Both in the small Roblox group ${cleanName(sh.name, 50)}` });
     } catch {}
   }
+}
+const DEV_SET = ['ms', 'vol', 'q', 'cm', 'mm', 'tc', 'tm', 'inv', 'gs'];
+function altDevSave(id, f, now) { // keeps only one-way codes of the device settings, never the values
+  const p = D.play[id]; if (!p || !f || typeof f !== 'object') return false; const n = k => Number.isFinite(f[k]) ? Math.round(f[k]) : '';
+  const set = DEV_SET.map(n).join(','), loc = typeof f.loc === 'string' ? f.loc.slice(0, 20).toLowerCase() : '';
+  p.fs = devHash('s:' + set); p.fd = devHash('d:' + set + '|' + n('tz') + '|' + loc + '|' + n('inp')); p.fv = n('vw') && n('vh') ? devHash('v:' + n('vw') + 'x' + n('vh')) : 0;
+  if (Number.isFinite(f.sk) && Math.abs(f.sk) < 30 * 864e5) p.sk = Math.round(f.sk / 100) * 100; else delete p.sk;
+  p.dt = now; return true;
+}
+async function altRun(req, b, ev) { // called on every game check-in with joins, leaves, device settings or long chat lines
+  if (D.settings.signals === false) return;
+  const now = Date.now(), job = String(b.jobId || 'studio').slice(0, 8), ok = e => e && Number.isInteger(e.userId) && e.userId > 0;
+  const joins = ev.filter(e => ok(e) && e.type === 'join').slice(0, 30), leaves = ev.filter(e => ok(e) && e.type === 'leave').slice(0, 30), devs = ev.filter(e => ok(e) && e.type === 'dev' && e.fp && typeof e.fp === 'object').slice(0, 30);
+  const chats = ev.filter(e => ok(e) && e.type === 'chat' && typeof e.text === 'string' && e.text.trim().length >= 20).slice(0, 50);
+  if (!joins.length && !leaves.length && !chats.length && !devs.length) return;
+  await need('alts');
+  const nm = altNm, online = new Set(Object.values(R.servers).filter(x => now - x.last < LIVE_MS).flatMap(x => x.players.map(p => p.userId)));
+  for (const e of leaves) ALT.leaves.push([e.userId, now, job]);
+  for (const p of Array.isArray(b.players) ? b.players : []) if (p && Number.isInteger(p.userId) && D.play[p.userId] && typeof p.displayName === 'string' && p.displayName) D.play[p.userId].dn = p.displayName.toLowerCase().slice(0, 40);
+  const st = { b: 6 }, touched = new Set();
+  for (const e of joins) {
+    const id = e.userId, me = nm(id), p = D.play[id] || {};
+    for (const L of Object.values(ALT.links)) if ((L.a === id || L.b === id) && online.has(L.a === id ? L.b : L.a) && now - ((L.tg || {}).t || 0) > 600000) { L.tg = { n: ((L.tg || {}).n || 0) + 1, t: now }; altScore(L); } // both online right now
+    const f = Number.isInteger(e.follow) && e.follow > 0 && e.follow !== id ? e.follow : 0; // Roblox tells the game when a player joined by following someone
+    if (f && online.has(f)) { const L = altSign(id, me, f, nm(f), 'followon', { who: me, of: nm(f) }); if (L) touched.add(L); }
+    else if (f) { const lv = ALT.leaves.filter(x => x[0] === f && now - x[1] < 600000).pop(); if (lv) { const L = altSign(id, me, f, nm(f), 'follow', { who: me, of: nm(f), s: altSecs(now - lv[1]) }); if (L) touched.add(L); } }
+    const recent = ALT.leaves.filter(x => x[0] !== id && now - x[1] <= 90000 && !online.has(x[0]));
+    if (recent.length && recent.length <= 3) for (const x of recent) { const L = altSign(id, me, x[0], nm(x[0]), 'switch', { s: altSecs(now - x[1]) }); if (L) touched.add(L); } // in a busy moment many people leave, so it only counts when few did
+    if (st.b > 0 && D.play[id] && now - (p.pf || 0) > 7 * 864e5) await altProfile(id, st, touched); // at most once a week per player
+  }
+  for (const e of devs) if (altDevSave(e.userId, e.fp, now)) altDevice(e.userId, touched);
+  await altGroups(touched, st);
   for (const e of chats) { // the same uncommon line from exactly two accounts
     const t = e.text.toLowerCase().replace(/\s+/g, ' ').trim(); if (t.length < 20) continue;
     const h = altHash('c:' + t), x = ALT.fp[h] ||= { u: [], t: now }; x.t = now; if (!x.u.includes(e.userId)) x.u.push(e.userId);
     if (x.u.length === 2 && !x.done) { x.done = 1; altSign(x.u[0], nm(x.u[0]), x.u[1], nm(x.u[1]), 'chat'); } if (x.u.length > 5) x.u.length = 5;
   }
-  for (const e of joins) { // a linked account of a banned player joined: tell staff in Worth a look
-    const id = e.userId; if (D.bans[id] && live(D.bans[id])) continue; if (D.signals[id] && now - D.signals[id].t < 864e5) continue;
+  for (const e of [...joins, ...devs]) { // a linked account of a banned player joined: tell staff in Worth a look
+    const id = e.userId; if (D.bans[id] && live(D.bans[id])) continue; if (D.signals[id] && now - D.signals[id].t < 864e5) continue; // already flagged today (the ban checks run first)
     const L = Object.values(ALT.links).find(L => (L.a === id || L.b === id) && L.status !== 'not' && (L.status === 'same' || ['very', 'strong', 'likely'].includes(L.tier)) && (o => D.bans[o] && live(D.bans[o]))(L.a === id ? L.b : L.a)); if (!L) continue;
     const o = L.a === id ? L.b : L.a, on = L.names[o] || nm(o), st = L.status === 'same' || L.tier === 'very' || L.tier === 'strong' ? 'strong' : 'likely';
     D.signals[id] = { t: now, name: nm(id), reasons: [{ k: 'linked', w: 6, text: `${L.status === 'same' ? 'Confirmed by staff as' : 'Looks like'} another account of ${on}, who is banned` }], score: 6, status: 'open', strength: st, of: { userId: o, name: on } };
@@ -2389,7 +2439,7 @@ async function route(req, res, url, p) {
       if (ev.some(e => e && e.type === 'ack')) await need('logs');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
-      const out = sync(b); healthSync(Date.now()); await altRun(req, b, ev); await signalCheck(req, fresh, joined); await banSyncPull();
+      const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await banSyncPull();
       return send(res, 200, out);
     }
 
@@ -2655,13 +2705,20 @@ async function route(req, res, url, p) {
     }
     if (req.method === 'GET' && p === '/api/alts') { // linked accounts, with how often staff agreed with each tier
       if (!has(u, 'mod.kick')) return deny(res);
-      const id = +url.searchParams.get('userId') || 0, all = Object.values(ALT.links);
+      const id = +url.searchParams.get('userId') || 0, all = Object.values(ALT.links).map(altScore); // rescored, so older links follow today's rules
       const list = (id ? all.filter(L => (L.a === id || L.b === id) && L.status !== 'not' && (L.tier || L.status === 'same')) : all.filter(L => L.tier || L.status !== 'open')).map(altOut);
       list.sort((x, y) => (y.status === 'open') - (x.status === 'open') || (ALT_TIERS.indexOf(x.tier) + 1 || 9) - (ALT_TIERS.indexOf(y.tier) + 1 || 9) || y.score - x.score);
       return send(res, 200, { links: list.slice(0, 300), stats: altRate(), on: D.settings.signals !== false });
     }
     if (req.method === 'POST' && p === '/api/alts') {
       if (!has(u, 'mod.kick')) return deny(res);
+      if (B.op === 'scan') { // Check now: profile, friends and device settings straight away, instead of at most once a week
+        if (D.settings.signals === false) return send(res, 409, { error: 'Turn on Spot possible alt accounts in Settings, Automations first.' });
+        const id = +B.userId || 0, p = D.play[id]; if (!p) return send(res, 404, { error: 'This player has not been in your game yet.' });
+        if (Date.now() - (p.scan || 0) < 60000) return send(res, 429, { error: 'Checked less than a minute ago. Try again in a minute.' });
+        p.scan = Date.now(); const st = { b: 8 }, touched = new Set(); await altProfile(id, st, touched); altDevice(id, touched); await altGroups(touched, st);
+        audit(u.user, `Checked ${altNm(id)} for linked accounts`); return send(res, 200, { ok: true, found: Object.values(ALT.links).filter(L => (L.a === id || L.b === id) && L.status !== 'not' && (L.tier || L.status === 'same')).length });
+      }
       const L = ALT.links[String(B.key || '')]; if (!L) return send(res, 404, { error: 'That link is not there any more.' });
       const nA = L.names[L.a] || 'User ' + L.a, nB = L.names[L.b] || 'User ' + L.b;
       if (B.op === 'same' || B.op === 'not') {
