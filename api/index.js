@@ -673,7 +673,7 @@ async function tickRun() { // every 5 minutes from an outside pinger, and once a
       HOOKS = []; await new Promise(z => setTimeout(z, 25 + Math.random() * 100));
     }
   }
-  resetState(); return out;
+  resetState(); const bx = { closed: 0, partial: false }; try { await boxIdleRun(t0, 12500, bx); } catch (e) { console.warn('[Sentinel] chat box save: ' + String((e && e.message) || e).slice(0, 200)); } resetState(); out.chatClosed = bx.closed; return out;
 }
 
 async function erasePlayer(id) { // everything this workspace stores about one player. A running ban is kept, without the name, for community safety. Needs core, logs, play, calls, chat and cbo loaded
@@ -936,7 +936,8 @@ function sync(b) {
     else if (e.type === 'leave') { feed(`${name} left`); if (uid) closeSession(phist(uid)); }
     else if (e.type === 'chat') { // rolling buffer: latest 300 messages, at most 24 hours
       const flagged = D.flagWords.some(w => text.toLowerCase().includes(w));
-      R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged }); if (R.chat.length > 300) R.chat.shift(); autoMod(uid, name, text, now);
+      const cw = text ? cussHit(text, cussList()) : null; // swearing is only marked for staff here; automations still use the flagged words
+      R.chat.push({ t: now, jobId: id, server: id.slice(0, 8), userId: uid, name, text, flagged, ...(cw ? { cuss: cw.sev } : {}) }); if (R.chat.length > 300) R.chat.shift(); autoMod(uid, name, text, now);
       if (text && feat('chatLogs')) boxAdd(id, { t: now, userId: uid, name, text });
       if (text) alertCheck(id, uid, name, text, now); // watched words: an alert for staff, never an action // the same message also goes into this server's chat log box
       if (flagged) {
@@ -1053,17 +1054,21 @@ async function cronRun() {
   const cc = await chatCron(t0);
   return { ok: true, snapshotted: snap, purged, pruned, partial: partial || cc.partial, chatClosed: cc.closed, chatRemoved: cc.removed };
 }
+async function boxIdleRun(t0, until, out) { // save the chat boxes of servers that went quiet (closed servers never check in again)
+  for (const row of await sbGet('select=key,value,version&key=like.w*:cbo')) {
+    if (!Object.values(row.value || {}).some(o => o && Date.now() - o.last >= BOX_IDLE)) continue;
+    if (Date.now() - t0 > until) { out.partial = true; break; }
+    const wid = row.key.slice(1, 13), core = (await sbGet(`select=rules:value->rules,cuss:value->cussWords&key=eq.w${wid}:core`))[0] || {};
+    CTX.wid = wid; D.rules = core.rules || {}; D.cussWords = core.cuss || null; CBO = row.value; CBQ = []; boxSweep(Date.now());
+    const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: row.key, expect: row.version, value: CBO }] }) });
+    if (r.ok && (await r.json()) === true) { out.closed += CBQ.length; await sendBoxes(); } else CBQ = [];
+  }
+  CBO = {}; CBQ = []; D.rules = {}; D.cussWords = null; CTX.wid = null;
+}
 async function chatCron(t0) { // nightly: close the boxes of servers that went quiet, then delete boxes older than each workspace keeps them
   const out = { closed: 0, removed: 0, partial: false };
   try {
-    for (const row of await sbGet('select=key,value,version&key=like.w*:cbo')) {
-      if (!Object.values(row.value || {}).some(o => o && Date.now() - o.last >= BOX_IDLE)) continue;
-      if (Date.now() - t0 > 11000) { out.partial = true; break; }
-      const wid = row.key.slice(1, 13), core = (await sbGet(`select=rules:value->rules,cuss:value->cussWords&key=eq.w${wid}:core`))[0] || {};
-      CTX.wid = wid; D.rules = core.rules || {}; D.cussWords = core.cuss || null; CBO = row.value; CBQ = []; boxSweep(Date.now());
-      const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: row.key, expect: row.version, value: CBO }] }) });
-      if (r.ok && (await r.json()) === true) { out.closed += CBQ.length; await sendBoxes(); } else CBQ = [];
-    }
+    await boxIdleRun(t0, 11000, out);
     const cfgs = await sbGet('select=key,days:value->settings->chatDays,meta:value->meta&key=like.w*:core'), by = { 7: [], 14: [], 30: [] };
     for (const c of cfgs) if (c.meta) by[[7, 14, 30].includes(c.days) ? c.days : 14].push(c.key.slice(1, 13));
     for (const [d, ws] of Object.entries(by)) for (let i = 0; i < ws.length; i += 80) {
