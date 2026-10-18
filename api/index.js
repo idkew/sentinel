@@ -125,7 +125,7 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live'], '/api/chatlogs': ['cbo'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
@@ -838,11 +838,12 @@ function boxClose(j, at) {
   for (const id of row.user_ids) { const mine = msgs.filter(m => m.userId === id && m.flags && m.flags.length); if (mine.length) rkAdd(id, mine[0].name, mine.some(m => m.flags.includes('strong')) ? 'boxStrong' : 'box', row.id); } // feeds the risk score
 }
 function boxAdd(j, m) { // one chat message from game server j
-  let o = CBO[j]; if (o && m.t - o.last >= BOX_IDLE) { boxClose(j, o.last + BOX_IDLE); o = null; }
+  let o = CBO[j]; // a box stays open until it holds 10 messages (or its server shuts down)
   if (!o) { const open = Object.entries(CBO); if (open.length >= CB_OPEN_MAX) { const [oj, oo] = open.sort((a, b) => a[1].last - b[1].last)[0]; boxClose(oj, oo.last); } o = CBO[j] = { id: boxId(), opened: m.t, last: m.t, msgs: [] }; }
   o.msgs.push(m); o.last = m.t; if (o.msgs.length >= BOX_N) boxClose(j, m.t);
 }
-const boxSweep = now => { for (const [j, o] of Object.entries(CBO)) if (now - o.last >= BOX_IDLE) boxClose(j, o.last + BOX_IDLE); }; // a quiet server still produces boxes
+const SV_GONE = 120000; // a game server that has not checked in for 2 minutes has shut down
+const boxSweep = (now, sv = R.servers) => { for (const [j, o] of Object.entries(CBO)) { const s = sv && sv[j]; if ((!s || now - s.last > SV_GONE) && now - o.last > 60000) boxClose(j, o.last); } }; // the last, part-full box of a server that shut down
 async function cbFetch(path, o = {}) { const { ms, headers, ...rest } = o; return fetch(`${SB_URL}/rest/v1/${path}`, { ...rest, headers: { ...sbHeaders(), ...(headers || {}) }, signal: AbortSignal.timeout(ms || 4000) }); }
 async function ownBoxes(ids) { // the chat box IDs that exist in this workspace
   const ok = [...new Set(ids.map(x => String(x).toUpperCase()).filter(x => BOX_ID_RE.test(x)))].slice(0, 5); if (!ok.length) return [];
@@ -854,7 +855,8 @@ async function chatLogs(url, p, res) { // GET /api/chatlogs (search, newest firs
   const sp = url.searchParams, days = chatDays(), page = clampInt(sp.get('page'), 0, 500) || 0, terms = [];
   boxSweep(Date.now()); await sendBoxes(); // close quiet servers' boxes now, so they show up
   const f = [`wid=eq.${CTX.wid}`, `closed_at=gte.${new Date(Date.now() - days * 864e5).toISOString()}`];
-  if (p === '/api/chatlogs/box') { const id = String(sp.get('id') || '').toUpperCase().trim(); if (!BOX_ID_RE.test(id)) return send(res, 400, { error: 'That is not a chat box ID.' }); f.push(`id=eq.${id}`); }
+  const open = Object.entries(CBO).map(([j, o]) => { const msgs = chatFlags(o.msgs), types = [...new Set(msgs.flatMap(m => m.flags || []))]; return { id: o.id, t: o.last, opened: o.opened, server: String(j).slice(0, 8), users: [...new Set(msgs.map(m => m.userId).filter(x => x > 0))], flagged: types.length > 0, types, msgs, open: true, max: BOX_N }; }).sort((a, b) => b.t - a.t); // boxes still filling up, live
+  if (p === '/api/chatlogs/box') { const id = String(sp.get('id') || '').toUpperCase().trim(); if (!BOX_ID_RE.test(id)) return send(res, 400, { error: 'That is not a chat box ID.' }); const ob = open.find(b => b.id === id); if (ob) return send(res, 200, { box: ob, days }); f.push(`id=eq.${id}`); }
   else {
     const q = String(sp.get('q') || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 18); if (q) { f.push(BOX_ID_RE.test(q) ? `id=eq.${q}` : `id=ilike.*${q}*`); terms.push(q); }
     const us = cbClean(sp.get('user'), 40).toLowerCase(); if (us) { if (/^\d{1,19}$/.test(us)) f.push(`user_ids=cs.%7B${us}%7D`); else { f.push(`names=ilike.*${encodeURIComponent(us)}*`); terms.push(us); } }
@@ -864,13 +866,16 @@ async function chatLogs(url, p, res) { // GET /api/chatlogs (search, newest firs
     const from = day('from'), to = day('to'); if (from !== null) f.push(`closed_at=gte.${new Date(from).toISOString()}`); if (to !== null) f.push(`closed_at=lt.${new Date(to + 864e5).toISOString()}`);
     const sv = String(sp.get('server') || '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 8); if (sv) f.push(`server=ilike.${sv}*`);
     const ty = String(sp.get('type') || ''); if (ty && CHAT_FLAGS[ty]) f.push(`flag_types=cs.%7B${ty}%7D`); else if (sp.get('flagged') === '1') f.push('flagged=is.true');
+    const fl = sp.get('flagged') === '1'; // the same filters, for the open boxes
+    for (let i = open.length - 1; i >= 0; i--) { const b = open[i], body = b.msgs.map(m => String(m.text).toLowerCase()).join(String.fromCharCode(10)), names = b.msgs.map(m => String(m.name).toLowerCase()).join(' ');
+      if ((q && !b.id.includes(q)) || (us && (/^\d{1,19}$/.test(us) ? !b.users.includes(+us) : !names.includes(us))) || kws.some(k => !body.includes(k)) || (from !== null && b.t < from) || (to !== null && b.t >= to + 864e5) || (sv && !b.server.toLowerCase().startsWith(sv)) || (ty && CHAT_FLAGS[ty] ? !b.types.includes(ty) : fl && !b.flagged)) open.splice(i, 1); }
   }
   let r = null, txt = '';
   try { r = await cbFetch(`chat_boxes?select=id,opened_at,closed_at,server,user_ids,flagged,flag_types,msgs&${f.join('&')}&order=closed_at.desc&limit=${CB_PAGE}&offset=${page * CB_PAGE}`, { headers: { Prefer: 'count=exact' }, ms: 6000 }); if (!r.ok) txt = await r.text(); } catch (e) { txt = String(e.message || e); }
   if (!r || !r.ok) { if ((r && r.status === 404) || /chat_boxes|42P01|PGRST20/.test(txt)) return send(res, 200, { setup: false, boxes: [], total: 0, page: 0, pages: 1, terms, days }); console.warn('[Sentinel] chat log search failed: ' + txt.slice(0, 200)); return send(res, 502, { error: 'Could not load chat logs right now. Try again in a moment.' }); }
   const boxes = (await r.json()).map(boxOut), total = +((r.headers.get('content-range') || '').split('/')[1]) || boxes.length;
   if (p === '/api/chatlogs/box') return boxes.length ? send(res, 200, { box: boxes[0], days }) : send(res, 404, { error: `No chat box with that ID in this workspace. Boxes are kept for ${days} days.` });
-  return send(res, 200, { setup: true, boxes, total, page, pages: Math.max(1, Math.ceil(total / CB_PAGE)), terms, days });
+  return send(res, 200, { setup: true, boxes: page ? boxes : [...open, ...boxes], total: total + open.length, page, pages: Math.max(1, Math.ceil(total / CB_PAGE)), terms, days });
 }
 async function boxesOf(id) { // a player's own messages in this workspace's chat logs (for a data export)
   try { const r = await cbFetch(`chat_boxes?select=id,closed_at,msgs&wid=eq.${CTX.wid}&user_ids=cs.%7B${id}%7D&order=closed_at.desc&limit=2000`, { ms: 6000 }); if (!r.ok) return []; return (await r.json()).flatMap(b => (b.msgs || []).filter(m => m.userId === id).map(m => ({ box: b.id, t: m.t, text: m.text }))); } catch { return []; }
@@ -1056,10 +1061,10 @@ async function cronRun() {
 }
 async function boxIdleRun(t0, until, out) { // save the chat boxes of servers that went quiet (closed servers never check in again)
   for (const row of await sbGet('select=key,value,version&key=like.w*:cbo')) {
-    if (!Object.values(row.value || {}).some(o => o && Date.now() - o.last >= BOX_IDLE)) continue;
+    if (!Object.values(row.value || {}).some(o => o && Date.now() - o.last > 60000)) continue;
     if (Date.now() - t0 > until) { out.partial = true; break; }
-    const wid = row.key.slice(1, 13), core = (await sbGet(`select=rules:value->rules,cuss:value->cussWords&key=eq.w${wid}:core`))[0] || {};
-    CTX.wid = wid; D.rules = core.rules || {}; D.cussWords = core.cuss || null; CBO = row.value; CBQ = []; boxSweep(Date.now());
+    const wid = row.key.slice(1, 13), core = (await sbGet(`select=rules:value->rules,cuss:value->cussWords&key=eq.w${wid}:core`))[0] || {}, lv = (await sbGet(`select=sv:value->servers&key=eq.w${wid}:live`))[0] || {};
+    CTX.wid = wid; D.rules = core.rules || {}; D.cussWords = core.cuss || null; CBO = row.value; CBQ = []; boxSweep(Date.now(), lv.sv || {}); if (!CBQ.length) continue;
     const r = await sbf(`${SB_URL}/rest/v1/rpc/panel_commit`, { method: 'POST', headers: sbHeaders(), body: JSON.stringify({ changes: [{ key: row.key, expect: row.version, value: CBO }] }) });
     if (r.ok && (await r.json()) === true) { out.closed += CBQ.length; await sendBoxes(); } else CBQ = [];
   }
@@ -2412,6 +2417,7 @@ async function route(req, res, url, p) {
       if (!has(u, 'chatlogs.view')) return deny(res);
       const id = String(B.id || '').toUpperCase(); if (!BOX_ID_RE.test(id)) return send(res, 400, { error: 'That is not a chat box ID.' });
       let bx = null; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,server,msgs&wid=eq.${CTX.wid}&id=eq.${id}`, { ms: 4000 }); if (r.ok) bx = (await r.json())[0] || null; } catch {}
+      if (!bx) { const oj = Object.keys(CBO).find(j => CBO[j].id === id); if (oj) bx = { id, closed_at: new Date(CBO[oj].last).toISOString(), server: String(oj).slice(0, 8), msgs: chatFlags(CBO[oj].msgs) }; } // a box still filling up
       if (!bx) return send(res, 404, { error: 'No chat box with that ID in this workspace.' });
       const note = cleanName(B.note, 200), msgs = (bx.msgs || []).slice(0, 15);
       const call = { id: ++D.callSeq, t: Date.now(), from: { userId: 0, name: u.user }, staff: true, text: `Chat box ${id} reported by ${u.user}${note ? ': ' + note : ''}`, server: String(bx.server || '').slice(0, 8), status: 'open', by: null, note: '', box: id, chat: msgs.map(m => ({ t: m.t, userId: m.userId, name: m.name, text: m.text, flagged: !!(m.flags && m.flags.length) })) };
