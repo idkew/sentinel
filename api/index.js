@@ -1172,7 +1172,7 @@ function sync(b) {
   const now = Date.now(), id = String(b.jobId || 'studio').slice(0, 64), prev = R.servers[id], dt = prev ? Math.min((now - prev.last) / 1000, 30) : 0;
   const players = (Array.isArray(b.players) ? b.players : []).slice(0, 200).filter(p => p && Number.isInteger(p.userId) && p.userId > 0)
     .map(p => ({ userId: p.userId, name: String(p.name || p.userId).slice(0, 40), displayName: String(p.displayName || p.name || '').slice(0, 40) }));
-  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160), closed: (prev && prev.closed) || 0, closeMsg: (prev && prev.closeMsg) || '' };
+  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160), closed: (prev && prev.closed) || 0, closeMsg: (prev && prev.closeMsg) || '', restarting: (prev && prev.restarting) || 0 };
   for (const [j, sv] of Object.entries(R.servers)) if (now - sv.last > 6e4) delete R.servers[j];
   for (const p of players) tick({ ...p, sv: id.slice(0, 8) }, dt, now);
   for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 300)) {
@@ -2605,7 +2605,7 @@ async function route(req, res, url, p) {
         .sort((a, b) => memberPos(b.uid) - memberPos(a.uid) || a.name.localeCompare(b.name));
       return send(res, 200, {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
-        servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000) })),
+        servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000), restarting: !!(s.restarting && now - s.restarting < 180000) })),
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
         workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), features: { chatLogs: feat('chatLogs'), machineBans: feat('machineBans') }, ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
@@ -3222,16 +3222,27 @@ async function route(req, res, url, p) {
       }
       D.settings.presets = list; audit(u.user, `Saved ${list.length} reason preset${list.length === 1 ? '' : 's'}`); return ok(res);
     }
-    if (req.method === 'POST' && p === '/api/server') { // close one live server: everyone in it is removed, and it cannot be rejoined while it empties
+    if (req.method === 'POST' && p === '/api/server') { // close or restart one live server, or all of them. Close: everyone is removed and it cannot be rejoined while it empties. Restart: everyone is moved to a fresh server
       if (!has(u, 'servers.manage')) return deny(res);
+      if (!['close', 'restart', 'closeall', 'restartall'].includes(B.op)) return send(res, 400, { error: 'bad request' });
       const w = limit('close:' + uid, 10, 600000); if (w) return tooMany(res, w);
-      const full = Object.keys(R.servers).find(k => k.slice(0, 8) === String(B.id)), sv = full && R.servers[full];
-      if (!sv || Date.now() - sv.last > LIVE_MS) return send(res, 404, { error: 'That server has already closed.' });
-      if (B.op !== 'close') return send(res, 400, { error: 'bad request' });
-      const why = cleanName(B.reason, 120), msg = `This server was closed by a moderator${why ? ': ' + why : ''}. Rejoin to play in a new one.`.slice(0, 300);
-      sv.closed = Date.now(); sv.closeMsg = msg; for (const pl of sv.players) cmd({ type: 'kick', userId: pl.userId, target: full, reason: 'Server closed', display: msg });
-      feed(`Closed server ${String(B.id)} (${sv.players.length} player${sv.players.length === 1 ? '' : 's'} removed)${why ? ': ' + why : ''}`, u.user);
-      return send(res, 200, { ok: true, removed: sv.players.length });
+      const now = Date.now(), why = cleanName(B.reason, 120), all = B.op.endsWith('all'), pl = n => n + ' player' + (n === 1 ? '' : 's');
+      const list = all ? Object.entries(R.servers).filter(([, x]) => now - x.last < LIVE_MS && !(x.closed && now - x.closed < 180000) && !(x.restarting && now - x.restarting < 180000)) : (k => k && now - R.servers[k].last < LIVE_MS ? [[k, R.servers[k]]] : [])(Object.keys(R.servers).find(k => k.slice(0, 8) === String(B.id)));
+      if (!list.length) return send(res, 404, { error: all ? 'No servers are running right now.' : 'That server has already closed.' });
+      if (B.op === 'close' || B.op === 'closeall') {
+        const msg = `This server was closed by a moderator${why ? ': ' + why : ''}. Rejoin to play in a new one.`.slice(0, 300); let n = 0;
+        for (const [full, sv] of list) { sv.closed = now; sv.closeMsg = msg; n += sv.players.length; for (const x of sv.players) cmd({ type: 'kick', userId: x.userId, target: full, reason: 'Server closed', display: msg }); }
+        feed(all ? `Closed all servers (${list.length}, ${pl(n)} removed)${why ? ': ' + why : ''}` : `Closed server ${list[0][0].slice(0, 8)} (${pl(n)} removed)${why ? ': ' + why : ''}`, u.user);
+        if (all) audit(u.user, `Closed all servers (${list.length})${why ? ': ' + why : ''}`);
+        return send(res, 200, { ok: true, removed: n, servers: list.length });
+      }
+      const ok = list.filter(([, sv]) => (sv.sv || 1) >= 25), old = list.length - ok.length; // restarting needs game script 25 or newer in that server
+      if (!ok.length) return send(res, 409, { error: all ? 'None of your servers can restart yet: they run a game script older than version 25. Update SentinelBridge in your game, or use Close all.' : `This server runs game script version ${list[0][1].sv || 1}. Restarting needs version 25 or newer: update SentinelBridge in your game, or use Close server.` });
+      const msg = `This server is restarting${why ? ': ' + why : ''}. You will be moved to a new server in a few seconds.`.slice(0, 300); let n = 0;
+      for (const [full, sv] of ok) { sv.restarting = now; n += sv.players.length; cmd({ type: 'restart', target: full, display: msg }); }
+      feed(all ? `Restarted all servers (${ok.length}, ${pl(n)} moved)${why ? ': ' + why : ''}` : `Restarted server ${ok[0][0].slice(0, 8)} (${pl(n)} moved)${why ? ': ' + why : ''}`, u.user);
+      if (all) audit(u.user, `Restarted all servers (${ok.length})${why ? ': ' + why : ''}`);
+      return send(res, 200, { ok: true, moved: n, servers: ok.length, old });
     }
     if (req.method === 'POST' && p === '/api/strikes') { // staff warnings and strikes
       if (!has(u, 'staff.review')) return deny(res);
