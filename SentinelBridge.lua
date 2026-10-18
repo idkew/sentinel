@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 23 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 24 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -259,7 +259,8 @@ if not noticeEvent then
 	noticeEvent.Parent = ReplicatedStorage
 end
 noticeEvent:SetAttribute("Logo", LOGO_IMAGE)
-local clientReady, clientVer, activeBanner, ackWant = {}, {}, {}, {} -- ackWant: warnings each player was asked to acknowledge
+local clientReady, clientVer, activeBanner, ackWant, devSent = {}, {}, {}, {}, {} -- ackWant: warnings each player was asked to acknowledge; devSent: device settings already sent this session
+local DEV_KEYS = { ms = true, vol = true, q = true, cm = true, mm = true, tc = true, tm = true, inv = true, gs = true, full = true, tz = true, vw = true, vh = true, inp = true }
 noticeEvent.OnServerEvent:Connect(function(plr, msg, ver)
 	if msg == "ack" then -- the player pressed "I understand" on a warning. Only a warning that was sent to them counts
 		local w = ackWant[plr]
@@ -268,6 +269,22 @@ noticeEvent.OnServerEvent:Connect(function(plr, msg, ver)
 			queue({ type = "ack", userId = plr.UserId, name = plr.Name, entry = ver })
 			if syncSoon then syncSoon() end
 		end
+		return
+	end
+	if msg == "dev" then -- Roblox settings saved on the player's computer or phone, once per session (linked accounts). The website keeps only a one-way code of them
+		if devSent[plr] or type(ver) ~= "table" then return end
+		devSent[plr] = true
+		local fp = {}
+		for k, v in pairs(ver) do
+			if DEV_KEYS[k] and type(v) == "number" and v == v and math.abs(v) < 1e7 then fp[k] = math.floor(v) end
+		end
+		if type(ver.loc) == "string" and #ver.loc <= 20 and not ver.loc:find("[^%w%-_]") then fp.loc = ver.loc end
+		if type(ver.now) == "number" and ver.now == ver.now then -- how far the device clock is off, minus half the round trip
+			local okP, ping = pcall(function() return plr:GetNetworkPing() end)
+			fp.sk = math.floor(ver.now - DateTime.now().UnixTimestampMillis + (okP and ping or 0) * 1000)
+		end
+		queue({ type = "dev", userId = plr.UserId, name = plr.Name, fp = fp })
+		if syncSoon then syncSoon() end
 		return
 	end
 	if msg ~= "ready" then return end
@@ -662,7 +679,7 @@ Players.PlayerAdded:Connect(function(p)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
-	clientReady[p], clientVer[p], activeBanner[p], ackWant[p] = nil, nil, nil, nil
+	clientReady[p], clientVer[p], activeBanner[p], ackWant[p], devSent[p] = nil, nil, nil, nil, nil
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
 for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
