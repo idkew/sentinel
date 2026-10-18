@@ -2125,7 +2125,8 @@ async function route(req, res, url, p) {
       if (D.meta.suspended) return send(res, 403, { error: 'This workspace is suspended. Contact the Sentinel team.' });
       const rej = (why, x) => { if (Date.now() - ((D.meta.reject || {}).t || 0) > 30000) D.meta.reject = { t: Date.now(), why, ...x }; }; // why the last check-in was refused, for the owner's setup page (at most twice a minute)
       if (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot)) { rej('code'); const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
-      const place = Number.isInteger(b.placeId) ? b.placeId : 0;
+      const raw = Number.isInteger(b.placeId) ? b.placeId : 0, near = (x, y) => x === y || (x > 1e14 && y > 1e14 && x.toPrecision(14) === y.toPrecision(14)); // Roblox's JSONEncode keeps 14 digits, so 15-digit place IDs arrive rounded
+      const place = D.meta.placeId && near(raw, D.meta.placeId) ? D.meta.placeId : raw; b.placeId = place;
       if (D.meta.placeLock && D.meta.placeId && place !== D.meta.placeId) { rej('place', { place, want: D.meta.placeId }); return send(res, 403, { error: 'This game key is locked to a different place' }); }
       if ((D.meta.lastPlace ?? null) !== place) D.meta.lastPlace = place;
       const sv = Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1; if (sv > (D.meta.scriptV || 0)) D.meta.scriptV = sv; // the highest version seen, so old servers that are still shutting down don't matter
