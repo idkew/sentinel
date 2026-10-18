@@ -25,7 +25,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local StarterGui = game:GetService("StarterGui")
 
-local CLIENT_VERSION = 4 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
+local CLIENT_VERSION = 5 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
 local player = Players.LocalPlayer
 local savedInput = nil -- what the chat bar was set to before we hid it
 local hidden = false
@@ -290,7 +290,7 @@ local function ringRects(W, H, r, p, pad)
 	return out
 end
 
-local function buildNotice(gui, text, kind, title, fixed)
+local function buildNotice(gui, text, kind, title, fixed, button) -- button: optional label for one button under the message, such as "I understand"
 	local st = NOTICE_STYLES[kind] or NOTICE_STYLES.red
 	local logo = noticeLogo()
 	local R, T, M = RING_R, RING_T, RING_M
@@ -358,6 +358,15 @@ local function buildNotice(gui, text, kind, title, fixed)
 		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, TextWrapped = true,
 		TextColor3 = Color3.fromRGB(176, 176, 185), Font = Enum.Font.GothamMedium, TextSize = 13, Text = text, LayoutOrder = 2,
 	}, col)
+	local btn
+	if button then
+		local hold = make("Frame", { BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 3 }, col)
+		btn = make("TextButton", {
+			Name = "Button", Size = UDim2.fromOffset(130, 30), Position = UDim2.fromOffset(0, 10), BackgroundColor3 = st.color, BorderSizePixel = 0, AutoButtonColor = true,
+			TextColor3 = Color3.fromRGB(20, 20, 23), Font = Enum.Font.GothamBold, TextSize = 13, Text = button,
+		}, hold)
+		make("UICorner", { CornerRadius = UDim.new(0, 8) }, btn)
+	end
 
 	-- the timer line: six clip windows, each showing part of a copy of the card's border
 	local ring = make("Frame", { Name = "Timer", BackgroundTransparency = 1, BorderSizePixel = 0, Size = UDim2.new(), ZIndex = 5 }, card)
@@ -370,7 +379,7 @@ local function buildNotice(gui, text, kind, title, fixed)
 		segs[i] = { clip = clip, line = line }
 	end
 
-	local n = { root = root, card = card }
+	local n = { root = root, card = card, button = btn }
 	-- p runs from 0 (nothing drawn) to 1 (the whole border drawn)
 	function n.progress(p)
 		local W, H
@@ -416,16 +425,19 @@ local function buildNotice(gui, text, kind, title, fixed)
 end
 
 local currentNotice = nil -- the function that closes the banner on screen
-local function showNotice(text, kind, title)
+local noticeRemote = nil -- ReplicatedStorage.SentinelNotice, once the game script has made it
+local ACK_SECONDS = 120 -- a warning that asks for "I understand" stays this long; after that the website shows it as not acknowledged
+local function showNotice(text, kind, title, opts)
 	if typeof(text) ~= "string" then return end
 	if typeof(kind) ~= "string" then kind = "red" end
 	if typeof(title) ~= "string" then title = nil end
 	text = string.sub(text, 1, 300)
-	if currentNotice then currentNotice(true) end
+	local ack = typeof(opts) == "table" and typeof(opts.ack) == "string" and #opts.ack <= 40 and opts.ack or nil
+	if currentNotice then currentNotice(true) end -- any newer banner (a mute, for example) replaces this one
 	local gui = Instance.new("ScreenGui")
 	gui.Name, gui.ResetOnSpawn, gui.DisplayOrder, gui.IgnoreGuiInset = "SentinelBanner", false, 200, true
 	gui.Parent = player:WaitForChild("PlayerGui")
-	local n = buildNotice(gui, text, kind, title, nil)
+	local n = buildNotice(gui, text, kind, title, nil, ack and "I understand" or nil)
 	local conn
 	local finished = false
 	local function finish(quick)
@@ -438,10 +450,18 @@ local function showNotice(text, kind, title)
 	end
 	currentNotice = finish
 	n.show()
-	n.card.InputBegan:Connect(function(input) -- tap or click the card to close it early
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then finish(false) end
-	end)
-	local show = math.max(5, math.min(9, 4.5 + #text / 25)) -- seconds on screen: longer messages stay longer
+	if ack and n.button then -- only the button closes it; the player can keep moving and chatting meanwhile
+		n.button.Activated:Connect(function()
+			if finished then return end
+			if noticeRemote then noticeRemote:FireServer("ack", ack) end
+			finish(false)
+		end)
+	else
+		n.card.InputBegan:Connect(function(input) -- tap or click the card to close it early
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then finish(false) end
+		end)
+	end
+	local show = ack and ACK_SECONDS or math.max(5, math.min(9, 4.5 + #text / 25)) -- seconds on screen: longer messages stay longer
 	local start = os.clock() + 0.4 -- let the card finish sliding in before the line starts
 	conn = RunService.RenderStepped:Connect(function()
 		local p = (os.clock() - start) / show
@@ -453,8 +473,9 @@ end
 task.spawn(function()
 	local noticeEvent = ReplicatedStorage:WaitForChild("SentinelNotice", 30)
 	if not noticeEvent then return end -- the game script is older than version 14: it draws the banners itself
-	noticeEvent.OnClientEvent:Connect(function(text, kind, title)
-		local ok, err = pcall(showNotice, text, kind, title)
+	noticeRemote = noticeEvent
+	noticeEvent.OnClientEvent:Connect(function(text, kind, title, opts)
+		local ok, err = pcall(showNotice, text, kind, title, opts)
 		if not ok then warn("[Sentinel] Could not show a banner: " .. tostring(err)) end
 	end)
 	noticeEvent:FireServer("ready", CLIENT_VERSION) -- tells the game script to send banners here instead of drawing them itself, and which version this is
