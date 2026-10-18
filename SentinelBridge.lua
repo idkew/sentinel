@@ -23,7 +23,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 20 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 21 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -38,6 +38,9 @@ local COLORS = {
 	blue = Color3.fromRGB(47, 91, 255),
 	green = Color3.fromRGB(20, 164, 77),
 }
+
+local syncSoon -- set further down: sends chat and reports right away instead of at the next check-in
+local lastSent = 0
 
 local function queue(ev)
 	table.insert(pending, ev)
@@ -333,10 +336,12 @@ local function onChat(userId, text)
 		else
 			lastCall[userId] = os.clock()
 			queue({ type = "modcall", userId = userId, name = plr.Name, text = rest })
+			if syncSoon then syncSoon() end
 		end
 		return true
 	end
 	queue({ type = "chat", userId = userId, name = plr.Name, text = text })
+	if syncSoon then syncSoon() end
 	return false
 end
 
@@ -588,6 +593,7 @@ end
 local function sync()
 	if busy then return end
 	busy = true
+	lastSent = os.clock()
 	local list = {}
 	for _, p in Players:GetPlayers() do
 		table.insert(list, { userId = p.UserId, name = p.Name, displayName = p.DisplayName })
@@ -617,6 +623,17 @@ local function sync()
 	if not okMute then warn("[Sentinel] Mute error: " .. tostring(muteErr)) end
 end
 
+local soonQueued, running = false, false
+syncSoon = function() -- at most one extra check-in a second, so busy chat never hits the rate limit
+	if soonQueued or not running then return end
+	soonQueued = true
+	task.delay(math.max(0, lastSent + 1 - os.clock()), function()
+		while busy do task.wait(0.2) end
+		soonQueued = false
+		sync()
+	end)
+end
+
 Players.PlayerAdded:Connect(function(p)
 	queue({ type = "join", userId = p.UserId, name = p.Name })
 	task.defer(sync)
@@ -635,6 +652,7 @@ if KEY == "" or string.find(KEY, "INPUT", 1, true) then
 end
 if KEY ~= rawKey then print("[Sentinel] Removed extra [ ] or spaces from your game code. You can delete them from the script too.") end
 task.spawn(setupChat)
+running = true
 task.spawn(function()
 	while true do
 		sync()
