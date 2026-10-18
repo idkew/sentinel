@@ -76,6 +76,7 @@ const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, ruleboo
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
   flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
+let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
 let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
@@ -83,6 +84,11 @@ const setWid = w => { if (!/^[a-f0-9]{12}$/.test(w)) throw new Error('bad worksp
 const save = () => {};
 // a report from a game server still running gets a link that joins that exact server (Roblox's start link with gameInstanceId)
 const callOut = c => { const { jobId, placeId, ...rest } = c, up = !!(jobId && R.servers[jobId] && Date.now() - R.servers[jobId].last < 6e4 && !R.servers[jobId].closed); return jobId ? { ...rest, live: up, join: up ? `https://www.roblox.com/games/start?placeId=${placeId}&gameInstanceId=${encodeURIComponent(jobId)}` : '' } : rest; };
+const callsOut = () => { // the newest 40, plus the first report of any group they belong to, with a suggested playbook for open ones
+  const top = D.calls.slice(0, 40), ids = new Set(top.map(c => c.id));
+  for (const c of top.slice()) if (c.grp && !ids.has(c.grp)) { const l = D.calls.find(x => x.id === c.grp); if (l) { top.push(l); ids.add(l.id); } }
+  return top.map(c => ({ ...callOut(c), ...(c.status !== 'resolved' ? { pb: pbSuggest(c) } : {}) }));
+};
 const pruneCalls = () => { const cut = Date.now() - cfg.callRetentionDays * 864e5; D.calls = D.calls.filter(c => c.t > cut); };
 const MUTE_SCRIPT = 6, MUTE_HIDE_SCRIPT = 9; // MUTE_HIDE_SCRIPT: the first script version that can let a muted player keep typing // the first script version that really stops muted players chatting
 function unbanWarn() { // Roblox only lifts a ban from a running game server (or the Open Cloud key), and a banned player cannot join to start one
@@ -113,6 +119,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
+  vault: { get: () => VT, set: v => { VT = v && Array.isArray(v.items) ? v : { items: [] }; } }, // evidence staff keep: links, notes and copied chat boxes
   cbo: { get: () => CBO, set: v => { CBO = v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } }, // chat log boxes still filling, per game server
   chat: { get: () => ({ chat: R.chat, flagCount: R.flagCount, am: R.am }), set: v => { R.chat = v.chat || []; R.flagCount = v.flagCount || {}; R.am = v.am || {}; } },
   user: { get: () => U, set: v => { U = v; } },
@@ -125,13 +132,13 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -178,6 +185,9 @@ function migrate() { // bring older workspaces up to date
   D.strikes ||= [];
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
+  if (!D.meta.v16) { D.meta.v16 = 1; if (typeof D.settings.warnAck !== 'boolean') D.settings.warnAck = false; } // warning acknowledgement starts off
+  if (!D.meta.v15) { D.meta.v15 = 1; if (!VAULT_DAYS.includes(D.settings.vaultDays)) D.settings.vaultDays = 180; } // evidence vault items are kept 180 days unless the owner picks another length
+  if (!D.meta.v14) { D.meta.v14 = 1; if (!MERGE_MIN.includes(D.settings.mergeMin)) D.settings.mergeMin = 10; } // reports about the same player within 10 minutes are grouped
   if (!D.meta.v13) { D.meta.v13 = 1; if (D.webhook && D.webhook.events) for (const k of ['digest', 'health']) if (!(k in D.webhook.events)) D.webhook.events[k] = false; } // the daily summary and game health reach Discord only once the owner turns them on
   if (!D.meta.v12) { D.meta.v12 = 1; if (D.webhook && D.webhook.events && !('alerts' in D.webhook.events)) D.webhook.events.alerts = false; } // chat alerts reach Discord only once the owner turns them on
   if (!D.meta.v11) { D.meta.v11 = 1; for (const id of Object.keys(D.members)) if (id !== D.meta.owner) D.onboard.skip[id] = true; for (const k of ['helper', 'mod']) { const r = D.ranks[k]; if (r && !r.perms.includes('training.use')) r.perms.push('training.use'); } } // staff from before checklists skip them; trainees get the training page
@@ -205,11 +215,12 @@ const live = o => !o.expires || o.expires > Date.now();
 // Where one logbook entry stands right now, so the website can say so plainly.
 // active: still in force. fulfilled: a timed mute or suspension that ran its course, or a kick that was carried out.
 // lifted: ended early by an unmute or unban. reverted: undone by staff. none: notes, points and lifts have nothing to track.
+const ACK_MS = 120000; // after 2 minutes without "I understand" a warning shows as not acknowledged, and nothing else happens
 function entryState(e, id) {
   if (!e) return {};
   if (e.status === 'reverted') return { state: 'reverted' };
   if (e.type === 'Kicked') return { state: 'fulfilled', ends: e.time };
-  if (e.type === 'Warned') return { state: 'active' };
+  if (e.type === 'Warned') return { state: 'active', ...(e.ack ? { ack: 'yes', ackAt: e.ack } : e.ackWant ? { ack: Date.now() - e.ackWant < ACK_MS ? 'waiting' : 'no' } : {}) };
   if (!['Muted', 'Suspended', 'Banned'].includes(e.type)) return { state: 'none' };
   const now = Date.now(), ends = e.minutes > 0 ? e.time + e.minutes * 60000 : null, lift = e.type === 'Muted' ? 'Unmuted' : 'Unbanned';
   const lifted = (D.logs[id] || []).find(x => x.type === lift && x.status !== 'reverted' && x.time > e.time && (!ends || x.time < ends));
@@ -235,6 +246,42 @@ const DEFAULT_PRESETS = [
   { id: 'exploit', name: 'Exploiting', action: 'ban', minutes: 0, reason: 'Using exploits or cheats' },
 ];
 const presets = () => Array.isArray(D.settings.presets) ? D.settings.presets : DEFAULT_PRESETS;
+// ---- playbooks: written steps for common cases. They only fill in the Moderate window; staff still decide and apply
+const DEFAULT_PLAYBOOKS = [
+  { id: 'scam', name: 'Scamming', when: 'Someone offers free Robux, trades or a link to get items or account details.', steps: ['Read the chat and look for links or Discord invites.', 'Check whether other players reported the same person.', 'Ban if they posted a scam link. Warn for a first offer without a link.', 'Add the link or a screenshot as evidence.'], preset: '', match: { flags: ['link', 'invite'], words: ['free robux', 'robux', 'giveaway', 'scam', 'trade'] } },
+  { id: 'exploit', name: 'Exploiting', when: 'Flying, speed, teleporting or other cheats.', steps: ['Join their server or ask the reporter for a clip.', 'Check their logbook and any alt-account hint.', 'Ban with the Exploiting preset.', 'Add the clip as evidence.'], preset: 'exploit', match: { flags: [], words: ['exploit', 'hack', 'cheat', 'fly', 'flying', 'speed', 'teleport', 'aimbot'] } },
+  { id: 'harass', name: 'Harassment', when: 'Insults, threats or slurs aimed at another player.', steps: ['Read the chat around the report.', 'Mute first if it is still going on.', 'Suspend for repeat or serious cases.', 'Resolve the report with a short note.'], preset: 'harass', match: { flags: ['strong'], words: ['harass', 'bully', 'insult', 'threat', 'racist'] } },
+  { id: 'spam', name: 'Spam', when: 'Flooding chat with repeated or shouted messages.', steps: ['Open the chat box and check for repeats.', 'Mute with the Spamming preset.', 'Send it up if it continues after the mute.'], preset: 'spam', match: { flags: ['spam', 'repeat', 'caps'], words: ['spam', 'flood'] } },
+];
+const playbooks = () => Array.isArray(D.settings.playbooks) ? D.settings.playbooks : DEFAULT_PLAYBOOKS;
+function pbSuggest(c) { // the playbook that fits a report best, shown to staff as a suggestion and never applied
+  const own = c.target ? (c.chat || []).filter(m => m.userId === c.target.userId) : (c.chat || []), fl = new Set(chatFlags(own).flatMap(m => m.flags || []));
+  const txt = ' ' + [c.text, ...own.map(m => m.text)].join(' ').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ') + ' ';
+  let best = '', top = 0;
+  for (const p of playbooks()) {
+    const m = p.match || {}, n = (m.flags || []).filter(f => fl.has(f)).length * 2 + (m.words || []).filter(w => w && txt.includes(' ' + String(w).toLowerCase())).length;
+    if (n > top) { top = n; best = p.id; }
+  }
+  return best;
+}
+// ---- merged reports: reports about the same player close together become one item. Every original report is kept
+const MERGE_MIN = [5, 10, 30], PB_FLAGS = ['strong', 'mild', 'invite', 'link', 'pii', 'caps', 'repeat', 'spam', 'long', 'garble'];
+const grpOf = c => c.grp || c.id;
+const grpMembers = g => D.calls.filter(c => grpOf(c) === g);
+const repKey = c => c.from.userId > 0 ? 'u' + c.from.userId : c.staff ? 's' + c.from.name : 'anon'; // anonymous web reports count as one reporter
+const grpReporters = g => new Set(grpMembers(g).map(repKey)).size;
+function callMerge(call) { // before the new report is added: join an open report about the same player within the window
+  if (!call.target) return null;
+  const win = (MERGE_MIN.includes(D.settings.mergeMin) ? D.settings.mergeMin : 10) * 60000;
+  const lead = D.calls.find(c => !c.grp && c.status !== 'resolved' && c.target && c.target.userId === call.target.userId && call.t - Math.max(...grpMembers(c.id).map(x => x.t)) <= win);
+  if (!lead) return null;
+  call.grp = lead.id; if (lead.status === 'claimed') { call.status = 'claimed'; call.by = lead.by; }
+  return lead;
+}
+function callTell(list, kind, title, line) { // one in-game message per reporter, naming their own report numbers
+  const by = {}; for (const c of list) if (c.from.userId > 0) (by[c.from.userId] ||= []).push(c.id);
+  for (const [id, ns] of Object.entries(by)) { const t = `Report #${ns.sort((a, b) => a - b).join(', #')} ${line}`; cmd({ type: 'message', kind, title, body: t, userId: +id, text: t }); }
+}
 const CLOSED_MSG = 'This server was closed by a moderator. Rejoin to play in a new one.';
 const rule = id => ({ ...DEFAULT_RULES[id], ...(D.rules[id] || {}) });
 const weekStart = now => { const d = new Date(now); d.setUTCHours(0, 0, 0, 0); return d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5; };
@@ -624,11 +671,31 @@ function rkAdd(id, name, kind, eid) { // a compact history in the play row, read
 function riskOf(id, now = Date.now()) { // 0 to 100, with the parts it is made of. Older activity counts less: halves every 30 days, ignored after 90
   const p = D.play[id] || {}, parts = {}, add = (key, label, pts) => { const x = (parts[key] ||= { label, points: 0, n: 0 }); x.points += pts; x.n++; };
   for (const [k, t] of p.rk || []) { const age = (now - t) / 864e5; if (age > RISK_W.maxAgeDays || !RISK_W[k] || !RISK_LABEL[k]) continue; add(k, RISK_LABEL[k], RISK_W[k] * Math.pow(0.5, age / RISK_W.halfLifeDays)); }
-  const open = D.calls.filter(c => c.target && c.target.userId === +id && c.status !== 'resolved').length; for (let i = 0; i < open; i++) add('report', ['open report against them', 'open reports against them'], RISK_W.report);
+  const groups = new Set(D.calls.filter(c => c.target && c.target.userId === +id && c.status !== 'resolved').map(grpOf)); // a merged report counts by its distinct reporters, at most 3
+  for (const g of groups) add('report', ['open report against them', 'open reports against them'], RISK_W.report * Math.min(3, grpReporters(g)));
   const sg = D.signals[id]; if (sg && sg.status === 'open') add('hint', [`${sg.strength || 'likely'} alt-account hint`, 'alt-account hints'], RISK_W.hint[sg.strength] || RISK_W.hint.likely);
   if (p.created && now - p.created < 7 * 864e5) add('age', ['Roblox account under 7 days old', ''], RISK_W.newAccount);
-  const list = Object.values(parts).map(x => ({ label: x.n > 1 ? `${x.n} ${x.label[1]}` : x.label[0], points: Math.round(x.points) })).filter(x => x.points > 0).sort((a, b) => b.points - a.points);
-  return { score: Math.min(100, list.reduce((a, x) => a + x.points, 0)), parts: list };
+  for (const a of p.adj || []) { const age = (now - a.t) / 864e5; if (a.reverted || age > RISK_W.maxAgeDays) continue; add('trust:' + a.id, [`Trust restored by ${a.by}`, ''], -a.pts * Math.pow(0.5, age / RISK_W.halfLifeDays)); } // staff lowered it; fades like everything else
+  const list = Object.values(parts).map(x => ({ label: x.n > 1 ? `${x.n} ${x.label[1]}` : x.label[0], points: Math.round(x.points) })).filter(x => x.points !== 0).sort((a, b) => b.points - a.points);
+  const up = Math.min(100, list.filter(x => x.points > 0).reduce((a, x) => a + x.points, 0)), down = list.filter(x => x.points < 0).reduce((a, x) => a + x.points, 0);
+  return { score: Math.max(0, up + down), parts: list };
+}
+// ---- evidence vault: links, notes and copied chat boxes, each with an expiry and a log of who opened it
+const VAULT_CAP = 512 * 1024, VAULT_DAYS = [30, 90, 180, 365], CASE_RE = /^(call:\d{1,9}|appeal:[\w-]{1,24}|escal:[\w-]{1,24})$/;
+const vaultDays = () => VAULT_DAYS.includes(D.settings.vaultDays) ? D.settings.vaultDays : 180;
+const vaultItems = () => { const now = Date.now(); if (VT.items.some(x => x.exp <= now)) VT.items = VT.items.filter(x => x.exp > now); return VT.items; }; // expired items are deleted the next time the vault is read
+const vaultSize = () => JSON.stringify(VT).length;
+const vaultMeta = x => ({ id: x.id, uid: x.uid || null, name: x.name || '', cases: x.cases || [], kind: x.kind, title: x.title, by: x.by, byUid: x.byUid, t: x.t, exp: x.exp, n: x.msgs ? x.msgs.length : 0, opened: (x.log || []).length });
+function caseInfo(cs) { // what a case points at, or null when it is gone
+  const [k, v] = cs.split(':');
+  if (k === 'call') { const c = D.calls.find(c => c.id === +v); return c ? { uid: c.target ? c.target.userId : c.from.userId, name: c.target ? c.target.name : c.from.name } : null; }
+  if (k === 'appeal') { const a = D.appeals.find(a => a.id === v); return a ? { uid: a.uid, name: a.name } : null; }
+  const x = D.escal.find(x => x.id === v); if (!x) return null; const r = escRef(x); return { uid: r ? r.userId : null, name: r ? r.who : '' };
+}
+async function boxGet(id) { // a chat box from the closed table, or one still filling up
+  let bx = null; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,server,msgs&wid=eq.${CTX.wid}&id=eq.${id}`, { ms: 4000 }); if (r.ok) bx = (await r.json())[0] || null; } catch {}
+  if (!bx) { const oj = Object.keys(CBO).find(j => CBO[j].id === id); if (oj) bx = { id, closed_at: new Date(CBO[oj].last).toISOString(), server: String(oj).slice(0, 8), msgs: chatFlags(CBO[oj].msgs) }; }
+  return bx;
 }
 // ---- owner visibility: game connection health and the daily summary (sent by /api/cron/tick) ----
 const DOWN_MS = 10 * 60000;
@@ -684,6 +751,7 @@ async function erasePlayer(id) { // everything this workspace stores about one p
   D.calls = D.calls.filter(c => c.from.userId !== id); D.calls.forEach(c => c.chat = (c.chat || []).filter(m => m.userId !== id)); R.chat = R.chat.filter(m => m.userId !== id);
   D.appeals = D.appeals.filter(a => a.uid !== id); D.kicks = (D.kicks || []).filter(k => k.userId !== id);
   await forgetInBoxes(CTX.wid, id); for (const o of Object.values(CBO)) o.msgs = o.msgs.filter(m => m.userId !== id);
+  await need('vault'); VT.items = VT.items.filter(x => x.uid !== id); for (const x of VT.items) if (x.msgs) x.msgs = x.msgs.filter(m => m.userId !== id);
   if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
   const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
   D.feed.forEach(f => f.text = scrub(f.text)); D.audit.forEach(a => a.text = scrub(a.text));
@@ -738,10 +806,12 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   else if (action === 'unmute') { delete D.mutes[userId]; log('Unmuted'); }
   else if (action === 'kick') { D.stats.kicks++; log('Kicked'); D.kicks = (D.kicks || []).filter(k => Date.now() - k.t < 36e5).concat({ userId: +userId, name, t: Date.now() }).slice(-50); cmd({ type: 'kick', userId, reason: 'Kicked: ' + reason }); notify('kicks', `Kicked ${name}`, reason, [['By', by]], 0xf76b15); }
   else if (action === 'warn') {
-    log('Warned'); cmd({ type: 'message', kind: 'warn', title: 'Warning', body: reason, userId, text: 'Warning: ' + reason }); notify('warns', `Warned ${name}`, reason, [['By', by]], 0xffc53d);
+    const we = log('Warned'), ak = !!D.settings.warnAck && !(D.mutes[userId] && live(D.mutes[userId])) && !(D.bans[userId] && live(D.bans[userId])); if (ak) we.ackWant = Date.now(); // the player script shows "I understand"; nothing is blocked
+    cmd({ type: 'message', kind: 'warn', title: 'Warning', body: reason, userId, text: 'Warning: ' + reason, ...(ak ? { ack: we.id } : {}) }); notify('warns', `Warned ${name}`, reason, [['By', by]], 0xffc53d);
     let n = 0; // active warnings since the last suspension or ban
     for (const e of [...D.logs[userId]].reverse()) { if (e.status === 'reverted') continue; if (e.type === 'Suspended' || e.type === 'Banned') break; if (e.type === 'Warned') n++; }
     const r = rule('autosuspend');
+    if (r.enabled && n >= r.warns && we.ackWant) { delete we.ackWant; for (const c of R.cmds) if (c.ack === we.id) delete c.ack; } // the suspension comes first, so no "I understand" card
     if (r.enabled && n >= r.warns) act({ action: 'ban', userId, name, reason: `Automatic: ${r.warns} warnings`, minutes: r.minutes, by: 'Automation' });
   }
 }
@@ -952,14 +1022,16 @@ function sync(b) {
       }
     } else if (e.type === 'attend' && D.session) {
       D.session.attendees[uid] = name; cmd({ type: 'message', kind: 'ok', title: 'Session', body: `You are marked present for ${D.session.type}.`, userId: uid, text: `You are marked present for ${D.session.type}.` });
+    } else if (e.type === 'ack') { // the player pressed "I understand" on a warning
+      const x = uid && (D.logs[uid] || []).find(z => z.id === String(e.entry || '')); if (x && x.type === 'Warned' && x.ackWant && !x.ack && x.status !== 'reverted') x.ack = now;
     } else if (e.type === 'modcall') {
       const tg = e.target && Number.isInteger(e.target.userId) && e.target.userId > 0 && e.target.userId !== uid ? { userId: e.target.userId, name: String(e.target.name || e.target.userId).slice(0, 40) } : null;
       const near = R.chat.filter(c => c.jobId === id), pick = new Set([...near.slice(-15), ...(tg ? near.filter(c => c.userId === tg.userId).slice(-10) : [])]);
       const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || (tg ? 'Reported ' + tg.name : 'No details given'), server: id.slice(0, 8), status: 'open', by: null, note: '', ...(tg ? { target: tg } : {}), ...(id !== 'studio' && Number.isInteger(b.placeId) && b.placeId > 0 ? { jobId: id, placeId: b.placeId } : {}),
         chat: near.filter(c => pick.has(c)).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
-      D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
-      feed(`Report #${call.id} from ${name}: ${call.text}`);
-      notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)], ...(tg ? [['Reported player', tg.name]] : [])], 0x635bff);
+      const lead = callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
+      feed(`Report #${call.id} from ${name}: ${call.text}${lead ? ` (grouped with #${lead.id})` : ''}`);
+      notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)], ...(tg ? [['Reported player', tg.name]] : []), ...(lead ? [['Grouped with', `#${lead.id}, ${grpReporters(lead.id)} reporters`]] : [])], 0x635bff);
       cmd({ type: 'message', kind: 'ok', title: 'Report sent', body: `Report #${call.id} sent. A moderator will respond soon.`, userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
     }
   }
@@ -1095,14 +1167,14 @@ async function personScan(rid, withData, from) { // every workspace that stores 
   const t0 = Date.now(), ws = (await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta && !r.meta.deleted).map(r => ({ wid: r.key.slice(1, 13), name: r.meta.name })).sort((a, b) => (a.wid < b.wid ? -1 : 1)), found = [];
   for (let i = from; i < ws.length; i++) {
     if (Date.now() - t0 > 11000) return { found, next: i };
-    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
-    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null;
+    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', 'vault', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
+    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null, vault = ((v.vault || {}).items || []).filter(x => x.uid === rid || (x.msgs || []).some(m => m.userId === rid));
     let boxes = []; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,msgs&wid=eq.${w}&user_ids=cs.%7B${rid}%7D&limit=2000`, { ms: 4000 }); if (r.ok) boxes = await r.json(); } catch {}
     const ban = (core.bans || {})[rid] || null, mute = (core.mutes || {})[rid] || null, signal = (core.signals || {})[rid] || null, appeals = (core.appeals || []).filter(a => a.uid === rid), inReports = (v.calls || []).filter(c => (c.chat || []).some(m => m.userId === rid)).length;
-    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports;
+    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports + vault.length;
     if (!rows) continue;
     const x = { wid: w, name: ws[i].name, rows, logbook: logs.length, chatLogs: boxes.length, reports: calls.length + inReports, appeals: appeals.length, ban: !!ban, mute: !!mute };
-    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
+    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
     found.push(x);
   }
   return { found, next: null };
@@ -1207,7 +1279,7 @@ async function adminMore(A, res, alog) { // the newer console tools. Returns tru
       if (!tk || tk.pd !== rid || !Array.isArray(tk.w)) return S(400, { error: 'Run the check first. A check is valid for 10 minutes.' });
       const done = [];
       for (const w of tk.w) for (let i = 0; i < 4; i++) {
-        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo'); if (!D.meta) break;
+        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo', 'vault'); if (!D.meta) break;
         await erasePlayer(rid); audit('Site admin', `Erased stored data for Roblox user ${rid} (data request)`);
         if (await commit()) { done.push(w); break; }
       }
@@ -1880,8 +1952,8 @@ async function route(req, res, url, p) {
       const tid = await findId(tname); if (!tid) return send(res, 404, { error: 'We could not find a Roblox player with that username.' });
       const rid = rname && /^\w{3,20}$/.test(rname) ? await findId(rname) : null;
       const call = { id: ++D.callSeq, t: Date.now(), from: { userId: rid || 0, name: rid ? rname : 'Web report' }, text: `Reporting ${tname}: ${text}${link ? '\nEvidence: ' + link : ''}`, server: 'web', status: 'open', by: null, note: '', chat: [], web: true, target: { userId: tid, name: tname } };
-      D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
-      abuseTick('pub'); feed(`Web report #${call.id} about ${tname}`); notify('reports', `Web report #${call.id} about ${tname}`, text, [['From', rid ? rname : 'Anonymous']], 0x635bff);
+      const lead = callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
+      abuseTick('pub'); feed(`Web report #${call.id} about ${tname}${lead ? ` (grouped with #${lead.id})` : ''}`); notify('reports', `Web report #${call.id} about ${tname}`, text, [['From', rid ? rname : 'Anonymous']], 0x635bff);
       return send(res, 200, { ok: true });
     }
     if (req.method === 'GET' && p === '/api/publiclog') {
@@ -2146,6 +2218,7 @@ async function route(req, res, url, p) {
       const rjOn = rule('rapidjoin').enabled && ev.some(e => e && e.type === 'join');
       if ((chatty && (rule('flaggedmute').enabled || AM_RULES.some(k => rule(k).enabled))) || rjOn) await need('logs');
       if (rjOn) await need('chat');
+      if (ev.some(e => e && e.type === 'ack')) await need('logs');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
       const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await banSyncPull();
@@ -2325,7 +2398,7 @@ async function route(req, res, url, p) {
         loa: { mine: D.loa.filter(x => x.uid === uid).slice(0, 20), all: has(u, 'loa.review') ? D.loa.slice(0, 80) : [] },
         webhook: has(u, 'webhooks.manage') ? { set: !!(D.webhook && D.webhook.url), hint: D.webhook && D.webhook.url ? D.webhook.url.slice(-6) : '', events: (D.webhook || DEFAULT_WEBHOOK()).events } : null,
         series: { players: ser('u'), peak: ser('p'), actions: ser('a'), reports: ser('r'), joins: ser('j'), days },
-        openCalls: D.calls.filter(c => c.status !== 'resolved').length, calls: D.calls.slice(0, 40).map(callOut),
+        openCalls: new Set(D.calls.filter(c => c.status !== 'resolved').map(grpOf)).size, calls: callsOut(), vaultDays: vaultDays(), playbooks: playbooks(), mergeMin: MERGE_MIN.includes(D.settings.mergeMin) ? D.settings.mergeMin : 10,
         session: D.session && { ...D.session, attendees: Object.entries(D.session.attendees).map(([userId, name]) => ({ userId: +userId, name })) }, sessions: D.sessions.slice(0, 15),
         board: Object.entries(D.play).map(([id, x]) => ({ userId: +id, name: x.name, week: x.weekStart === ws ? Math.round(x.week) : 0, total: Math.round(x.total), points: x.points }))
           .sort((a, b) => b.week - a.week || b.points - a.points).slice(0, 50),
@@ -2412,25 +2485,114 @@ async function route(req, res, url, p) {
       }
       return ok(res);
     }
+    if (req.method === 'GET' && p === '/api/reputation') { // one player's standing, for staff only. Advice: nothing here acts on its own
+      const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
+      const now = Date.now(), pl = D.play[id] || {}, logs = D.logs[id] || [], PUN = ['Warned', 'Muted', 'Kicked', 'Suspended', 'Banned'];
+      const pun = logs.filter(e => PUN.includes(e.type)).slice().reverse().map(e => ({ ...e, ...entryState(e, id) }));
+      const flags = (pl.rk || []).filter(r => r[0] === 'box' || r[0] === 'boxStrong').map(([k, t]) => ({ t, strong: k === 'boxStrong' })).reverse();
+      const last = Math.max(0, ...pun.filter(e => e.status !== 'reverted').map(e => e.time), ...flags.map(x => x.t));
+      const calls = D.calls.filter(c => c.target && c.target.userId === id).map(c => ({ id: c.id, t: c.t, text: c.text, status: c.status, outcome: c.outcome || null, grp: grpOf(c), from: c.web && !(c.from.userId > 0) ? 'Anonymous web report' : c.from.name, note: c.note || '' }));
+      return send(res, 200, { userId: id, name: pl.name || (logs[0] || {}).name || 'User ' + id, risk: riskOf(id, now), clean: last ? { since: last, days: Math.floor((now - last) / 864e5) } : null,
+        trust: (pl.adj || []).slice().reverse().map(a => ({ ...a, fading: Math.max(0, Math.round(a.pts * Math.pow(0.5, (now - a.t) / 864e5 / RISK_W.halfLifeDays))) })),
+        punishments: pun, notes: logs.filter(e => e.type === 'Note' && e.status !== 'reverted').slice().reverse(), flags,
+        reports: { open: calls.filter(c => c.status !== 'resolved'), past: calls.filter(c => c.status === 'resolved').slice(0, 30) },
+        appeals: D.appeals.filter(a => a.uid === id).map(a => ({ id: a.id, t: a.t, status: a.status, text: a.text, banReason: a.banReason || '', reply: a.reply || null })),
+        vault: has(u, 'logbook.note') ? vaultItems().filter(x => x.uid === id).map(vaultMeta) : null, canTrust: has(u, 'staff.review') });
+    }
+    if (req.method === 'POST' && p === '/api/reputation') { // restore trust: a negative adjustment to the risk score. The logbook is never touched
+      if (!has(u, 'staff.review')) return deny(res);
+      const id = B.userId; if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
+      if (B.op === 'trust') {
+        const pts = B.points, reason = cleanName(B.reason, 300);
+        if (!Number.isInteger(pts) || pts < 5 || pts > 50) return send(res, 400, { error: 'Pick between 5 and 50 points.' });
+        if (reason.length < 5) return send(res, 400, { error: 'Say briefly why, so other staff understand.' });
+        const pl = playOf(id, cleanName(B.name, 40) || (D.play[id] || {}).name || 'User ' + id); (pl.adj ||= []).push({ id: rnd(6), t: Date.now(), pts, reason, by: u.user, byUid: uid });
+        if (pl.adj.length > 30) pl.adj.splice(0, pl.adj.length - 30);
+        audit(u.user, `Restored trust for ${pl.name} by ${pts} points: ${reason}`); return ok(res);
+      }
+      if (B.op === 'untrust') {
+        const a = ((D.play[id] || {}).adj || []).find(x => x.id === B.id); if (!a || a.reverted) return send(res, 404, { error: 'That adjustment is not there any more.' });
+        a.reverted = { t: Date.now(), by: u.user }; audit(u.user, `Reversed a trust adjustment for ${D.play[id].name}`); return ok(res);
+      }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (req.method === 'GET' && p === '/api/vault') { // a list without the contents: opening an item is logged
+      if (!has(u, 'logbook.note')) return deny(res);
+      const id = +url.searchParams.get('userId') || 0, cs = String(url.searchParams.get('case') || ''), all = vaultItems(), used = vaultSize();
+      const items = cs ? all.filter(x => (x.cases || []).includes(cs)) : id ? all.filter(x => x.uid === id) : [];
+      return send(res, 200, { items: items.map(vaultMeta), used, cap: VAULT_CAP, warn: used >= VAULT_CAP * 0.8, days: vaultDays(), canDeleteAll: has(u, 'logbook.revert') });
+    }
+    if (req.method === 'GET' && p === '/api/vault/item') {
+      if (!has(u, 'logbook.note')) return deny(res);
+      const x = vaultItems().find(x => x.id === url.searchParams.get('id')); if (!x) return send(res, 404, { error: 'This item has expired or was deleted.' });
+      (x.log ||= []).push({ t: Date.now(), who: u.user }); if (x.log.length > 50) x.log.splice(0, x.log.length - 50);
+      return send(res, 200, { item: x });
+    }
+    if (req.method === 'POST' && p === '/api/vault') {
+      if (B.op === 'days') { if (!has(u, 'automations.manage')) return deny(res); if (!VAULT_DAYS.includes(B.days)) return send(res, 400, { error: 'Pick 30, 90, 180 or 365 days.' }); D.settings.vaultDays = B.days; audit(u.user, `New evidence vault items are kept for ${B.days} days`); return ok(res); }
+      if (!has(u, 'logbook.note')) return deny(res);
+      const items = vaultItems();
+      if (B.op === 'add') {
+        const kind = ['link', 'note', 'box'].includes(B.kind) ? B.kind : ''; if (!kind) return send(res, 400, { error: 'bad request' });
+        const cs = String(B.case || ''); if (cs && !CASE_RE.test(cs)) return send(res, 400, { error: 'bad request' });
+        const ci = cs ? caseInfo(cs) : null; if (cs && !ci) return send(res, 404, { error: 'That report, appeal or escalation is not there any more.' });
+        const uid0 = ci && ci.uid ? ci.uid : Number.isInteger(B.userId) && B.userId > 0 ? B.userId : 0; if (!uid0 && !cs) return send(res, 400, { error: 'bad request' });
+        const x = { id: rnd(8), uid: uid0 || null, name: cleanName(B.name, 40) || (ci && ci.name) || (D.play[uid0] || {}).name || '', cases: cs ? [cs] : [], kind, title: cleanName(B.title, 80), by: u.user, byUid: uid, t: Date.now(), exp: Date.now() + vaultDays() * 864e5, log: [] };
+        if (kind === 'link') { const l = cleanLinks([B.url], 1); if (!l.length) return send(res, 400, { error: 'Links must start with https:// or http://' }); x.url = l[0]; x.title ||= l[0].slice(0, 80); }
+        if (kind === 'note') { x.text = String(B.text || '').replace(/\r/g, '').trim().slice(0, 2000); if (x.text.length < 2) return send(res, 400, { error: 'Write the note first.' }); x.title ||= x.text.slice(0, 60); }
+        if (kind === 'box') {
+          if (!feat('chatLogs')) return send(res, 404, { error: 'Chat logs are not turned on for this workspace yet.' }); if (!has(u, 'chatlogs.view')) return deny(res);
+          const bid = String(B.box || '').toUpperCase(); if (!BOX_ID_RE.test(bid)) return send(res, 400, { error: 'That is not a chat box ID.' });
+          const bx = await boxGet(bid); if (!bx) return send(res, 404, { error: 'No chat box with that ID in this workspace.' });
+          x.box = bid; x.server = String(bx.server || '').slice(0, 8); x.msgs = (bx.msgs || []).slice(0, 50).map(m => ({ t: m.t, userId: m.userId, name: m.name, text: String(m.text || '').slice(0, 300), ...(m.flags && m.flags.length ? { flags: m.flags } : {}) })); x.title ||= 'Chat box ' + bid;
+        }
+        if (vaultSize() + JSON.stringify(x).length > VAULT_CAP) return send(res, 413, { error: 'The evidence vault is full. Delete old items, or keep new items for a shorter time in Settings, Automations.' });
+        items.push(x); audit(u.user, `Added ${kind === 'box' ? 'a chat box copy' : 'a ' + kind} to the evidence vault${x.name ? ' for ' + x.name : ''}`);
+        return send(res, 200, { ok: true, id: x.id, warn: vaultSize() >= VAULT_CAP * 0.8 });
+      }
+      const x = items.find(x => x.id === B.id); if (!x) return send(res, 404, { error: 'This item has expired or was deleted.' });
+      if (B.op === 'delete') { if (x.byUid !== uid && !has(u, 'logbook.revert')) return deny(res); VT.items = items.filter(y => y !== x); audit(u.user, `Deleted "${x.title}" from the evidence vault`); return ok(res); }
+      if (B.op === 'attach' || B.op === 'detach') {
+        const cs = String(B.case || ''); if (!CASE_RE.test(cs)) return send(res, 400, { error: 'bad request' });
+        if (B.op === 'attach') { if (!caseInfo(cs)) return send(res, 404, { error: 'That report, appeal or escalation is not there any more.' }); if (!x.cases.includes(cs)) x.cases.push(cs); }
+        else x.cases = x.cases.filter(c => c !== cs);
+        audit(u.user, `${B.op === 'attach' ? 'Attached' : 'Detached'} "${x.title}" ${B.op === 'attach' ? 'to' : 'from'} ${cs.replace(':', ' ')}`); return ok(res);
+      }
+      return send(res, 400, { error: 'bad request' });
+    }
     if (req.method === 'POST' && p === '/api/call' && B.op === 'fromBox') { // "Report this box" from Chat logs: a new report with the box attached
       if (!feat('chatLogs')) return send(res, 404, { error: 'Chat logs are not turned on for this workspace yet.' });
       if (!has(u, 'chatlogs.view')) return deny(res);
       const id = String(B.id || '').toUpperCase(); if (!BOX_ID_RE.test(id)) return send(res, 400, { error: 'That is not a chat box ID.' });
-      let bx = null; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,server,msgs&wid=eq.${CTX.wid}&id=eq.${id}`, { ms: 4000 }); if (r.ok) bx = (await r.json())[0] || null; } catch {}
-      if (!bx) { const oj = Object.keys(CBO).find(j => CBO[j].id === id); if (oj) bx = { id, closed_at: new Date(CBO[oj].last).toISOString(), server: String(oj).slice(0, 8), msgs: chatFlags(CBO[oj].msgs) }; } // a box still filling up
+      const bx = await boxGet(id);
       if (!bx) return send(res, 404, { error: 'No chat box with that ID in this workspace.' });
       const note = cleanName(B.note, 200), msgs = (bx.msgs || []).slice(0, 15);
       const call = { id: ++D.callSeq, t: Date.now(), from: { userId: 0, name: u.user }, staff: true, text: `Chat box ${id} reported by ${u.user}${note ? ': ' + note : ''}`, server: String(bx.server || '').slice(0, 8), status: 'open', by: null, note: '', box: id, chat: msgs.map(m => ({ t: m.t, userId: m.userId, name: m.name, text: m.text, flagged: !!(m.flags && m.flags.length) })) };
-      D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++; feed(`Report #${call.id}: chat box ${id}`, u.user); audit(u.user, `Reported chat box ${id}`);
+      callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++; feed(`Report #${call.id}: chat box ${id}`, u.user); audit(u.user, `Reported chat box ${id}`);
       return send(res, 200, { ok: true, id: call.id });
     }
     if (req.method === 'POST' && p === '/api/call') {
       if (!has(u, 'reports.handle')) return deny(res);
       const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
-      if (B.op === 'claim' && c.status === 'open') { c.status = 'claimed'; c.by = u.user; obTick(uid, 'report'); if (c.from.userId > 0) cmd({ type: 'message', kind: 'info', title: 'Report update', body: `A moderator is handling your report #${c.id}.`, userId: c.from.userId, text: `A moderator is handling your report #${c.id}.` }); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
-      else if (B.op === 'resolve' && c.status !== 'resolved') {
-        c.status = 'resolved'; c.by = c.by || u.user; obTick(uid, 'report'); c.note = cleanName(B.note, 200); c.resolved = Date.now();
-        if (c.from.userId > 0) cmd({ type: 'message', kind: 'ok', title: 'Report resolved', body: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}`, userId: c.from.userId, text: `Report #${c.id} resolved${c.note ? ': ' + c.note : '.'}` }); feed(`Report #${c.id} resolved`, u.user);
+      const g = grpOf(c), mem = grpMembers(g);
+      if (B.op === 'claim' && c.status === 'open') { const now = mem.filter(x => x.status === 'open'); for (const x of now) { x.status = 'claimed'; x.by = u.user; } obTick(uid, 'report'); callTell(now, 'info', 'Report update', 'is being handled by a moderator.'); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
+      else if ((B.op === 'resolve' || B.op === 'dismiss') && c.status !== 'resolved') { // closes every report in the group; each reporter hears about their own
+        const note = cleanName(B.note, 200), now = mem.filter(x => x.status !== 'resolved'), dis = B.op === 'dismiss';
+        for (const x of now) { x.status = 'resolved'; x.outcome = dis ? 'dismissed' : 'resolved'; x.by = x.by || u.user; x.note = note; x.resolved = Date.now(); }
+        obTick(uid, 'report'); callTell(now, dis ? 'info' : 'ok', dis ? 'Report closed' : 'Report resolved', dis ? 'was closed. Staff looked into it and took no action.' : `resolved${note ? ': ' + note : '.'}`);
+        feed(`Report #${g} ${dis ? 'closed, no action' : 'resolved'}${now.length > 1 ? ` (${now.length} reports)` : ''}`, u.user);
+      }
+      else if (B.op === 'merge') { // put a report (and anything grouped under it) into another report's group
+        const into = D.calls.find(x => x.id === B.into); if (!into) return send(res, 404, { error: 'No such report' });
+        const tg = grpOf(into); if (tg === g) return send(res, 400, { error: 'These reports are already together.' });
+        if (c.status === 'resolved' || into.status === 'resolved') return send(res, 400, { error: 'Only open reports can be merged.' });
+        for (const x of mem) x.grp = tg; audit(u.user, `Merged report #${c.id} into #${tg}`);
+      }
+      else if (B.op === 'unmerge') {
+        if (mem.length < 2) return send(res, 400, { error: 'This report is not merged with any other.' });
+        if (c.grp) delete c.grp;
+        else { const rest = mem.filter(x => x !== c).sort((a, b) => a.t - b.t), nl = rest[0]; delete nl.grp; for (const x of rest.slice(1)) x.grp = nl.id; }
+        audit(u.user, `Took report #${c.id} out of a merged group`);
       }
       return ok(res);
     }
@@ -2762,6 +2924,8 @@ async function route(req, res, url, p) {
     if (req.method === 'POST' && p === '/api/appeals') {
       if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.appeals = !!B.on; audit(u.user, B.on ? 'Opened ban appeals' : 'Closed ban appeals'); return ok(res); }
       if (B.op === 'webreports') { if (!has(u, 'automations.manage')) return deny(res); D.settings.webReports = !!B.on; audit(u.user, B.on ? 'Opened the web report form' : 'Closed the web report form'); return ok(res); }
+      if (B.op === 'warnack') { if (!has(u, 'automations.manage')) return deny(res); D.settings.warnAck = !!B.on; audit(u.user, B.on ? 'Warned players are now asked to acknowledge the warning' : 'Warned players are no longer asked to acknowledge the warning'); return ok(res); }
+      if (B.op === 'mergemin') { if (!has(u, 'automations.manage')) return deny(res); if (!MERGE_MIN.includes(B.min)) return send(res, 400, { error: 'Pick 5, 10 or 30 minutes.' }); D.settings.mergeMin = B.min; audit(u.user, `Reports about the same player within ${B.min} minutes are now grouped`); return ok(res); }
       if (B.op === 'publiclog') { if (!has(u, 'automations.manage')) return deny(res); D.settings.publicLog = !!B.on; audit(u.user, B.on ? 'Published the moderation log' : 'Made the moderation log private'); return ok(res); }
       if (B.op === 'approvals') { if (!u.isOwner) return ownerOnly(res); if (!APPR_KINDS[B.key]) return send(res, 400, { error: 'bad request' }); D.settings.approvals = { ...(D.settings.approvals || {}), [B.key]: !!B.on }; audit(u.user, `${B.on ? 'Turned on' : 'Turned off'} second approval for ${APPR_KINDS[B.key].toLowerCase()}`); return ok(res); }
       if (B.op === 'syncadd' || B.op === 'syncremove') {
@@ -2781,6 +2945,19 @@ async function route(req, res, url, p) {
         const list = (Array.isArray(B.replies) ? B.replies : []).map(x => cleanName(x, 300)).filter(Boolean).slice(0, 12); D.settings.replies = list; audit(u.user, 'Edited the appeal quick replies'); return ok(res);
       }
       const [c, o] = reviewAppeal(u, uid, B); return send(res, c, o);
+    }
+    if (req.method === 'POST' && p === '/api/playbooks') { // written steps for common cases; they only fill in the Moderate window
+      if (!has(u, 'automations.manage')) return deny(res);
+      if (B.reset) { delete D.settings.playbooks; audit(u.user, 'Reset playbooks'); return ok(res); }
+      const raw = Array.isArray(B.playbooks) ? B.playbooks : []; if (raw.length > 20) return send(res, 400, { error: 'You can save up to 20 playbooks.' });
+      const words = a => (Array.isArray(a) ? a : []).map(w => cleanName(w, 30).toLowerCase()).filter(Boolean).slice(0, 15);
+      const list = []; for (const x of raw) {
+        const name = cleanName(x && x.name, 40), steps = (Array.isArray(x && x.steps) ? x.steps : []).map(t => cleanName(t, 200)).filter(Boolean).slice(0, 12);
+        if (!name || !steps.length) return send(res, 400, { error: 'Each playbook needs a name and at least one step.' });
+        const m = (x && x.match) || {};
+        list.push({ id: typeof x.id === 'string' && /^[A-Za-z0-9_-]{1,8}$/.test(x.id) && !list.some(y => y.id === x.id) ? x.id : rnd(4), name, when: cleanName(x.when, 200), steps, preset: typeof x.preset === 'string' && presets().some(y => y.id === x.preset) ? x.preset : '', match: { flags: (Array.isArray(m.flags) ? m.flags : []).filter(f => PB_FLAGS.includes(f)), words: words(m.words) } });
+      }
+      D.settings.playbooks = list; audit(u.user, `Saved ${list.length} playbook${list.length === 1 ? '' : 's'}`); return ok(res);
     }
     if (req.method === 'POST' && p === '/api/presets') { // saved reasons and lengths staff can pick when moderating
       if (!has(u, 'automations.manage')) return deny(res);
@@ -2942,7 +3119,7 @@ async function route(req, res, url, p) {
       const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
       const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
-        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id) };
+        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x) };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
     }
     if (req.method === 'POST' && p === '/api/erase') {
