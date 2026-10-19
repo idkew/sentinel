@@ -5,7 +5,23 @@
 	  * Mute           -> TextChatService (muted players' messages are dropped)
 	  * Warn/announce  -> on-screen banner (a dark card with a timer line that runs round its border; smoothest with the optional SentinelClient script)
 	  * Chat monitor   -> every chat message is sent to the panel (kept in memory there, never saved)
-	  * Players can type in chat:   !modcall <message>   (report to moderators)   and   !attend   (join a session)
+	  * Players can type in chat:   !modcall <message>   (report to moderators),   !attend   (join a session)
+	                                and   !rejoin   (move to a fresh server; the owner can switch it off on the website)
+	  * Replays        -> when the owner turns them on, the last 5 minutes of player positions, deaths, joins, leaves and chat
+	                      are kept in this server's memory and uploaded only when something happens (a report, a moderation
+	                      action, a chat alert, an exploit flag, or staff typing !replay). Staff watch them on the website.
+	                      An outline of the map (the 300 largest anchored parts, as plain rectangles) is sent with each replay.
+	  * Exploit flags  -> speed, teleport and fly are measured here on the server and sent to Sentinel for staff to review.
+	                      Nothing ever happens to a player automatically because of a flag.
+
+	EXPLOIT FLAGS AND YOUR GAME
+	  Teleports your own server scripts make (setting the character's CFrame, or PivotTo) are ignored automatically.
+	  Game mechanics that make players move very fast or stay in the air (gliders, jetpacks, grappling hooks,
+	  launch pads) need an exemption while they run, or they can be flagged:
+	      player:SetAttribute("SentinelExempt", workspace:GetServerTimeNow() + 10) -- exempt for the next 10 seconds
+	      player:SetAttribute("SentinelExempt", true)                              -- always exempt (for example admins)
+	  Players standing on moving or unanchored parts, seated, climbing or swimming are never checked for speed or fly.
+	  To see what the checks measure, set DEBUG_FLAGS = true below and watch the Developer Console (Server tab).
 	  * Report button  -> the optional SentinelClient script adds a Report button (pick a player + details); this script receives it
 
 	SETUP
@@ -23,16 +39,19 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 25 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 27 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
 local MODCALL_COOLDOWN = 30 -- seconds between ModCalls per player
+local DEBUG_FLAGS = false -- true prints what the exploit checks measure for every player, once a second (Developer Console, Server). Turn it off again after testing
 local LOGO_IMAGE = 0 -- the Sentinel logo on in-game banners: upload logo-512.png in Studio (Asset Manager, Images) and put its image id here. 0 = no logo
 
 local pending, muted, busy = {}, {}, false
 local chatOff = {} -- muted players whose chat box is taken away (the rest of the muted can type, but nobody sees it)
 local seen, hidden, seenCount, lastCall = {}, {}, 0, {}
+local lastRejoin, rejoining = {}, {} -- !rejoin: last use per player, and players being moved
+local rpEv, rpTrigger -- replays: set in the replays section further down (chat, deaths and exploit flags call them)
 local COLORS = {
 	red = Color3.fromRGB(229, 56, 79),
 	blue = Color3.fromRGB(47, 91, 255),
@@ -371,6 +390,24 @@ local function onChat(userId, text)
 	elseif command == "attend" then
 		queue({ type = "attend", userId = userId, name = plr.Name })
 		return true
+	elseif command == "replay" then -- staff only: the website checks who is staff and answers
+		queue({ type = "replay", userId = userId, name = plr.Name })
+		if syncSoon then syncSoon() end
+		return true
+	elseif command == "rejoin" then
+		if os.clock() - (lastRejoin[userId] or -999) < 30 then
+			banner(plr, "You can use !rejoin again in a few seconds.", "red", "Slow down")
+		elseif RunService:IsStudio() then
+			banner(plr, "!rejoin doesn't work in Studio, because Roblox can't move players there. Try it in a live server.", "blue", "Rejoin")
+		elseif game.PrivateServerId ~= "" then
+			banner(plr, "!rejoin only works in public servers. Leave and join again instead.", "blue", "Rejoin")
+		else
+			lastRejoin[userId] = os.clock()
+			queue({ type = "rejoin", userId = userId, name = plr.Name })
+			banner(plr, "Finding you a new server...", "blue", "Rejoin")
+			if syncSoon then syncSoon() end
+		end
+		return true
 	elseif command == "modcall" then
 		if os.clock() - (lastCall[userId] or -999) < MODCALL_COOLDOWN then
 			banner(plr, "Please wait a moment before sending another report.", "red", "Slow down")
@@ -382,6 +419,7 @@ local function onChat(userId, text)
 		return true
 	end
 	queue({ type = "chat", userId = userId, name = plr.Name, text = text })
+	rpEv("chat", userId, text)
 	if syncSoon then syncSoon() end
 	return false
 end
@@ -437,9 +475,9 @@ local function setupChat()
 			local src = message.TextSource
 			if not src then return true end
 			if muted[src.UserId] then
-				-- a muted player can still ask !sentinel what state they are in (nobody else sees it)
+				-- a muted player can still ask !sentinel what state they are in, or !rejoin (the mute follows them; nobody else sees it)
 				local cmdName = string.lower(string.match(message.Text or "", "^!(%a+)") or "")
-				if cmdName == "sentinel" then
+				if cmdName == "sentinel" or cmdName == "rejoin" then
 					if not seen[message.MessageId] then
 						seen[message.MessageId] = true
 						onChat(src.UserId, message.Text)
@@ -635,6 +673,359 @@ local function passingThrough(p) -- arrived in the holding server from a Sentine
 	return ok and type(d) == "table" and type(d.TeleportData) == "table" and d.TeleportData.sentinelRestart == true
 end
 
+------------------------------------------------------------------ exploit flags: speed, teleport, fly (measured on the server only)
+local XD = { on = true, lvl = "low" } -- switched and tuned from the website at every check-in
+local XL = {
+	low = { sm = 1.8, sa = 8, tp = 120, fly = 8 },
+	medium = { sm = 1.5, sa = 6, tp = 80, fly = 6 },
+	high = { sm = 1.3, sa = 4, tp = 60, fly = 4 },
+}
+local XCOOL, XHOUR = 120, 6 -- one flag per player and type every 2 minutes, at most 6 per player an hour
+local xs = {} -- per player: recent samples, hits, game moves
+local cfOK, cfWarned = true, false -- false once the "moved by the game" signal looks unreliable in this server
+local S = Enum.HumanoidStateType
+local XSKIP = { [S.Seated] = "seated", [S.Climbing] = "climbing", [S.Swimming] = "swimming", [S.Ragdoll] = "ragdoll", [S.FallingDown] = "falling down", [S.Physics] = "physics", [S.PlatformStanding] = "platform stand", [S.Dead] = "dead" }
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+local function xInt(v) return { math.floor(v.X + 0.5), math.floor(v.Y + 0.5), math.floor(v.Z + 0.5) } end
+local function xExempt(p)
+	local v = p:GetAttribute("SentinelExempt")
+	if v == true then return true end
+	return type(v) == "number" and v > workspace:GetServerTimeNow()
+end
+local function xChar(p, char) -- a new character: start fresh, and listen for moves the game makes
+	local st = xs[p]
+	if not st then return end
+	st.spawn, st.samples, st.hits, st.air = os.clock(), {}, { speed = {}, teleport = {} }, nil
+	local hum = char:WaitForChild("Humanoid", 10)
+	if hum then hum.Died:Connect(function() rpEv("death", p.UserId) end) end
+	local hrp = char:WaitForChild("HumanoidRootPart", 10)
+	if not hrp or xs[p] ~= st then return end
+	hrp:GetPropertyChangedSignal("CFrame"):Connect(function() -- fires when a server script sets the CFrame (teleports, PivotTo), not for normal movement
+		st.moved = os.clock()
+		st.cfN = st.cfN + 1
+	end)
+end
+local function xWatch(p)
+	xs[p] = { spawn = os.clock(), samples = {}, hits = { speed = {}, teleport = {} }, last = {}, sent = {}, cfN = 0, cfWin = {} }
+	p.CharacterAdded:Connect(function(char) xChar(p, char) end)
+	if p.Character then task.spawn(xChar, p, p.Character) end
+end
+local function xFlag(p, st, kind, ev)
+	local now = os.clock()
+	if now - (st.last[kind] or -1e9) < XCOOL then return end
+	local recent = 0
+	for _, t in st.sent do if now - t < 3600 then recent += 1 end end
+	if recent >= XHOUR then return end
+	st.last[kind] = now
+	table.insert(st.sent, now)
+	if #st.sent > 20 then table.remove(st.sent, 1) end
+	ev.at = os.time()
+	queue({ type = "xflag", userId = p.UserId, name = p.Name, kind = kind, ev = ev })
+	rpTrigger({ k = "xflag", uid = p.UserId, x = kind })
+	if DEBUG_FLAGS then print("[Sentinel debug] FLAG " .. kind .. " for " .. p.Name) end
+end
+local function xHits(list, now, window)
+	local keep = {}
+	for _, t in list do if now - t <= window then table.insert(keep, t) end end
+	return keep
+end
+local function xSample(p, now)
+	local st = xs[p]
+	local char = p.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (st and hum and hrp) then return end
+	local L = XL[XD.lvl] or XL.low
+	local state = hum:GetState()
+	local why = nil
+	if now - (st.spawn or 0) < 10 then why = "just spawned"
+	elseif hum.Health <= 0 then why = "dead"
+	elseif xExempt(p) then why = "exempt"
+	elseif hum.SeatPart or hum.Sit then why = "seated"
+	elseif hum.PlatformStand then why = "platform stand"
+	elseif XSKIP[state] then why = XSKIP[state]
+	elseif hrp.AssemblyRootPart ~= hrp then why = "attached to something"
+	elseif cfOK and now - (st.moved or -1e9) < 3 then why = "moved by the game"
+	end
+	rayParams.FilterDescendantsInstances = { char }
+	local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -15, 0), rayParams)
+	local part = hit and hit.Instance
+	local moving = part ~= nil and part:IsA("BasePart") and (not part.Anchored or part.AssemblyLinearVelocity.Magnitude > 1)
+	local free = state == S.Freefall or state == S.Jumping
+	local smp = { t = now, p = hrp.Position, ws = hum.WalkSpeed, skip = why, ground = hit ~= nil, moving = moving, free = free, cf = st.cfN }
+	local prev = st.samples[#st.samples]
+	table.insert(st.samples, smp)
+	if #st.samples > 12 then table.remove(st.samples, 1) end
+	local hd, dt = 0, 1
+	if prev then
+		dt = math.max(0.2, now - prev.t)
+		local d = smp.p - prev.p
+		hd = Vector3.new(d.X, 0, d.Z).Magnitude / dt
+	end
+	-- is the "moved by the game" signal trustworthy here? While a player just walks it should almost never fire
+	if cfOK and prev and (not why or why == "moved by the game") and not free and hd > 2 then
+		table.insert(st.cfWin, smp.cf ~= prev.cf)
+		if #st.cfWin > 30 then table.remove(st.cfWin, 1) end
+		local n = 0
+		for _, fired in st.cfWin do if fired then n += 1 end end
+		if #st.cfWin >= 30 and n > 24 then
+			cfOK = false
+			if not cfWarned then
+				cfWarned = true
+				warn("[Sentinel] The game-teleport signal fires all the time in this server, so it is no longer used here. Teleport checks now use distance and SentinelExempt only.")
+			end
+		end
+	end
+	local reason = why
+	if XD.on and not why and prev and not prev.skip then
+		local d = smp.p - prev.p
+		local flat = Vector3.new(d.X, 0, d.Z).Magnitude
+		local up = math.max(0, d.Y) -- falling is never a teleport
+		local tpLimit = math.max(L.tp, math.max(prev.ws, smp.ws) * 3 * dt)
+		if math.max(flat, up) > tpLimit then -- teleport
+			st.hits.teleport = xHits(st.hits.teleport, now, 30)
+			table.insert(st.hits.teleport, now)
+			if #st.hits.teleport >= 2 then
+				st.hits.teleport = {}
+				xFlag(p, st, "teleport", { dist = math.floor(math.max(flat, up) + 0.5), lim = math.floor(tpLimit + 0.5), from = xInt(prev.p), to = xInt(smp.p) })
+			end
+		elseif moving or prev.moving then
+			reason = "on a moving part"
+		elseif not free and not prev.free then -- speed, on the ground only
+			local limit = math.max(prev.ws, smp.ws) * L.sm + L.sa
+			if hd > limit then
+				st.hits.speed = xHits(st.hits.speed, now, 10)
+				table.insert(st.hits.speed, now)
+				if #st.hits.speed >= 3 then
+					st.hits.speed = {}
+					xFlag(p, st, "speed", { v = math.floor(hd + 0.5), lim = math.floor(limit + 0.5), ws = math.floor(smp.ws + 0.5), from = xInt(prev.p), to = xInt(smp.p) })
+				end
+			end
+		end
+	end
+	-- fly: in the air, nothing below, not falling, for several seconds
+	if XD.on and not why and not moving and not smp.ground and hum.FloorMaterial == Enum.Material.Air then
+		local a = st.air
+		if not a then
+			st.air = { t = now, top = smp.p.Y, from = smp.p }
+		elseif smp.p.Y < a.top - 2 then
+			st.air = nil -- falling
+		else
+			a.top = math.max(a.top, smp.p.Y)
+			if now - a.t >= L.fly then
+				xFlag(p, st, "fly", { air = math.floor(now - a.t + 0.5), y = math.floor(smp.p.Y + 0.5), from = xInt(a.from), to = xInt(smp.p) })
+				st.air = nil
+			end
+		end
+	else
+		st.air = nil
+	end
+	if DEBUG_FLAGS then
+		local n = 0
+		for _, fired in st.cfWin do if fired then n += 1 end end
+		print(string.format("[Sentinel debug] %s: speed %.1f (limit %.1f, walk speed %d) | in the air %.1f s | ground below %s | moving part %s | game moved them %d of %d samples%s | %s",
+			p.Name, hd, math.max(smp.ws, prev and prev.ws or 0) * L.sm + L.sa, math.floor(smp.ws + 0.5), st.air and (now - st.air.t) or 0,
+			smp.ground and "yes" or "no", moving and "yes" or "no", n, #st.cfWin, cfOK and "" or " (signal not used)",
+			reason and ("skipped: " .. reason) or (XD.on and "checked" or "checks are off")))
+	end
+end
+
+------------------------------------------------------------------ replays: a rolling recording in memory, uploaded only when something happens
+local RP = { on = false, min = 5, after = 120 } -- from the website at every check-in. Off until the owner turns it on
+local RP_HZ, RP_MAXP, RP_MAXLEN, RP_CHUNK, RP_MAXBYTES = 2, 50, 600, 60000, 1500000 -- 2 samples a second, 50 players, 10 minute clips, 60 KB chunks, 1.5 MB per clip
+local RP0 = os.clock()
+local RP_EPOCH = DateTime.now().UnixTimestampMillis - RP0 * 1000 -- wall-clock time of tick 0
+local rpFrames, rpEvents, rpNames = {}, {}, {}
+local rpClip = nil -- the clip being recorded: { k0, stop, why }
+local function rpK() return math.floor((os.clock() - RP0) * RP_HZ + 0.5) end
+rpEv = function(kind, uid, text)
+	if not RP.on then return end
+	table.insert(rpEvents, { rpK(), kind, uid, text })
+	if #rpEvents > 3000 then table.remove(rpEvents, 1) end
+end
+rpTrigger = function(why) -- start a clip (with the minutes before), or make the running one longer
+	if not RP.on then return end
+	local k = rpK()
+	why = type(why) == "table" and why or { k = "staff" }
+	if rpClip then
+		why.at = k - rpClip.k0
+		rpClip.stop = math.min(math.max(rpClip.stop, k + RP.after * RP_HZ), rpClip.k0 + RP_MAXLEN * RP_HZ)
+		if #rpClip.why < 20 then table.insert(rpClip.why, why) end
+	else
+		local first = rpFrames[1] and rpFrames[1][1] or k
+		local k0 = math.max(first, k - RP.min * 60 * RP_HZ)
+		why.at = k - k0
+		rpClip = { k0 = k0, stop = k + RP.after * RP_HZ, why = { why } }
+	end
+end
+local rpMapCache = nil -- the map outline, worked out once per server
+local function rpMap() -- large anchored parts as rectangles seen from above: { x, z, width, depth, rotation }. At most 300, no images, about 6 KB
+	if rpMapCache then return rpMapCache end
+	local list, seen = {}, 0
+	for _, d in workspace:GetDescendants() do
+		seen += 1
+		if seen % 2000 == 0 then task.wait() end -- big maps: never hold up the game
+		if seen > 50000 then break end
+		if d:IsA("BasePart") and d.Anchored and d.Transparency < 0.95 and not d:IsA("Terrain") then
+			local sz = d.Size
+			local w, dp = sz.X, sz.Z
+			if math.max(w, dp) >= 8 and w * dp >= 16 and sz.Y >= 0.5 then
+				local p = d.Position
+				table.insert(list, { math.floor(p.X + 0.5), math.floor(p.Z + 0.5), math.floor(w + 0.5), math.floor(dp + 0.5), math.floor(d.Orientation.Y + 0.5), w * dp })
+			end
+		end
+	end
+	table.sort(list, function(a, b) return a[6] > b[6] end)
+	local out = {}
+	for i = 1, math.min(300, #list) do
+		local a = list[i]
+		out[i] = { a[1], a[2], a[3], a[4], a[5] }
+	end
+	rpMapCache = out
+	return out
+end
+local function rpCut(json, i) -- a chunk end that never splits a multi-byte character
+	local j = math.min(#json, i + RP_CHUNK - 1)
+	while j < #json and j > i do
+		local b = string.byte(json, j + 1)
+		if b < 128 or b >= 192 then break end
+		j -= 1
+	end
+	return j
+end
+local function rpBuild(c, kEnd) -- delta-encoded tracks: per player, runs of [tick, x, y, z, state, then dx, dy, dz, state for every next sample]
+	local tracks, users, names, last = {}, {}, {}, {}
+	for _, f in rpFrames do
+		local k = f[1]
+		if k >= c.k0 and k <= kEnd then
+			local d = f[2]
+			for i = 1, #d, 5 do
+				local uid, x, y, z, st = d[i], d[i + 1], d[i + 2], d[i + 3], d[i + 4]
+				local key = tostring(uid)
+				local segs = tracks[key]
+				if not segs then
+					segs = {}
+					tracks[key] = segs
+					table.insert(users, uid)
+					names[key] = rpNames[uid] or key
+				end
+				local L = last[uid]
+				if L and L.k == k - 1 then
+					local seg = segs[#segs]
+					table.insert(seg, x - L.x) table.insert(seg, y - L.y) table.insert(seg, z - L.z) table.insert(seg, st)
+				else
+					table.insert(segs, { k - c.k0, x, y, z, st })
+				end
+				last[uid] = { k = k, x = x, y = y, z = z }
+			end
+		end
+	end
+	local ev = {}
+	for _, e in rpEvents do
+		if e[1] >= c.k0 and e[1] <= kEnd then table.insert(ev, { e[1] - c.k0, e[2], e[3], e[4] }) end
+	end
+	local t0 = math.floor(RP_EPOCH + c.k0 * 1000 / RP_HZ)
+	return { v = 1, hz = RP_HZ, t0 = t0, len = kEnd - c.k0, names = names, tracks = tracks, ev = ev }, users, names, t0
+end
+local function rpSend(c, kEnd)
+	local okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd)
+	if not okB then warn("[Sentinel] Could not build a replay: " .. tostring(clip)) return end
+	local json = HttpService:JSONEncode(clip)
+	if #json > RP_MAXBYTES then
+		warn("[Sentinel] This replay is too big to upload (" .. math.floor(#json / 1000) .. " KB), so it was not saved.")
+		return
+	end
+	local id = HttpService:GenerateGUID(false)
+	local cuts, i = {}, 1
+	while i <= #json do
+		local j = rpCut(json, i)
+		table.insert(cuts, string.sub(json, i, j))
+		i = j + 1
+	end
+	local okM, map = pcall(rpMap)
+	local head = { t0 = t0, t1 = t0 + math.floor(clip.len * 1000 / RP_HZ), users = users, names = names, why = c.why, hz = RP_HZ, map = okM and map or nil }
+	for seq, part in cuts do
+		local sent = false
+		for attempt = 1, 3 do
+			local ok, res = pcall(HttpService.RequestAsync, HttpService, {
+				Url = URL .. "/game/replay", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
+				Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, clip = id, seq = seq, total = #cuts, head = seq == 1 and head or nil, data = part }),
+			})
+			if ok and res.Success then sent = true break end
+			if ok and (res.StatusCode == 413 or res.StatusCode == 409 or res.StatusCode == 403) then
+				warn("[Sentinel] Replay not saved: " .. (res.StatusCode == 413 and "replay storage is full" or res.StatusCode == 409 and "replays are switched off" or "the game key was refused"))
+				return
+			end
+			task.wait(3 * attempt)
+		end
+		if not sent then
+			warn("[Sentinel] Could not upload a replay (the website did not answer), so it was not saved.")
+			return
+		end
+		task.wait(2) -- at most one chunk every 2 seconds, well inside Roblox's HTTP limits
+	end
+end
+local function rpSample()
+	local k = rpK()
+	local d, n = {}, 0
+	for _, p in Players:GetPlayers() do
+		if n < RP_MAXP and not bouncing[p] then
+			local char = p.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hrp and hum then
+				local st = hum:GetState()
+				local code = 0 -- 0 on the ground, 1 in the air, 2 seated, 3 dead, 4 climbing or swimming
+				if hum.Health <= 0 or st == S.Dead then code = 3
+				elseif hum.SeatPart or hum.Sit then code = 2
+				elseif st == S.Freefall or st == S.Jumping or st == S.Flying then code = 1
+				elseif st == S.Climbing or st == S.Swimming then code = 4 end
+				local pos = hrp.Position
+				table.insert(d, p.UserId) table.insert(d, math.floor(pos.X * 2 + 0.5)) table.insert(d, math.floor(pos.Y * 2 + 0.5)) table.insert(d, math.floor(pos.Z * 2 + 0.5)) table.insert(d, code)
+				rpNames[p.UserId] = p.Name
+				n += 1
+			end
+		end
+	end
+	table.insert(rpFrames, { k, d })
+	local keepFrom = k - RP.min * 60 * RP_HZ
+	if rpClip then keepFrom = math.min(keepFrom, rpClip.k0) end -- never drop what the clip being recorded still needs
+	while rpFrames[1] and rpFrames[1][1] < keepFrom do table.remove(rpFrames, 1) end
+	while rpEvents[1] and rpEvents[1][1] < keepFrom do table.remove(rpEvents, 1) end
+	if rpClip and k >= rpClip.stop then
+		local c = rpClip
+		rpClip = nil
+		task.spawn(rpSend, c, k)
+	end
+end
+
+------------------------------------------------------------------ !rejoin: a fresh server of the same game
+local function rejoinPlayer(plr, via)
+	rejoining[plr] = true
+	local ok, err = pcall(function()
+		if via then -- this server is closing: pass through a holding server so they never land back here
+			local opts = Instance.new("TeleportOptions")
+			opts.ShouldReserveServer = true
+			opts:SetTeleportData({ sentinelRestart = true })
+			TeleportService:TeleportAsync(game.PlaceId, { plr }, opts)
+		else
+			TeleportService:TeleportAsync(game.PlaceId, { plr })
+		end
+	end)
+	if not ok then
+		rejoining[plr] = nil
+		warn("[Sentinel] !rejoin could not move " .. plr.Name .. ": " .. tostring(err))
+		banner(plr, "Couldn't move you to a new server. Leave and join again.", "red", "Rejoin")
+	end
+end
+TeleportService.TeleportInitFailed:Connect(function(plr)
+	if rejoining[plr] then
+		rejoining[plr] = nil
+		banner(plr, "Couldn't move you to a new server. Leave and join again.", "red", "Rejoin")
+	end
+end)
+
 local function handle(c)
 	local plr = c.userId and Players:GetPlayerByUserId(c.userId)
 	if c.type == "kick" then
@@ -659,6 +1050,10 @@ local function handle(c)
 		if plr then banner(plr, tostring(c.body or c.text), kind, c.title, ack) end
 	elseif c.type == "announce" then
 		for _, p in Players:GetPlayers() do banner(p, tostring(c.text), "blue", "Announcement") end
+	elseif c.type == "replay" then
+		rpTrigger(type(c.why) == "table" and c.why or { k = "staff" })
+	elseif c.type == "rejoin" then
+		if plr then task.spawn(rejoinPlayer, plr, c.via == true) end
 	elseif c.type == "restart" then
 		task.spawn(restartServer, tostring(c.display or "This server is restarting. You will be moved to a new server in a few seconds."))
 	end
@@ -693,6 +1088,17 @@ local function sync()
 	else
 		for id in muted do chatOff[id] = true end -- an older panel: every mute takes the chat box away
 	end
+	if type(data.rp) == "table" then -- replay settings from the website
+		local was = RP.on
+		RP.on = data.rp.on == true
+		RP.min = math.clamp(tonumber(data.rp.min) or 5, 1, 10)
+		RP.after = math.clamp(tonumber(data.rp.after) or 120, 30, 300)
+		if was and not RP.on then rpFrames, rpEvents, rpClip = {}, {}, nil end -- switched off: forget everything
+	end
+	if type(data.xd) == "table" then -- exploit flag settings from the website
+		XD.on = data.xd.on ~= false
+		XD.lvl = XL[data.xd.lvl] and data.xd.lvl or "low"
+	end
 	local okMute, muteErr = pcall(applyMutes)
 	if not okMute then warn("[Sentinel] Mute error: " .. tostring(muteErr)) end
 end
@@ -722,15 +1128,22 @@ Players.PlayerAdded:Connect(function(p)
 		return
 	end
 	if restarting then task.defer(restartMove, { p }) end -- joined while this server is restarting: moved along too
+	xWatch(p)
+	rpEv("join", p.UserId, p.Name)
 	queue({ type = "join", userId = p.UserId, name = p.Name, follow = (p.FollowUserId and p.FollowUserId > 0) and p.FollowUserId or nil }) -- follow: the player they joined by following, if any (helps spot one person switching accounts)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
 	clientReady[p], clientVer[p], activeBanner[p], ackWant[p], devSent[p] = nil, nil, nil, nil, nil
+	xs[p], lastRejoin[p.UserId], rejoining[p] = nil, nil, nil
 	if bouncing[p] then bouncing[p] = nil return end
+	rpEv("leave", p.UserId)
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
-for _, p in Players:GetPlayers() do queue({ type = "join", userId = p.UserId, name = p.Name }) end
+for _, p in Players:GetPlayers() do
+	queue({ type = "join", userId = p.UserId, name = p.Name })
+	xWatch(p)
+end
 
 local rawKey = KEY
 KEY = string.gsub(KEY, "[%[%]%s\"']", "") -- brackets, quotes and spaces never belong in a game code
@@ -745,6 +1158,27 @@ task.spawn(function()
 	while true do
 		sync()
 		task.wait(INTERVAL)
+	end
+end)
+task.spawn(function() -- replays: 2 samples a second, only while the owner has them on
+	while true do
+		task.wait(1 / RP_HZ)
+		if RP.on then
+			local ok, err = pcall(rpSample)
+			if not ok then warn("[Sentinel] Replay recording error: " .. tostring(err)) end
+		end
+	end
+end)
+task.spawn(function() -- exploit checks, once a second
+	while true do
+		task.wait(1)
+		local now = os.clock()
+		for _, p in Players:GetPlayers() do
+			if not bouncing[p] then
+				local ok, err = pcall(xSample, p, now)
+				if not ok and DEBUG_FLAGS then warn("[Sentinel debug] check failed for " .. p.Name .. ": " .. tostring(err)) end
+			end
+		end
 	end
 end)
 print("[Sentinel] Connected to " .. URL)
