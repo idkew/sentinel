@@ -3,7 +3,7 @@
 // state lives in Supabase (table panel_kv). Each request loads the rows it needs, runs, and saves only what
 // changed in one all-or-nothing transaction (panel_commit). If two requests collide, the loser re-runs.
 // Every game gets its own "workspace": its own rows (w<id>:*), its own members and its own game key.
-const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
 const env = process.env, rnd = n => crypto.randomBytes(n).toString('base64url');
 
 const cfg = { service: env.PANEL_SERVICE || 'Sentinel', company: env.PANEL_COMPANY || '', email: env.PANEL_EMAIL || '', country: env.PANEL_COUNTRY || '',
@@ -59,15 +59,15 @@ const PERMS = [
   ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
   ['webhooks.manage', 'Manage Discord notifications', 'Settings', 1], ['privacy.manage', 'Export and erase player data', 'Settings', 1],
   ['forms.review', 'Review form responses and applications', 'Team'], ['forms.manage', 'Create and edit forms', 'Settings'],
-  ['servers.manage', 'Close live servers', 'Game', 1], ['staff.review', 'See staff performance and give staff strikes', 'Team', 1],
+  ['servers.manage', 'Close live servers', 'Game', 1], ['replays.view', 'Watch and save replays', 'Reports', 1], ['staff.review', 'See staff performance and give staff strikes', 'Team', 1],
 ];
 const ALLP = PERMS.map(p => p[0]);
 const defaultRanks = () => ({
   admin: { name: 'Administrator', color: '#635bff', pos: 30, perms: ALLP.slice(), quota: 0, limit: 0 },
-  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'training.use', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
+  mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'replays.view', 'training.use', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
   helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'training.use', 'sessions.host'], quota: 60, limit: 15 },
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false } }); // alerts, digest and health start off; only the owner turns them on
+const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false, exploit: false } }); // alerts, digest and health start off; only the owner turns them on
 const OWNER_EVENTS = ['alerts', 'digest', 'health']; // webhook events only the owner can switch
 const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
 
@@ -78,6 +78,7 @@ const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, ruleboo
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
 let ALT = { links: {}, leaves: [], fp: {}, stats: {} }; // linked accounts: their own row, loaded by the game sync and the Linked accounts page
+let XF = { list: [], seq: 0 }; // exploit flags for staff to review: their own row, loaded by the game sync (only when a flag comes in) and the Exploit flags page
 let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
 const setUid = u => { if (!/^[gr]_\d{1,32}$/.test(u)) throw new Error('bad user'); CTX.uid = u; };
@@ -138,6 +139,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
+  xflags: { get: () => XF, set: v => { XF = v && typeof v === 'object' && Array.isArray(v.list) ? { list: v.list, seq: v.seq || 0 } : { list: [], seq: 0 }; } },
   alts: { get: () => ALT, set: v => { ALT = v && typeof v === 'object' && v.links ? { links: v.links, leaves: v.leaves || [], fp: v.fp || {}, stats: v.stats || {} } : { links: {}, leaves: [], fp: {}, stats: {} }; } },
   vault: { get: () => VT, set: v => { VT = v && Array.isArray(v.items) ? v : { items: [] }; } }, // evidence staff keep: links, notes and copied chat boxes
   cbo: { get: () => CBO, set: v => { CBO = v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } }, // chat log boxes still filling, per game server
@@ -152,13 +154,13 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault', 'alts'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts'], '/api/alts': ['alts', 'play'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault', 'alts', 'xflags'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts', 'xflags'], '/api/alts': ['alts', 'play'], '/api/xflags': ['xflags', 'play'], '/api/replay': ['logs', 'calls', 'xflags', 'vault'], '/api/replays': ['live', 'cmds'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; XF = { list: [], seq: 0 }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -205,6 +207,8 @@ function migrate() { // bring older workspaces up to date
   D.strikes ||= [];
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
+  if (!D.meta.v18) { D.meta.v18 = 1; if (!D.settings.replays || typeof D.settings.replays !== 'object') D.settings.replays = { on: false, days: 7 }; for (const [k, rk] of Object.entries(D.ranks)) if ((k === 'admin' || k === 'mod' || rk.perms.includes('mod.ban')) && !rk.perms.includes('replays.view')) rk.perms.push('replays.view'); } // replays start off; Moderator and up can watch them
+  if (!D.meta.v17) { D.meta.v17 = 1; if (!D.settings.xflags || typeof D.settings.xflags !== 'object') D.settings.xflags = { on: true, lvl: 'low' }; if (typeof D.settings.rejoin !== 'boolean') D.settings.rejoin = true; if (D.webhook && D.webhook.events && !('exploit' in D.webhook.events)) D.webhook.events.exploit = false; } // exploit flags start on at Low, !rejoin on, and their Discord notice off
   if (!D.meta.v16) { D.meta.v16 = 1; if (typeof D.settings.warnAck !== 'boolean') D.settings.warnAck = false; } // warning acknowledgement starts off
   if (!D.meta.v15) { D.meta.v15 = 1; if (!VAULT_DAYS.includes(D.settings.vaultDays)) D.settings.vaultDays = 180; } // evidence vault items are kept 180 days unless the owner picks another length
   if (!D.meta.v14) { D.meta.v14 = 1; if (!MERGE_MIN.includes(D.settings.mergeMin)) D.settings.mergeMin = 10; } // reports about the same player within 10 minutes are grouped
@@ -291,6 +295,7 @@ const grpMembers = g => D.calls.filter(c => grpOf(c) === g);
 const repKey = c => c.from.userId > 0 ? 'u' + c.from.userId : c.staff ? 's' + c.from.name : 'anon'; // anonymous web reports count as one reporter
 const grpReporters = g => new Set(grpMembers(g).map(repKey)).size;
 function callMerge(call) { // before the new report is added: join an open report about the same player within the window
+  rpFor((call.target && call.target.userId) || (call.from && call.from.userId), { k: 'report', by: String((call.from && call.from.name) || '').slice(0, 40) });
   if (!call.target) return null;
   const win = (MERGE_MIN.includes(D.settings.mergeMin) ? D.settings.mergeMin : 10) * 60000;
   const lead = D.calls.find(c => !c.grp && c.status !== 'resolved' && c.target && c.target.userId === call.target.userId && call.t - Math.max(...grpMembers(c.id).map(x => x.t)) <= win);
@@ -636,6 +641,69 @@ async function altRun(req, b, ev) { // called on every game check-in with joins,
   }
   altPrune(now);
 }
+// ---- replays: a short top-down recording of one server, kept in the replays table (see supabase.sql). The game only uploads when something happens
+const RP_DAYS = [7, 14, 30], RP_MAX_MB = +env.REPLAY_MAX_MB || 25, RP_GLOBAL_MB = +env.REPLAY_GLOBAL_MAX_MB || 200, RP_KINDS = ['report', 'action', 'automod', 'alert', 'staff', 'button', 'xflag'], RP_ID_RE = /^[A-Z0-9]{9}-[A-Z0-9]{8}$/;
+const rpSet = () => { const x = D.settings.replays || {}; return { on: x.on === true, days: RP_DAYS.includes(x.days) ? x.days : 7 }; };
+const rpCap = () => { const v = D.meta && D.meta.caps && D.meta.caps.replayMB; return (Number.isInteger(v) && v > 0 ? v : RP_MAX_MB) * 1e6; };
+const rpId = (wid, job, clip) => { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', h = hash('rp:' + wid + ':' + job + ':' + clip); let x = ''; for (let i = 0; i < 17; i++) x += A[h[i] % 36]; return x.slice(0, 9) + '-' + x.slice(9); }; // the same for every chunk of one clip, so chunks can arrive in any order
+const rpZ = t => zlib.deflateRawSync(Buffer.from(String(t), 'utf8')).toString('base64'), rpUnz = t => zlib.inflateRawSync(Buffer.from(String(t || ''), 'base64')).toString('utf8');
+function rpWhy(w) {
+  if (!w || typeof w !== 'object' || !RP_KINDS.includes(w.k)) return null; const x = { k: w.k };
+  if (Number.isInteger(w.uid) && w.uid > 0) x.uid = w.uid; for (const [k, n] of [['by', 40], ['a', 12], ['w', 40], ['x', 12]]) if (typeof w[k] === 'string' && w[k]) x[k] = cleanName(w[k], n);
+  if (Number.isFinite(w.t)) x.t = Math.round(w.t); if (Number.isInteger(w.at) && w.at >= 0) x.at = w.at; return x;
+}
+const rpMap = m => Array.isArray(m) ? m.slice(0, 300).filter(a => Array.isArray(a) && a.length === 5 && a.every(v => Number.isFinite(v) && Math.abs(v) < 1e6)).map(a => a.map(Math.round)) : null; // map outline: [x, z, width, depth, rotation]
+function rpCmd(sid, why) { // ask one live server (game script 27 or newer) to save a replay
+  const sv = R.servers[sid], now = Date.now(); if (!rpSet().on || !sv || now - sv.last > LIVE_MS || (sv.sv || 1) < 27 || !('cmds' in loaded)) return false;
+  if (R.cmds.filter(c => c.type === 'replay' && c.target === sid && !c.seen[sid]).length < 5) cmd({ type: 'replay', target: sid, why: { ...why, t: now } }); return true;
+}
+function rpFor(uid, why) { // something happened to a player: every live server they are in saves a replay
+  if (!uid || !rpSet().on || !('live' in loaded) || !('cmds' in loaded)) return; const now = Date.now();
+  for (const [sid, sv] of Object.entries(R.servers)) if (now - sv.last < LIVE_MS && sv.players.some(p => p.userId === +uid)) rpCmd(sid, { ...why, uid: +uid });
+}
+async function rpUsed(wid = CTX.wid) { try { const r = await cbFetch('rpc/replay_usage', { method: 'POST', body: JSON.stringify({ w: wid }), ms: 4000 }); if (r.ok) { const x = (await r.json())[0] || {}; return { n: +x.n || 0, bytes: +x.bytes || 0, ok: true }; } } catch {} return { n: 0, bytes: 0, ok: false }; }
+function rpFull() { const now = Date.now(); if ((D.notices || []).some(n => n && n.kind === 'replayfull' && n.exp > now)) return; D.notices = [...(D.notices || []).filter(n => n && n.exp > now), { id: rnd(6), kind: 'replayfull', t: now, exp: now + 3 * 864e5, title: 'Replay storage is full', text: 'New replays are not being saved. Keep replays for fewer days in Settings, Automations, or remove evidence copies you no longer need from the evidence vault.' }]; }
+async function rpRows(id, wid = CTX.wid) { const r = await cbFetch(`replays?select=seq,server,started_at,ended_at,trigger,user_ids,data,bytes,evidence,keep_until&wid=eq.${wid}&id=eq.${id}&order=seq.asc`, { ms: 6000 }); if (!r.ok) throw new Error('replays ' + r.status); return r.json(); }
+async function rpForget(uid) { // data erase: every clip a player is in
+  try { const r = await cbFetch(`replays?select=id&wid=eq.${CTX.wid}&seq=eq.0&user_ids=cs.%7B${uid}%7D&limit=1000`, { ms: 4000 }); if (!r.ok) return; const ids = [...new Set((await r.json()).map(x => x.id))]; for (let i = 0; i < ids.length; i += 50) await cbFetch(`replays?wid=eq.${CTX.wid}&id=in.(${ids.slice(i, i + 50).join(',')})`, { method: 'DELETE', headers: { Prefer: 'return=minimal' }, ms: 5000 }); } catch {}
+}
+// ---- exploit flags: speed, teleport and fly, measured by the game script on the game server. Staff review them; nothing ever happens to a player automatically
+const XF_KINDS = ['speed', 'teleport', 'fly'], XF_LVL = { low: 8, medium: 6, high: 4 }, XF_GAP = 120000, XF_HOUR = 6, XF_MAX = 500;
+const xfSet = () => { const x = D.settings.xflags || {}; return { on: x.on !== false, lvl: XF_LVL[x.lvl] ? x.lvl : 'low' }; };
+const xfNum = v => Number.isFinite(v) && Math.abs(v) < 1e7 ? Math.round(v) : null, xfPos = a => Array.isArray(a) && a.length === 3 && a.every(v => Number.isFinite(v) && Math.abs(v) < 1e7) ? a.map(Math.round) : null;
+function xfText(x) {
+  const e = x.ev || {};
+  return x.kind === 'speed' ? `Moved at ${e.v} studs/s on the ground (limit ${e.lim}, walk speed ${e.ws})` : x.kind === 'teleport' ? `Moved ${e.dist} studs in about one second (limit ${e.lim})` : `In the air for ${e.air} s without falling, with nothing below`;
+}
+const xfOut = x => ({ id: x.id, userId: x.uid, name: x.name, kind: x.kind, strength: x.strength, text: xfText(x), ev: x.ev, server: x.server, t: x.t, status: x.status, by: x.by || null, at: x.at || null });
+async function xflagRun(b, ev) { // flags arrive inside the normal check-in. They only ever go to the review queue
+  const list = ev.filter(e => e && e.type === 'xflag' && Number.isInteger(e.userId) && e.userId > 0 && XF_KINDS.includes(e.kind) && e.ev && typeof e.ev === 'object').slice(0, 20);
+  if (!list.length || !xfSet().on) return;
+  await need('xflags');
+  const now = Date.now(), job = String(b.jobId || 'studio').slice(0, 8), lvl = xfSet().lvl;
+  for (const e of list) {
+    const mine = XF.list.filter(x => x.uid === e.userId);
+    if (mine.some(x => x.kind === e.kind && now - x.t < XF_GAP) || mine.filter(x => now - x.t < 36e5).length >= XF_HOUR) continue; // one incident, one flag; and a cap per hour
+    const g = e.ev, evd = { v: xfNum(g.v), lim: xfNum(g.lim), ws: xfNum(g.ws), dist: xfNum(g.dist), air: xfNum(g.air), y: xfNum(g.y), from: xfPos(g.from), to: xfPos(g.to) };
+    for (const k of Object.keys(evd)) if (evd[k] === null) delete evd[k];
+    const val = e.kind === 'speed' ? evd.v : e.kind === 'teleport' ? evd.dist : evd.air, lim = e.kind === 'fly' ? XF_LVL[lvl] : evd.lim;
+    if (!Number.isFinite(val)) continue;
+    const strong = (lim > 0 && val >= 2 * lim) || mine.some(x => now - x.t < 864e5 && x.status !== 'false');
+    const name = cleanName(e.name, 40) || (D.play[e.userId] || {}).name || 'User ' + e.userId;
+    const x = { id: 'x' + (++XF.seq), uid: e.userId, name, kind: e.kind, strength: strong ? 'strong' : 'likely', ev: evd, server: job, t: now, status: 'open' };
+    XF.list.unshift(x);
+    feed(`Exploit flag (${e.kind}): ${name}`);
+    notify('exploit', `Exploit flag (${e.kind}, ${x.strength}): ${name}`, xfText(x) + '\nA flag is a hint for staff to check. Nothing happens to the player automatically.', [['Server', job]], 0xf5a524);
+  }
+  XF.list = XF.list.filter(x => !(x.status === 'false' && now - (x.at || x.t) > 30 * 864e5)).slice(0, XF_MAX);
+}
+function rejoinAsk(e, sid) { // !rejoin: the website decides, so bans, kicks and the owner's switch are always respected
+  const now = Date.now(), uid = e.userId, sv = R.servers[sid], say = text => cmd({ type: 'message', kind: 'info', userId: uid, target: sid, title: 'Rejoin', text });
+  if (D.settings.rejoin === false) return say('The owner has switched !rejoin off in this game.');
+  if (D.bans[uid] && live(D.bans[uid])) return say("You can't use !rejoin right now.");
+  if ((D.kicks || []).some(k => k.userId === uid && now - k.t < 30000)) return say("You can't use !rejoin right now.");
+  cmd({ type: 'rejoin', userId: uid, target: sid, via: !!(sv && sv.closed && now - sv.closed < 180000) }); // via: this server is closing, so pass through a holding server and never land back here
+}
 async function signalCheck(req, fresh, joined) { // alt-account hints for staff. Only public Roblox data; never an automatic action
   if (D.settings.signals === false || !joined.length) return;
   const now = Date.now(), staff = new Set(Object.entries(D.members).map(([mid, m]) => String(m.robloxId || (mid[0] === 'r' ? mid.slice(2) : '')))), bans = Object.values(D.bans).filter(live);
@@ -820,13 +888,13 @@ function alertCheck(job, uid, name, text, now) {
     if (!alertHit(text, a)) continue;
     const k = 'aw:' + uid + ':' + a.id; if ((R.am[k] || 0) > now - 5 * 60000) continue; R.am[k] = now; // one alert per player per word per 5 minutes
     const box = CBO[job] ? CBO[job].id : null, x = { id: rnd(6), t: now, word: a.w, userId: uid, name, text: String(text).slice(0, 200), server: String(job).slice(0, 8), box };
-    D.alerts = [x, ...(D.alerts || [])].slice(0, 100); feed(`Chat alert "${a.w}": ${name}`);
+    D.alerts = [x, ...(D.alerts || [])].slice(0, 100); feed(`Chat alert "${a.w}": ${name}`); rpFor(uid, { k: 'alert', w: String(a.w).slice(0, 40) });
     if ((D.settings.alertDest || 'inbox') !== 'inbox') notify('alerts', `Chat alert: "${a.w}"`, `${name}: ${x.text}`, [['Player', name], ['Server', x.server], ['Chat box', box || '']], 0xf5a524);
   }
 }
 // ---- player risk score: advice for staff only, never shown to players, never acted on automatically
-const RISK_W = { Warned: 6, Muted: 10, Kicked: 12, Suspended: 18, Banned: 25, box: 4, boxStrong: 8, report: 8, hint: { weak: 10, likely: 15, strong: 20 }, newAccount: 10, halfLifeDays: 30, maxAgeDays: 90 };
-const RISK_LABEL = { Warned: ['warning', 'warnings'], Muted: ['mute', 'mutes'], Kicked: ['kick', 'kicks'], Suspended: ['suspension', 'suspensions'], Banned: ['ban', 'bans'], box: ['flagged chat box', 'flagged chat boxes'], boxStrong: ['chat box with strong language or slurs', 'chat boxes with strong language or slurs'] };
+const RISK_W = { xflag: 6, Warned: 6, Muted: 10, Kicked: 12, Suspended: 18, Banned: 25, box: 4, boxStrong: 8, report: 8, hint: { weak: 10, likely: 15, strong: 20 }, newAccount: 10, halfLifeDays: 30, maxAgeDays: 90 };
+const RISK_LABEL = { xflag: ['confirmed exploit flag', 'confirmed exploit flags'], Warned: ['warning', 'warnings'], Muted: ['mute', 'mutes'], Kicked: ['kick', 'kicks'], Suspended: ['suspension', 'suspensions'], Banned: ['ban', 'bans'], box: ['flagged chat box', 'flagged chat boxes'], boxStrong: ['chat box with strong language or slurs', 'chat boxes with strong language or slurs'] };
 function rkAdd(id, name, kind, eid) { // a compact history in the play row, read by riskOf
   if (!('play' in loaded) || !RISK_W[kind]) return; const p = playOf(id, name); (p.rk ||= []).push([kind, Date.now(), eid || 0]); if (p.rk.length > 50) p.rk.splice(0, p.rk.length - 50);
 }
@@ -847,7 +915,7 @@ const VAULT_CAP = 512 * 1024, VAULT_DAYS = [30, 90, 180, 365], CASE_RE = /^(call
 const vaultDays = () => VAULT_DAYS.includes(D.settings.vaultDays) ? D.settings.vaultDays : 180;
 const vaultItems = () => { const now = Date.now(); if (VT.items.some(x => x.exp <= now)) VT.items = VT.items.filter(x => x.exp > now); return VT.items; }; // expired items are deleted the next time the vault is read
 const vaultSize = () => JSON.stringify(VT).length;
-const vaultMeta = x => ({ id: x.id, uid: x.uid || null, name: x.name || '', cases: x.cases || [], kind: x.kind, title: x.title, by: x.by, byUid: x.byUid, t: x.t, exp: x.exp, n: x.msgs ? x.msgs.length : 0, opened: (x.log || []).length });
+const vaultMeta = x => ({ id: x.id, uid: x.uid || null, name: x.name || '', cases: x.cases || [], kind: x.kind, title: x.title, ...(x.rid ? { rid: x.rid, size: x.size || 0 } : {}), by: x.by, byUid: x.byUid, t: x.t, exp: x.exp, n: x.msgs ? x.msgs.length : 0, opened: (x.log || []).length });
 function caseInfo(cs) { // what a case points at, or null when it is gone
   const [k, v] = cs.split(':');
   if (k === 'call') { const c = D.calls.find(c => c.id === +v); return c ? { uid: c.target ? c.target.userId : c.from.userId, name: c.target ? c.target.name : c.from.name } : null; }
@@ -914,6 +982,7 @@ async function erasePlayer(id) { // everything this workspace stores about one p
   D.appeals = D.appeals.filter(a => a.uid !== id); D.kicks = (D.kicks || []).filter(k => k.userId !== id);
   await forgetInBoxes(CTX.wid, id); for (const o of Object.values(CBO)) o.msgs = o.msgs.filter(m => m.userId !== id);
   await need('alts'); for (const [k, L] of Object.entries(ALT.links)) if (L.a === id || L.b === id) delete ALT.links[k]; ALT.leaves = ALT.leaves.filter(x => x[0] !== id); for (const x of Object.values(ALT.fp)) x.u = x.u.filter(z => z !== id);
+  await need('xflags'); XF.list = XF.list.filter(x => x.uid !== id); await rpForget(id);
   await need('vault'); VT.items = VT.items.filter(x => x.uid !== id); for (const x of VT.items) if (x.msgs) x.msgs = x.msgs.filter(m => m.userId !== id);
   if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
   const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
@@ -957,6 +1026,7 @@ function allPlayers() {
   return out;
 }
 function act({ action, userId, name, reason, minutes, by = 'Automation', byUid = null, ruleId = null, extra = null, hide = true, alts = true }) {
+  if (['warn', 'kick', 'mute', 'ban'].includes(action)) rpFor(userId, { k: by === 'Automation' ? 'automod' : 'action', a: action, by: String(by || '').slice(0, 40) }); // a replay of the server they are in
   const expires = minutes > 0 ? Date.now() + minutes * 60000 : null;
   const log = type => { const e = logEntry(userId, name, { type, reason, minutes, by, byUid, ruleId, ...(extra || {}) }); feed(`${type}: ${name} (${reason})`, by); return e; };
   if (action === 'ban') {
@@ -1305,11 +1375,12 @@ function importBackup(data, uid, name) { // returns an error string, or '' when 
 }
 async function cronRun() {
   const t0 = Date.now(), today = bkDay(), list = await sbGet('select=key,meta:value->meta&key=like.w*:core'); let snap = 0, purged = 0, pruned = 0, partial = false;
-  const live = []; for (const r of list) { const wid = r.key.slice(1, 13); if (r.meta && r.meta.deleted) { if (Date.now() - r.meta.deleted > TRASH_MS) { await sbDel(`key=like.w${wid}:*`); await sbDel(`key=like.bk:*:${wid}:*`); await cbFetch(`chat_boxes?wid=eq.${wid}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => {}); purged++; } } else if (r.meta) live.push(wid); }
+  const live = []; for (const r of list) { const wid = r.key.slice(1, 13); if (r.meta && r.meta.deleted) { if (Date.now() - r.meta.deleted > TRASH_MS) { await sbDel(`key=like.w${wid}:*`); await sbDel(`key=like.bk:*:${wid}:*`); await cbFetch(`chat_boxes?wid=eq.${wid}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => {}); await cbFetch(`replays?wid=eq.${wid}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => {}); purged++; } } else if (r.meta) live.push(wid); }
   for (let i = 0; i < live.length; i += 4) { if (Date.now() - t0 > 9000) { partial = true; break; } snap += (await Promise.all(live.slice(i, i + 4).map(w => snapshot(w, today).catch(() => false)))).filter(Boolean).length; }
   for (const r of await sbGet('select=key&key=like.bk:*:core')) { const [, label, wid] = r.key.split(':'), age = Date.now() - labelTime(label); if ((/^\d{8}$/.test(label) && age > BK_KEEP_DAYS * 864e5 + 36e5) || (/^pre\d+$/.test(label) && age > 14 * 864e5)) { await sbDel(`key=like.bk:${label}:${wid}:*`); pruned++; } }
-  const cc = await chatCron(t0);
-  return { ok: true, snapshotted: snap, purged, pruned, partial: partial || cc.partial, chatClosed: cc.closed, chatRemoved: cc.removed };
+  const cc = await chatCron(t0); let rpGone = 0;
+  try { const r = await cbFetch(`replays?keep_until=lt.${new Date().toISOString()}&select=id`, { method: 'DELETE', headers: { Prefer: 'return=representation' }, ms: 6000 }); if (r.ok) rpGone = new Set((await r.json()).map(x => x.id)).size; } catch {} // replays past their keep date, evidence copies included
+  return { ok: true, snapshotted: snap, purged, pruned, partial: partial || cc.partial, chatClosed: cc.closed, chatRemoved: cc.removed, replaysRemoved: rpGone };
 }
 async function boxIdleRun(t0, until, out) { // save the chat boxes of servers that went quiet (closed servers never check in again)
   for (const row of await sbGet('select=key,value,version&key=like.w*:cbo')) {
@@ -1347,14 +1418,14 @@ async function personScan(rid, withData, from) { // every workspace that stores 
   const t0 = Date.now(), ws = (await sbGet('select=key,meta:value->meta&key=like.w*:core')).filter(r => r.meta && !r.meta.deleted).map(r => ({ wid: r.key.slice(1, 13), name: r.meta.name })).sort((a, b) => (a.wid < b.wid ? -1 : 1)), found = [];
   for (let i = from; i < ws.length; i++) {
     if (Date.now() - t0 > 11000) return { found, next: i };
-    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', 'vault', 'alts', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
-    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null, altl = Object.values(((v.alts || {}).links) || {}).filter(L => L.a === rid || L.b === rid).map(L => ({ other: L.a === rid ? L.b : L.a, score: L.score, tier: L.tier, status: L.status, signs: Object.keys(L.ev || {}) })), vault = ((v.vault || {}).items || []).filter(x => x.uid === rid || (x.msgs || []).some(m => m.userId === rid));
+    const w = ws[i].wid, keys = ['core', 'logs', 'play', 'calls', 'chat', 'vault', 'alts', 'xflags', shOf(rid)].map(k => `w${w}:${k}`), v = Object.fromEntries((await sbGet(`select=key,value&key=in.(${keys.join(',')})`)).map(r => [r.key.split(':')[1], r.value]));
+    const core = v.core || {}, logs = (v.logs || {})[rid] || [], play = (v.play || {})[rid] || null, calls = (v.calls || []).filter(c => c.from && c.from.userId === rid), chat = ((v.chat || {}).chat || []).filter(m => m.userId === rid), hist = (v[shOf(rid)] || {})[rid] || null, altl = Object.values(((v.alts || {}).links) || {}).filter(L => L.a === rid || L.b === rid).map(L => ({ other: L.a === rid ? L.b : L.a, score: L.score, tier: L.tier, status: L.status, signs: Object.keys(L.ev || {}) })), xfl = (((v.xflags || {}).list) || []).filter(x => x.uid === rid).map(x => ({ kind: x.kind, t: x.t, status: x.status, ev: x.ev, server: x.server })), vault = ((v.vault || {}).items || []).filter(x => x.uid === rid || (x.msgs || []).some(m => m.userId === rid));
     let boxes = []; try { const r = await cbFetch(`chat_boxes?select=id,closed_at,msgs&wid=eq.${w}&user_ids=cs.%7B${rid}%7D&limit=2000`, { ms: 4000 }); if (r.ok) boxes = await r.json(); } catch {}
     const ban = (core.bans || {})[rid] || null, mute = (core.mutes || {})[rid] || null, signal = (core.signals || {})[rid] || null, appeals = (core.appeals || []).filter(a => a.uid === rid), inReports = (v.calls || []).filter(c => (c.chat || []).some(m => m.userId === rid)).length;
-    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports + vault.length + altl.length;
+    const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports + vault.length + altl.length + xfl.length;
     if (!rows) continue;
     const x = { wid: w, name: ws[i].name, rows, logbook: logs.length, chatLogs: boxes.length, reports: calls.length + inReports, appeals: appeals.length, ban: !!ban, mute: !!mute };
-    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, linkedAccounts: altl, evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
+    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, linkedAccounts: altl, exploitFlags: xfl, evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
     found.push(x);
   }
   return { found, next: null };
@@ -1458,13 +1529,15 @@ async function adminMore(A, res, alog) { // the newer console tools. Returns tru
     const rows = (await coreRows()).filter(r => !r.meta.deleted); let pu = null, cu = null;
     try { const r = await cbFetch('rpc/panel_usage', { method: 'POST', body: '{}', ms: 6000 }); if (r.ok) pu = Object.fromEntries((await r.json()).map(x => [x.wid, x])); } catch {}
     try { const r = await cbFetch('rpc/chat_box_usage_all', { method: 'POST', body: '{}', ms: 6000 }); if (r.ok) cu = Object.fromEntries((await r.json()).map(x => [x.wid, x])); } catch {}
+    let ru = null; try { const r = await cbFetch('rpc/replay_usage_all', { method: 'POST', body: '{}', ms: 6000 }); if (r.ok) ru = Object.fromEntries((await r.json()).map(x => [x.wid, x])); } catch {}
     const items = rows.map(r => {
       const m = r.meta, caps = m.caps || {}, p = pu && pu[r.wid], c = cu && cu[r.wid];
-      const mem = { n: Object.keys(r.members || {}).length, max: caps.members || CAP_DEF.members }, lb = { n: m.logN || 0, max: caps.logbook || CAP_DEF.logbook }, st = pu ? { n: p ? +p.n : 0, bytes: p ? +p.bytes : 0, max: WS_MAX_BYTES } : null, ch = cu ? { n: c ? +c.n : 0, bytes: c ? +c.bytes : 0, maxN: CB_MAX_N, maxBytes: CB_MAX_BYTES } : null, warn = [];
-      if (mem.n >= mem.max * .8) warn.push('members'); if (lb.n >= lb.max * .8) warn.push('logbook'); if (st && st.bytes >= st.max * .8) warn.push('storage'); if (ch && (ch.n >= ch.maxN * .8 || ch.bytes >= ch.maxBytes * .8)) warn.push('chat logs');
-      return { wid: r.wid, name: m.name, members: mem, logbook: lb, storage: st, chat: ch, warn };
+      const rq = ru && ru[r.wid], rp = ru ? { n: rq ? +rq.n : 0, bytes: rq ? +rq.bytes : 0, max: (Number.isInteger(caps.replayMB) && caps.replayMB > 0 ? caps.replayMB : RP_MAX_MB) * 1e6 } : null, mem = { n: Object.keys(r.members || {}).length, max: caps.members || CAP_DEF.members }, lb = { n: m.logN || 0, max: caps.logbook || CAP_DEF.logbook }, st = pu ? { n: p ? +p.n : 0, bytes: p ? +p.bytes : 0, max: WS_MAX_BYTES } : null, ch = cu ? { n: c ? +c.n : 0, bytes: c ? +c.bytes : 0, maxN: CB_MAX_N, maxBytes: CB_MAX_BYTES } : null, warn = [];
+      if (mem.n >= mem.max * .8) warn.push('members'); if (lb.n >= lb.max * .8) warn.push('logbook'); if (st && st.bytes >= st.max * .8) warn.push('storage'); if (ch && (ch.n >= ch.maxN * .8 || ch.bytes >= ch.maxBytes * .8)) warn.push('chat logs'); if (rp && rp.bytes >= rp.max * .8) warn.push('replays');
+      return { wid: r.wid, name: m.name, members: mem, logbook: lb, storage: st, chat: ch, replays: rp, warn };
     }).sort((a, b) => b.warn.length - a.warn.length || ((b.storage || {}).bytes || 0) - ((a.storage || {}).bytes || 0));
-    return S(200, { setup: !!pu, chatSetup: !!cu, items });
+    const rpTotal = ru ? Object.values(ru).reduce((a, x) => a + (+x.bytes || 0), 0) : null;
+    return S(200, { setup: !!pu, chatSetup: !!cu, items, replays: ru ? { total: rpTotal, max: RP_GLOBAL_MB * 1e6, warn: rpTotal >= RP_GLOBAL_MB * 1e6 * 0.7 } : null });
   }
   if (op === 'dataReqs') return S(200, { items: G.dataReqs || [] });
   if (['personExport', 'personDeleteCheck', 'personDelete'].includes(op)) {
@@ -1478,7 +1551,7 @@ async function adminMore(A, res, alog) { // the newer console tools. Returns tru
       if (!tk || tk.pd !== rid || !Array.isArray(tk.w)) return S(400, { error: 'Run the check first. A check is valid for 10 minutes.' });
       const done = [];
       for (const w of tk.w) for (let i = 0; i < 4; i++) {
-        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts'); if (!D.meta) break;
+        resetState(); setWid(w); await need('core', 'logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts', 'xflags'); if (!D.meta) break;
         await erasePlayer(rid); audit('Site admin', `Erased stored data for Roblox user ${rid} (data request)`);
         if (await commit()) { done.push(w); break; }
       }
@@ -1713,12 +1786,12 @@ function loadVersions(){call({op:'versions'}).then(function(j){VR=j;drawVersions
 $('vro').onchange=function(){if(VR)drawVersions()};$('vrr').onclick=loadVersions;
 $('vrt').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;b.disabled=true;call({op:'wsRemind',wid:b.dataset.w}).then(function(){toast('Reminder sent. The owner sees it in their Inbox and on Home.');loadVersions()}).catch(function(x){b.disabled=false;fail(x)})};
 /* storage and limits */
-function setCaps(w,m,l){return ask2('Member limit','How many people can be on this team (1 to 5000).','Next',{val:String(m),ph:'100'}).then(function(a){if(!a)return;return ask2('Logbook limit','How many logbook entries to keep (1000 to 1000000). Above it, the oldest points and notes go first. Running bans and mutes are never removed.','Save',{val:String(l),ph:'50000'}).then(function(b){if(!b)return;return call({op:'wsCaps',wid:w,members:+a,logbook:+b}).then(function(){toast('Limits saved')})})})}
+function setCaps(w,m,l,rp){return ask2('Member limit','How many people can be on this team (1 to 5000).','Next',{val:String(m),ph:'100'}).then(function(a){if(!a)return;return ask2('Logbook limit','How many logbook entries to keep (1000 to 1000000). Above it, the oldest points and notes go first. Running bans and mutes are never removed.','Next',{val:String(l),ph:'50000'}).then(function(b){if(!b)return;return ask2('Replay storage (MB)','How much replay storage this workspace may use, evidence copies included (1 to 5000 MB). New replays stop being saved when it is full.','Save',{val:String(rp||''),ph:'25'}).then(function(c){if(!c)return;return call({op:'wsCaps',wid:w,members:+a,logbook:+b,replayMB:+c}).then(function(){toast('Limits saved')})})})})}
 function loadStorage(){$('sgs').textContent='Loading';call({op:'storage'}).then(function(j){var w=j.items.filter(function(x){return x.warn.length}).length;
-$('sgs').textContent=(j.setup?'':'Stored sizes need the new SQL in supabase.sql. ')+w+' workspace'+(w==1?'':'s')+' at 80% or more of a limit.';
-$('sgt').innerHTML=j.items.length?'<table class="tb"><tr><th>Workspace</th><th>Stored data</th><th>Chat logs</th><th>Members</th><th>Logbook</th><th></th></tr>'+j.items.map(function(x){return '<tr><td><b>'+e(x.name)+'</b> <code>'+e(x.wid)+'</code>'+(x.warn.length?'<div><span class="pill amb">Near the limit: '+e(x.warn.join(', '))+'</span></div>':'')+'</td><td>'+(x.storage?meter(x.storage.bytes,x.storage.max,x.storage.n+' rows, '+mb(x.storage.bytes)):'<span class="note">-</span>')+'</td><td>'+(x.chat?meter(Math.max(x.chat.n/x.chat.maxN,x.chat.bytes/x.chat.maxBytes)*1000,1000,x.chat.n+' boxes, '+mb(x.chat.bytes)):'<span class="note">-</span>')+'</td><td>'+meter(x.members.n,x.members.max,x.members.n+' of '+x.members.max)+'</td><td>'+meter(x.logbook.n,x.logbook.max,x.logbook.n+' of '+x.logbook.max)+'</td><td><button class="btn s" data-w="'+e(x.wid)+'" data-m="'+x.members.max+'" data-l="'+x.logbook.max+'">Limits</button></td></tr>'}).join('')+'</table>':'<div class="empty">No workspaces yet.</div>'}).catch(fail)}
+$('sgs').textContent=(j.setup?'':'Stored sizes need the new SQL in supabase.sql. ')+w+' workspace'+(w==1?'':'s')+' at 80% or more of a limit.'+(j.replays?' Replays across all workspaces: '+mb(j.replays.total)+' of '+mb(j.replays.max)+(j.replays.warn?' (over 70%: raise REPLAY_GLOBAL_MAX_MB or lower workspace limits).':'.'):' Replays need the new SQL in supabase.sql.');if(j.replays&&j.replays.warn)$('sgs').className='note amb';
+$('sgt').innerHTML=j.items.length?'<table class="tb"><tr><th>Workspace</th><th>Stored data</th><th>Chat logs</th><th>Replays</th><th>Members</th><th>Logbook</th><th></th></tr>'+j.items.map(function(x){return '<tr><td><b>'+e(x.name)+'</b> <code>'+e(x.wid)+'</code>'+(x.warn.length?'<div><span class="pill amb">Near the limit: '+e(x.warn.join(', '))+'</span></div>':'')+'</td><td>'+(x.storage?meter(x.storage.bytes,x.storage.max,x.storage.n+' rows, '+mb(x.storage.bytes)):'<span class="note">-</span>')+'</td><td>'+(x.chat?meter(Math.max(x.chat.n/x.chat.maxN,x.chat.bytes/x.chat.maxBytes)*1000,1000,x.chat.n+' boxes, '+mb(x.chat.bytes)):'<span class="note">-</span>')+'</td><td>'+(x.replays?meter(x.replays.bytes,x.replays.max,x.replays.n+' clips, '+mb(x.replays.bytes)+' of '+mb(x.replays.max)):'<span class="note">-</span>')+'</td><td>'+meter(x.members.n,x.members.max,x.members.n+' of '+x.members.max)+'</td><td>'+meter(x.logbook.n,x.logbook.max,x.logbook.n+' of '+x.logbook.max)+'</td><td><button class="btn s" data-w="'+e(x.wid)+'" data-m="'+x.members.max+'" data-l="'+x.logbook.max+'" data-r="'+(x.replays?Math.round(x.replays.max/1e6):'')+'">Limits</button></td></tr>'}).join('')+'</table>':'<div class="empty">No workspaces yet.</div>'}).catch(fail)}
 $('sgr').onclick=loadStorage;
-$('sgt').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;setCaps(b.dataset.w,b.dataset.m,b.dataset.l).then(loadStorage).catch(fail)};
+$('sgt').onclick=function(ev){var b=ev.target.closest('button');if(!b)return;setCaps(b.dataset.w,b.dataset.m,b.dataset.l,b.dataset.r).then(loadStorage).catch(fail)};
 /* feature flags */
 function loadFlags(){call({op:'flags'}).then(function(j){$('ffo').innerHTML=j.flags.map(function(f){return '<div class="card"><h3>'+e(f.label)+' <span class="pill '+(f.all?'grn':f.wids.length?'amb':'')+'">'+(f.all?'Everyone':f.wids.length?f.wids.length+' chosen':'Off')+'</span></h3><label class="note" style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><input type="checkbox" data-all="'+e(f.name)+'"'+(f.all?' checked':'')+'> On for every workspace</label><p>Chosen workspaces, one id per line. They get it while it is not on for everyone.</p><textarea class="in" rows="3" data-ws="'+e(f.name)+'">'+e(f.wids.join(String.fromCharCode(10)))+'</textarea><div class="mt"><button class="btn p s" data-save="'+e(f.name)+'">Save</button></div></div>'}).join('')}).catch(fail)}
 $('ffo').onclick=function(ev){var b=ev.target.closest('[data-save]');if(!b)return;var n=b.dataset.save,all=document.querySelector('[data-all="'+n+'"]').checked,ws=document.querySelector('[data-ws="'+n+'"]').value.split(/[^a-f0-9]+/).filter(function(x){return x.length===12});call({op:'flagSet',name:n,all:all,wids:ws}).then(function(){toast('Saved');loadFlags()}).catch(fail)};
@@ -2166,7 +2239,7 @@ async function route(req, res, url, p) {
       if (!/^\w{3,20}$/.test(tname)) return send(res, 400, { error: 'Enter the exact Roblox username of the player.' });
       if (text.length < 5) return send(res, 400, { error: 'Say what happened in a few words.' });
       if (link && !/^https?:\/\/\S+$/i.test(link)) return send(res, 400, { error: 'The evidence link must start with https://' });
-      setWid(wid); await need('core', 'play', 'live', 'calls'); if (!D.meta || D.meta.deleted || D.meta.suspended || !D.settings.webReports) return send(res, 403, { error: 'This game is not taking web reports right now.' });
+      setWid(wid); await need('core', 'play', 'live', 'calls', 'cmds'); if (!D.meta || D.meta.deleted || D.meta.suspended || !D.settings.webReports) return send(res, 403, { error: 'This game is not taking web reports right now.' });
       const tid = await findId(tname); if (!tid) return send(res, 404, { error: 'We could not find a Roblox player with that username.' });
       const rid = rname && /^\w{3,20}$/.test(rname) ? await findId(rname) : null;
       const call = { id: ++D.callSeq, t: Date.now(), from: { userId: rid || 0, name: rid ? rname : 'Web report' }, text: `Reporting ${tname}: ${text}${link ? '\nEvidence: ' + link : ''}`, server: 'web', status: 'open', by: null, note: '', chat: [], web: true, target: { userId: tid, name: tname } };
@@ -2267,7 +2340,8 @@ async function route(req, res, url, p) {
         }
         if (A.op === 'wsCaps') {
           const mN = +A.members, lN = +A.logbook; if (!Number.isInteger(mN) || mN < 1 || mN > 5000 || !Number.isInteger(lN) || lN < 1000 || lN > 1000000) return send(res, 400, { error: 'Members 1 to 5000, logbook 1000 to 1000000.' });
-          D.meta.caps = { members: mN, logbook: lN }; audit('Site admin', `Set limits: ${mN} members, ${lN} logbook entries`); alog(`Set limits for "${nm}" (${wid}): ${mN} members, ${lN} logbook entries`); return ok(res);
+          const rpMB = A.replayMB === undefined ? (D.meta.caps || {}).replayMB : +A.replayMB; if (rpMB !== undefined && (!Number.isInteger(rpMB) || rpMB < 1 || rpMB > 5000)) return send(res, 400, { error: 'Replay storage 1 to 5000 MB.' });
+          D.meta.caps = { members: mN, logbook: lN, ...(rpMB ? { replayMB: rpMB } : {}) }; audit('Site admin', `Set limits: ${mN} members, ${lN} logbook entries`); alog(`Set limits for "${nm}" (${wid}): ${mN} members, ${lN} logbook entries`); return ok(res);
         }
         if (A.op === 'wsRemind') { // an Inbox notice and Home banner for the owner
           const sv = scriptInfo().outdated, cv = clientInfo().outdated; if (!sv && !cv) return send(res, 400, { error: 'This workspace is up to date.' });
@@ -2413,6 +2487,31 @@ async function route(req, res, url, p) {
       }
       return reply('That is not supported.');
     }
+    if (req.method === 'POST' && p === '/game/replay') { // a replay clip from the game, in chunks of up to 60 KB
+      const b = await body(req), k = String(b.key || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
+      if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
+      const job = String(b.jobId || 'studio').slice(0, 64), w1 = limit(`rp:${wid}:${job}`, 60, 60000) || limit('rp:' + wid, 600, 60000); if (w1) return tooMany(res, w1);
+      setWid(wid); await need('core');
+      if (!D.meta || D.meta.deleted || D.meta.suspended || (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot))) return send(res, 403, { error: 'bad key' });
+      if (!rpSet().on) return send(res, 409, { error: 'Replays are switched off.' });
+      const seq = b.seq, total = b.total, data = b.data;
+      if (typeof b.clip !== 'string' || !/^[\w{}-]{1,64}$/.test(b.clip) || !Number.isInteger(total) || total < 1 || total > 30 || !Number.isInteger(seq) || seq < 1 || seq > total || typeof data !== 'string' || data.length > 70000) return send(res, 400, { error: 'bad request' });
+      const id = rpId(wid, job, b.clip), now = Date.now(), keep = new Date(now + rpSet().days * 864e5).toISOString(), rows = [];
+      if (seq === 1) { // the first chunk carries the header
+        const h = b.head && typeof b.head === 'object' ? b.head : {}, used = await rpUsed(wid);
+        if (used.bytes >= rpCap()) { rpFull(); return send(res, 413, { error: 'Replay storage is full.' }); }
+        const t0 = Number.isFinite(h.t0) && Math.abs(h.t0 - now) < 864e5 ? Math.round(h.t0) : now - 60000, t1 = Number.isFinite(h.t1) && h.t1 >= t0 ? Math.round(Math.min(h.t1, t0 + 11 * 60000)) : now;
+        const users = [...new Set((Array.isArray(h.users) ? h.users : []).filter(x => Number.isInteger(x) && x > 0))].slice(0, 60), names = {};
+        for (const [u, n] of Object.entries(h.names && typeof h.names === 'object' ? h.names : {}).slice(0, 60)) if (/^\d{1,15}$/.test(u)) names[u] = cleanName(n, 40) || 'User ' + u;
+        const meta = rpZ(JSON.stringify({ total, names, hz: [1, 2].includes(h.hz) ? h.hz : 2, map: rpMap(h.map) }));
+        rows.push({ id, seq: 0, wid, server: job.slice(0, 8), started_at: new Date(t0).toISOString(), ended_at: new Date(t1).toISOString(), trigger: (Array.isArray(h.why) ? h.why : []).slice(0, 20).map(rpWhy).filter(Boolean), user_ids: users, data: meta, bytes: meta.length, keep_until: keep, evidence: false });
+      }
+      const dz = rpZ(data); rows.push({ id, seq, wid, server: job.slice(0, 8), trigger: [], user_ids: [], data: dz, bytes: dz.length, keep_until: keep, evidence: false });
+      let r; try { r = await cbFetch('replays?on_conflict=id,seq', { method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' }, body: JSON.stringify(rows), ms: 6000 }); } catch { return send(res, 503, { error: 'Try again' }); }
+      if (!r.ok) { const t = await r.text().catch(() => ''); if (r.status === 404 || /replays|42P01|PGRST20/.test(t)) { logEvent('replay', 'Replays need the new SQL in supabase.sql', wid); return send(res, 503, { error: 'Replays need the new SQL in supabase.sql.' }); } logEvent('replay', 'Replay chunk not saved: HTTP ' + r.status); return send(res, 502, { error: 'Could not save' }); }
+      if (seq === 1) feed(`Replay saved from server ${job.slice(0, 8)}`);
+      return send(res, 200, { ok: true, id });
+    }
     if (req.method === 'POST' && p === '/game/sync') { // the Roblox script checks in here with its workspace's game key
       const b = await body(req), k = String(b.key || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
       if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
@@ -2439,7 +2538,12 @@ async function route(req, res, url, p) {
       if (ev.some(e => e && e.type === 'ack')) await need('logs');
       if (D.meta.group && D.meta.group.id && Date.now() - ((D.meta.group.last || {}).t || 0) > 10 * 60000) await groupSync(req);
       const joined = ev.filter(e => e && e.type === 'join' && Number.isInteger(e.userId) && e.userId > 0).map(e => e.userId), fresh = new Set(joined.filter(id => !(id in D.play)));
-      const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await banSyncPull();
+      for (const e of ev.filter(e => e && e.type === 'rejoin' && Number.isInteger(e.userId) && e.userId > 0).slice(0, 10)) rejoinAsk(e, String(b.jobId || 'studio').slice(0, 64));
+      for (const e of ev.filter(e => e && e.type === 'replay' && Number.isInteger(e.userId) && e.userId > 0).slice(0, 5)) { // !replay: staff only
+        const sid = String(b.jobId || 'studio').slice(0, 64), say = text => cmd({ type: 'message', kind: 'info', userId: e.userId, target: sid, title: 'Replay', text });
+        if (!isStaffId(e.userId)) say('Only staff can save replays.'); else if (!rpSet().on) say('Replays are switched off for this game. The owner can turn them on in Settings, Automations.'); else if (rpCmd(sid, { k: 'staff', uid: e.userId, by: cleanName(e.name, 40) })) say('Saving a replay of this server. It will be ready on the website in about 2 minutes.'); else say('This server could not save a replay yet. Try again in a few seconds.');
+      }
+      const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: 120 }; await banSyncPull();
       return send(res, 200, out);
     }
 
@@ -2703,6 +2807,74 @@ async function route(req, res, url, p) {
       }
       return ok(res);
     }
+    if (req.method === 'GET' && p === '/api/replay') { // one replay, decoded, with the website's own events merged in by time
+      if (!has(u, 'replays.view')) return deny(res);
+      const id = String(url.searchParams.get('id') || '').toUpperCase(); if (!RP_ID_RE.test(id)) return send(res, 400, { error: 'That is not a replay ID.' });
+      let rows; try { rows = await rpRows(id); } catch { return send(res, 503, { error: 'Replays are not set up yet. Run the new SQL in supabase.sql.' }); }
+      const head = rows.find(x => x.seq === 0); if (!head) return send(res, 404, { error: `That replay is not there any more. Replays are kept for ${rpSet().days} days, and evidence copies as long as the evidence vault keeps them.` });
+      if (head.evidence) { const vi = vaultItems().find(x => x.rid === id); if (vi) { vi.log = [...(vi.log || []), { t: Date.now(), who: u.user }].slice(-50); } } // opening a kept copy is logged like any vault item
+      const meta = JSON.parse(rpUnz(head.data)), parts = rows.filter(x => x.seq > 0 && x.seq <= meta.total), t0 = Date.parse(head.started_at), t1 = Date.parse(head.ended_at);
+      const base = { id, server: head.server, t0, t1, evidence: head.evidence, keep: Date.parse(head.keep_until), why: head.trigger || [], names: meta.names || {}, map: meta.map || null };
+      if (parts.length < meta.total) return send(res, 200, { ...base, partial: true, have: parts.length, total: meta.total });
+      let clip; try { clip = JSON.parse(parts.map(x => rpUnz(x.data)).join('')); } catch { return send(res, 200, { ...base, partial: true, broken: true, have: parts.length, total: meta.total }); }
+      const uids = (head.user_ids || []).map(Number), inR = t => t >= t0 - 2000 && t <= t1 + 2000, PUN = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'], markers = [];
+      for (const uid of uids) for (const e of D.logs[uid] || []) if (PUN.includes(e.type) && inR(e.time)) markers.push({ t: e.time, kind: 'action', uid, text: `${e.type} by ${e.by}${e.reason ? ': ' + e.reason : ''}`.slice(0, 200) });
+      for (const c of D.calls) { const who = c.target ? c.target.userId : c.from.userId; if (inR(c.t) && (uids.includes(who) || uids.includes(c.from.userId))) markers.push({ t: c.t, kind: 'report', uid: who, text: `Report #${c.id} from ${c.from.name}: ${c.text}`.slice(0, 200) }); }
+      for (const x of XF.list) if (inR(x.t) && uids.includes(x.uid)) markers.push({ t: x.t, kind: 'xflag', uid: x.uid, text: xfText(x) });
+      for (const a of D.alerts || []) if (inR(a.t) && uids.includes(a.userId)) markers.push({ t: a.t, kind: 'alert', uid: a.userId, text: `Chat alert "${a.word}"` });
+      markers.sort((a, b) => a.t - b.t);
+      return send(res, 200, { ...base, hz: clip.hz || meta.hz || 2, t0: Number.isFinite(clip.t0) ? clip.t0 : t0, len: clip.len || 0, names: { ...(clip.names || {}), ...base.names }, tracks: clip.tracks || {}, ev: clip.ev || [], map: base.map || rpMap(clip.map), markers });
+    }
+    if (req.method === 'GET' && p === '/api/replays') { // find the replay that covers a moment, or the storage used
+      if (!has(u, 'replays.view')) return deny(res);
+      if (url.searchParams.get('usage')) { const x = await rpUsed(); return send(res, 200, { ...rpSet(), setup: x.ok, n: x.n, used: x.bytes, cap: rpCap(), warn: x.bytes >= rpCap() * 0.8 }); }
+      const uid = +url.searchParams.get('userId') || 0, t = +url.searchParams.get('t') || 0, sv = String(url.searchParams.get('server') || '').replace(/[^\w-]/g, '').slice(0, 8);
+      if (!t || (!uid && !sv)) return send(res, 400, { error: 'bad request' });
+      const why = `Sentinel keeps the last 5 minutes of a server in the game's memory and saves them only when something happens there, such as a report, a moderation action, a chat alert or an exploit flag${rpSet().on ? '' : '. Replays are switched off for this game'}. Nothing was saved for this moment, or the replay has expired (replays are kept ${rpSet().days} days).`;
+      try {
+        const q = [`select=id,started_at,ended_at,server,evidence&wid=eq.${CTX.wid}&seq=eq.0`, `started_at=lte.${new Date(t + 5000).toISOString()}`, `ended_at=gte.${new Date(t - 5000).toISOString()}`, uid ? `user_ids=cs.%7B${uid}%7D` : '', sv ? `server=eq.${sv}` : '', 'order=started_at.desc', 'limit=5'].filter(Boolean).join('&');
+        const r = await cbFetch('replays?' + q, { ms: 4000 }); if (!r.ok) return send(res, 200, { none: true, why: 'Replays are not set up yet.' });
+        const list = await r.json(), x = list.find(y => !y.evidence) || list[0]; return send(res, 200, x ? { id: x.id } : { none: true, why });
+      } catch { return send(res, 200, { none: true, why }); }
+    }
+    if (req.method === 'POST' && p === '/api/replays') {
+      if (B.op === 'settings') {
+        if (!has(u, 'automations.manage')) return deny(res);
+        if (B.days !== undefined && !RP_DAYS.includes(B.days)) return send(res, 400, { error: 'Pick 7, 14 or 30 days.' });
+        const cur = rpSet(); D.settings.replays = { on: B.on === undefined ? cur.on : !!B.on, days: B.days || cur.days };
+        audit(u.user, `Replays ${D.settings.replays.on ? 'on, kept ' + D.settings.replays.days + ' days' : 'off'}`); return ok(res);
+      }
+      if (!has(u, 'replays.view')) return deny(res);
+      if (B.op === 'save') { // Save replay now, from the Servers page
+        const sid = Object.keys(R.servers).find(k => k.slice(0, 8) === String(B.id || '')), sv = sid && R.servers[sid];
+        if (!rpSet().on) return send(res, 409, { error: 'Replays are switched off. Turn them on in Settings, Automations.' });
+        if (!sv || Date.now() - sv.last > LIVE_MS) return send(res, 404, { error: 'That server has already closed.' });
+        if ((sv.sv || 1) < 27) return send(res, 409, { error: `This server runs game script version ${sv.sv || 1}. Replays need version 27 or newer.` });
+        rpCmd(sid, { k: 'button', by: u.user }); audit(u.user, `Asked server ${sid.slice(0, 8)} to save a replay`); return ok(res);
+      }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (req.method === 'GET' && p === '/api/xflags') { // exploit flags for staff to review
+      if (!has(u, 'mod.kick')) return deny(res);
+      const id = +url.searchParams.get('userId') || 0, list = (id ? XF.list.filter(x => x.uid === id) : XF.list).slice(0, 300).map(xfOut);
+      return send(res, 200, { list, settings: xfSet(), counts: { open: XF.list.filter(x => x.status === 'open').length, confirmed: XF.list.filter(x => x.status === 'confirmed').length, false: XF.list.filter(x => x.status === 'false').length } });
+    }
+    if (req.method === 'POST' && p === '/api/xflags') {
+      if (B.op === 'settings') {
+        if (!has(u, 'automations.manage')) return deny(res);
+        if (B.lvl !== undefined && !XF_LVL[B.lvl]) return send(res, 400, { error: 'Pick Low, Medium or High.' });
+        const cur = xfSet(); D.settings.xflags = { on: B.on === undefined ? cur.on : !!B.on, lvl: B.lvl || cur.lvl };
+        audit(u.user, `Exploit flags ${D.settings.xflags.on ? 'on, sensitivity ' + D.settings.xflags.lvl : 'off'}`); return ok(res);
+      }
+      if (!has(u, 'mod.kick')) return deny(res);
+      const x = XF.list.find(x => x.id === String(B.id || '')); if (!x) return send(res, 404, { error: 'That flag is not there any more.' });
+      const what = { confirm: 'confirmed', false: 'false', reopen: 'open' }[B.op]; if (!what) return send(res, 400, { error: 'bad request' });
+      if (x.status === what) return ok(res);
+      const p0 = D.play[x.uid]; if (p0 && p0.rk) p0.rk = p0.rk.filter(k => !(k[0] === 'xflag' && k[2] === x.id)); // a flag only adds to the risk score while it is confirmed
+      if (what === 'confirmed') rkAdd(x.uid, x.name, 'xflag', x.id);
+      x.status = what; if (what === 'open') { delete x.by; delete x.at; } else { x.by = u.user; x.at = Date.now(); }
+      audit(u.user, `${what === 'confirmed' ? 'Confirmed' : what === 'false' ? 'Marked as a false positive' : 'Reopened'} the ${x.kind} flag on ${x.name}`); return ok(res);
+    }
     if (req.method === 'GET' && p === '/api/alts') { // linked accounts, with how often staff agreed with each tier
       if (!has(u, 'mod.kick')) return deny(res);
       const id = +url.searchParams.get('userId') || 0, all = Object.values(ALT.links).map(altScore); // rescored, so older links follow today's rules
@@ -2784,7 +2956,7 @@ async function route(req, res, url, p) {
       if (!has(u, 'logbook.note')) return deny(res);
       const items = vaultItems();
       if (B.op === 'add') {
-        const kind = ['link', 'note', 'box'].includes(B.kind) ? B.kind : ''; if (!kind) return send(res, 400, { error: 'bad request' });
+        const kind = ['link', 'note', 'box', 'replay'].includes(B.kind) ? B.kind : ''; if (!kind) return send(res, 400, { error: 'bad request' });
         const cs = String(B.case || ''); if (cs && !CASE_RE.test(cs)) return send(res, 400, { error: 'bad request' });
         const ci = cs ? caseInfo(cs) : null; if (cs && !ci) return send(res, 404, { error: 'That report, appeal or escalation is not there any more.' });
         const uid0 = ci && ci.uid ? ci.uid : Number.isInteger(B.userId) && B.userId > 0 ? B.userId : 0; if (!uid0 && !cs) return send(res, 400, { error: 'bad request' });
@@ -2798,11 +2970,22 @@ async function route(req, res, url, p) {
           x.box = bid; x.server = String(bx.server || '').slice(0, 8); x.msgs = (bx.msgs || []).slice(0, 50).map(m => ({ t: m.t, userId: m.userId, name: m.name, text: String(m.text || '').slice(0, 300), ...(m.flags && m.flags.length ? { flags: m.flags } : {}) })); x.title ||= 'Chat box ' + bid;
         }
         if (vaultSize() + JSON.stringify(x).length > VAULT_CAP) return send(res, 413, { error: 'The evidence vault is full. Delete old items, or keep new items for a shorter time in Settings, Automations.' });
+        if (kind === 'replay') { // a copy of the clip that lives as long as this vault item, so the nightly clean-up never removes it
+          if (!has(u, 'replays.view')) return deny(res);
+          const rid = String(B.replay || '').toUpperCase(); if (!RP_ID_RE.test(rid)) return send(res, 400, { error: 'That is not a replay ID.' });
+          let rows; try { rows = await rpRows(rid); } catch { return send(res, 503, { error: 'Replays are not set up yet.' }); }
+          const head = rows.find(y => y.seq === 0); if (!head) return send(res, 404, { error: 'That replay is not there any more.' });
+          if (head.evidence) return send(res, 409, { error: 'This replay is already a kept copy.' });
+          const size = rows.reduce((a, y) => a + (y.bytes || 0), 0), used = await rpUsed(); if (used.bytes + size > rpCap()) { rpFull(); return send(res, 413, { error: 'Replay storage is full. Remove evidence copies you no longer need, or keep replays for fewer days.' }); }
+          const nid = boxId(), keepIso = new Date(x.exp).toISOString(), copy = rows.map(y => ({ ...y, id: nid, wid: CTX.wid, keep_until: keepIso, evidence: true }));
+          const rr = await cbFetch('replays?on_conflict=id,seq', { method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' }, body: JSON.stringify(copy), ms: 8000 }); if (!rr.ok) return send(res, 502, { error: 'Could not keep the replay. Try again.' });
+          x.rid = nid; x.server = head.server; x.size = size; x.title ||= `Replay from server ${head.server}, ${new Date(Date.parse(head.started_at)).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+        }
         items.push(x); audit(u.user, `Added ${kind === 'box' ? 'a chat box copy' : 'a ' + kind} to the evidence vault${x.name ? ' for ' + x.name : ''}`);
         return send(res, 200, { ok: true, id: x.id, warn: vaultSize() >= VAULT_CAP * 0.8 });
       }
       const x = items.find(x => x.id === B.id); if (!x) return send(res, 404, { error: 'This item has expired or was deleted.' });
-      if (B.op === 'delete') { if (x.byUid !== uid && !has(u, 'logbook.revert')) return deny(res); VT.items = items.filter(y => y !== x); audit(u.user, `Deleted "${x.title}" from the evidence vault`); return ok(res); }
+      if (B.op === 'delete') { if (x.byUid !== uid && !has(u, 'logbook.revert')) return deny(res); VT.items = items.filter(y => y !== x); if (x.rid) await cbFetch(`replays?wid=eq.${CTX.wid}&id=eq.${x.rid}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' }, ms: 5000 }).catch(() => {}); audit(u.user, `Deleted "${x.title}" from the evidence vault`); return ok(res); }
       if (B.op === 'attach' || B.op === 'detach') {
         const cs = String(B.case || ''); if (!CASE_RE.test(cs)) return send(res, 400, { error: 'bad request' });
         if (B.op === 'attach') { if (!caseInfo(cs)) return send(res, 404, { error: 'That report, appeal or escalation is not there any more.' }); if (!x.cases.includes(cs)) x.cases.push(cs); }
@@ -3176,6 +3359,7 @@ async function route(req, res, url, p) {
       if (B.op === 'toggle') { if (!has(u, 'automations.manage')) return deny(res); D.settings.appeals = !!B.on; audit(u.user, B.on ? 'Opened ban appeals' : 'Closed ban appeals'); return ok(res); }
       if (B.op === 'webreports') { if (!has(u, 'automations.manage')) return deny(res); D.settings.webReports = !!B.on; audit(u.user, B.on ? 'Opened the web report form' : 'Closed the web report form'); return ok(res); }
       if (B.op === 'hubappeals') { if (!has(u, 'automations.manage')) return deny(res); D.settings.hubAppeals = !!B.on; audit(u.user, B.on ? 'Banned players can appeal from the Sentinel appeal game' : 'Banned players can no longer appeal from the Sentinel appeal game'); return ok(res); }
+      if (B.op === 'rejoin') { if (!has(u, 'automations.manage')) return deny(res); D.settings.rejoin = !!B.on; audit(u.user, B.on ? 'Players can use !rejoin' : 'Players can no longer use !rejoin'); return ok(res); }
       if (B.op === 'warnack') { if (!has(u, 'automations.manage')) return deny(res); D.settings.warnAck = !!B.on; audit(u.user, B.on ? 'Warned players are now asked to acknowledge the warning' : 'Warned players are no longer asked to acknowledge the warning'); return ok(res); }
       if (B.op === 'mergemin') { if (!has(u, 'automations.manage')) return deny(res); if (!MERGE_MIN.includes(B.min)) return send(res, 400, { error: 'Pick 5, 10 or 30 minutes.' }); D.settings.mergeMin = B.min; audit(u.user, `Reports about the same player within ${B.min} minutes are now grouped`); return ok(res); }
       if (B.op === 'publiclog') { if (!has(u, 'automations.manage')) return deny(res); D.settings.publicLog = !!B.on; audit(u.user, B.on ? 'Published the moderation log' : 'Made the moderation log private'); return ok(res); }
@@ -3382,7 +3566,7 @@ async function route(req, res, url, p) {
       const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
       const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
-        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x), linkedAccounts: Object.values(ALT.links).filter(L => L.a === id || L.b === id).map(altOut) };
+        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x), exploitFlags: XF.list.filter(x => x.uid === id).map(xfOut), replays: await (async () => { try { const r = await cbFetch(`replays?select=id,started_at,ended_at,server,evidence&wid=eq.${CTX.wid}&seq=eq.0&user_ids=cs.%7B${id}%7D&limit=500`, { ms: 4000 }); return r.ok ? await r.json() : []; } catch { return []; } })(), linkedAccounts: Object.values(ALT.links).filter(L => L.a === id || L.b === id).map(altOut) };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
     }
     if (req.method === 'POST' && p === '/api/erase') {
