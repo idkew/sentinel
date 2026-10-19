@@ -9,7 +9,9 @@
 	                                and   !rejoin   (move to a fresh server; the owner can switch it off on the website)
 	  * Replays        -> when the owner turns them on, the last 5 minutes of player positions, deaths, joins, leaves and chat
 	                      are kept in this server's memory and uploaded only when something happens (a report, a moderation
-	                      action, a chat alert, an exploit flag, or staff typing !replay). Staff watch them on the website.
+	                      action, a chat alert, an exploit flag, or staff typing !replay), with 30 more seconds after it.
+	                      If nothing happens, nothing leaves the server. Staff watch them on the website: opening a replay
+	                      makes the server upload what it has straight away, and recording carries on.
 	                      An outline of the map (the 300 largest anchored parts, as plain rectangles) is sent with each replay.
 	                      If the server closes while a replay is recording, what was recorded so far is uploaded straight away.
 	  * Exploit flags  -> speed, teleport and fly are measured here on the server and sent to Sentinel for staff to review.
@@ -42,7 +44,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 28 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 29 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -837,7 +839,7 @@ local function xSample(p, now)
 end
 
 ------------------------------------------------------------------ replays: a rolling recording in memory, uploaded only when something happens
-local RP = { on = false, min = 5, after = 120 } -- from the website at every check-in. Off until the owner turns it on
+local RP = { on = false, min = 5, after = 30 } -- from the website at every check-in. Off until the owner turns it on
 local RP_HZ, RP_MAXP, RP_MAXLEN, RP_CHUNK, RP_MAXBYTES = 2, 50, 600, 60000, 1500000 -- 2 samples a second, 50 players, 10 minute clips, 60 KB chunks, 1.5 MB per clip
 local RP0 = os.clock()
 local RP_EPOCH = DateTime.now().UnixTimestampMillis - RP0 * 1000 -- wall-clock time of tick 0
@@ -933,7 +935,7 @@ local function rpBuild(c, kEnd) -- delta-encoded tracks: per player, runs of [ti
 	local t0 = math.floor(RP_EPOCH + c.k0 * 1000 / RP_HZ)
 	return { v = 1, hz = RP_HZ, t0 = t0, len = kEnd - c.k0, names = names, tracks = tracks, ev = ev }, users, names, t0
 end
-local function rpSend(c, kEnd, closing) -- closing: the server is shutting down, so upload faster
+local function rpSend(c, kEnd, closing) -- closing: the server is shutting down or someone is waiting to watch, so upload faster
 	local okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd)
 	if not okB then warn("[Sentinel] Could not build a replay: " .. tostring(clip)) return end
 	local json = HttpService:JSONEncode(clip)
@@ -970,6 +972,12 @@ local function rpSend(c, kEnd, closing) -- closing: the server is shutting down,
 		end
 		task.wait(closing and 0.5 or 2) -- at most one chunk every 2 seconds, well inside Roblox's HTTP limits
 	end
+end
+local function rpNow() -- someone on the website wants to watch: end the clip here and upload it at once. Recording carries on
+	if not rpClip then return end
+	local c = rpClip
+	rpClip = nil
+	task.spawn(rpSend, c, rpK(), true)
 end
 local function rpSample()
 	local k = rpK()
@@ -1057,6 +1065,7 @@ local function handle(c)
 		for _, p in Players:GetPlayers() do banner(p, tostring(c.text), "blue", "Announcement") end
 	elseif c.type == "replay" then
 		rpTrigger(type(c.why) == "table" and c.why or { k = "staff" })
+		if c.now == true then rpNow() end
 	elseif c.type == "rejoin" then
 		if plr then task.spawn(rejoinPlayer, plr, c.via == true) end
 	elseif c.type == "restart" then
@@ -1088,7 +1097,7 @@ local function sync()
 		local was = RP.on
 		RP.on = data.rp.on == true
 		RP.min = math.clamp(tonumber(data.rp.min) or 5, 1, 10)
-		RP.after = math.clamp(tonumber(data.rp.after) or 120, 30, 300)
+		RP.after = math.clamp(tonumber(data.rp.after) or 30, 10, 300)
 		if was and not RP.on then rpFrames, rpEvents, rpClip = {}, {}, nil end -- switched off: forget everything
 	end
 	if type(data.xd) == "table" then -- exploit flag settings from the website
