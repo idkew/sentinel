@@ -642,7 +642,7 @@ async function altRun(req, b, ev) { // called on every game check-in with joins,
   altPrune(now);
 }
 // ---- replays: a short top-down recording of one server, kept in the replays table (see supabase.sql). The game only uploads when something happens
-const RP_DAYS = [7, 14, 30], RP_AFTER = 120, RP_MAX_MB = +env.REPLAY_MAX_MB || 25, RP_GLOBAL_MB = +env.REPLAY_GLOBAL_MAX_MB || 200, RP_KINDS = ['report', 'action', 'automod', 'alert', 'staff', 'button', 'xflag'], RP_ID_RE = /^[A-Z0-9]{9}-[A-Z0-9]{8}$/;
+const RP_DAYS = [7, 14, 30], RP_AFTER = 30, RP_NOW_V = 29, RP_MAX_MB = +env.REPLAY_MAX_MB || 25, RP_GLOBAL_MB = +env.REPLAY_GLOBAL_MAX_MB || 200, RP_KINDS = ['report', 'action', 'automod', 'alert', 'staff', 'button', 'xflag', 'view'], RP_ID_RE = /^[A-Z0-9]{9}-[A-Z0-9]{8}$/;
 const rpSet = () => { const x = D.settings.replays || {}; return { on: x.on === true, days: RP_DAYS.includes(x.days) ? x.days : 7 }; };
 const rpCap = () => { const v = D.meta && D.meta.caps && D.meta.caps.replayMB; return (Number.isInteger(v) && v > 0 ? v : RP_MAX_MB) * 1e6; };
 const rpId = (wid, job, clip) => { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', h = hash('rp:' + wid + ':' + job + ':' + clip); let x = ''; for (let i = 0; i < 17; i++) x += A[h[i] % 36]; return x.slice(0, 9) + '-' + x.slice(9); }; // the same for every chunk of one clip, so chunks can arrive in any order
@@ -653,10 +653,10 @@ function rpWhy(w) {
   if (Number.isFinite(w.t)) x.t = Math.round(w.t); if (Number.isInteger(w.at) && w.at >= 0) x.at = w.at; return x;
 }
 const rpMap = m => Array.isArray(m) ? m.slice(0, 300).filter(a => Array.isArray(a) && a.length === 5 && a.every(v => Number.isFinite(v) && Math.abs(v) < 1e6)).map(a => a.map(Math.round)) : null; // map outline: [x, z, width, depth, rotation]
-function rpCmd(sid, why) { // ask one live server (game script 27 or newer) to save a replay
+function rpCmd(sid, why, fast) { // ask one live server (game script 27 or newer) to save a replay. fast: upload it straight away (someone wants to watch)
   const sv = R.servers[sid], now = Date.now(); if (!rpSet().on || !sv || now - sv.last > LIVE_MS || (sv.sv || 1) < 27 || !('cmds' in loaded)) return false;
   sv.rp = { until: now + (RP_AFTER + 60) * 1000, u: [...new Set([...(sv.rp && sv.rp.until > now ? sv.rp.u : []), ...sv.players.map(p => p.userId)])].slice(0, 60) }; // recording: the clip uploads once the game stops recording
-  if (R.cmds.filter(c => c.type === 'replay' && c.target === sid && !c.seen[sid]).length < 5) cmd({ type: 'replay', target: sid, why: { ...why, t: now } }); return true;
+  if (R.cmds.filter(c => c.type === 'replay' && c.target === sid && !c.seen[sid]).length < 5) cmd({ type: 'replay', target: sid, why: { ...why, t: Date.now() }, ...(fast ? { now: true } : {}) }); return true;
 }
 function rpFor(uid, why) { // something happened to a player: every live server they are in saves a replay
   if (!uid || !rpSet().on || !('live' in loaded) || !('cmds' in loaded)) return; const now = Date.now();
@@ -1243,7 +1243,7 @@ function sync(b) {
   const now = Date.now(), id = String(b.jobId || 'studio').slice(0, 64), prev = R.servers[id], dt = prev ? Math.min((now - prev.last) / 1000, 30) : 0;
   const players = (Array.isArray(b.players) ? b.players : []).slice(0, 200).filter(p => p && Number.isInteger(p.userId) && p.userId > 0)
     .map(p => ({ userId: p.userId, name: String(p.name || p.userId).slice(0, 40), displayName: String(p.displayName || p.name || '').slice(0, 40) }));
-  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160), closed: (prev && prev.closed) || 0, closeMsg: (prev && prev.closeMsg) || '', restarting: (prev && prev.restarting) || 0, rp: prev && prev.rp && prev.rp.until > now ? prev.rp : null };
+  R.servers[id] = { players, last: now, first: prev ? prev.first || now : now, sv: Number.isInteger(b.scriptV) && b.scriptV > 0 && b.scriptV < 1000 ? b.scriptV : 1, chat: ['text', 'legacy', 'nochannel'].includes(b.chat) ? b.chat : '', muteErr: String(b.muteErr || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 160), closed: (prev && prev.closed) || 0, closeMsg: (prev && prev.closeMsg) || '', restarting: (prev && prev.restarting) || 0, rp: prev && prev.rp && prev.rp.until > now ? prev.rp : null, rpNow: (prev && prev.rpNow) || 0 };
   for (const [j, sv] of Object.entries(R.servers)) if (now - sv.last > 6e4) delete R.servers[j];
   for (const p of players) tick({ ...p, sv: id.slice(0, 8) }, dt, now);
   for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 300)) {
@@ -2542,7 +2542,7 @@ async function route(req, res, url, p) {
       for (const e of ev.filter(e => e && e.type === 'rejoin' && Number.isInteger(e.userId) && e.userId > 0).slice(0, 10)) rejoinAsk(e, String(b.jobId || 'studio').slice(0, 64));
       for (const e of ev.filter(e => e && e.type === 'replay' && Number.isInteger(e.userId) && e.userId > 0).slice(0, 5)) { // !replay: staff only
         const sid = String(b.jobId || 'studio').slice(0, 64), say = text => cmd({ type: 'message', kind: 'info', userId: e.userId, target: sid, title: 'Replay', text });
-        if (!isStaffId(e.userId)) say('Only staff can save replays.'); else if (!rpSet().on) say('Replays are switched off for this game. The owner can turn them on in Settings, Automations.'); else if (rpCmd(sid, { k: 'staff', uid: e.userId, by: cleanName(e.name, 40) })) say('Saving a replay of this server. It will be ready on the website in about 2 minutes.'); else say('This server could not save a replay yet. Try again in a few seconds.');
+        if (!isStaffId(e.userId)) say('Only staff can save replays.'); else if (!rpSet().on) say('Replays are switched off for this game. The owner can turn them on in Settings, Automations.'); else if (rpCmd(sid, { k: 'staff', uid: e.userId, by: cleanName(e.name, 40) })) say('Saving a replay of this server. It will be ready on the website in about a minute.'); else say('This server could not save a replay yet. Try again in a few seconds.');
       }
       const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; await banSyncPull();
       return send(res, 200, out);
@@ -2836,8 +2836,14 @@ async function route(req, res, url, p) {
         const q = [`select=id,started_at,ended_at,server,evidence&wid=eq.${CTX.wid}&seq=eq.0`, `started_at=lte.${new Date(t + 5000).toISOString()}`, `ended_at=gte.${new Date(t - 5000).toISOString()}`, uid ? `user_ids=cs.%7B${uid}%7D` : '', sv ? `server=eq.${sv}` : '', 'order=started_at.desc', 'limit=5'].filter(Boolean).join('&');
         const r = await cbFetch('replays?' + q, { ms: 4000 }); if (!r.ok) return send(res, 200, { none: true, why: 'Replays are not set up yet.' });
         const list = await r.json(), x = list.find(y => !y.evidence) || list[0]; if (x) return send(res, 200, { id: x.id });
-        const now = Date.now(), rec = t > now - 15 * 60000 && Object.entries(R.servers).some(([sid, s]) => s.rp && s.rp.until > now && ((sv && sid.slice(0, 8) === sv) || (uid && s.rp.u.includes(uid))));
-        return send(res, 200, rec ? { none: true, recording: true, why: `The game is still recording this. It keeps recording for ${RP_AFTER / 60} minutes after something happens, then uploads the replay. Try again in a couple of minutes.` } : { none: true, why });
+        const now = Date.now(), at = ([sid, s]) => now - s.last < LIVE_MS && ((sv && sid.slice(0, 8) === sv) || (uid && (s.players.some(p => p.userId === uid) || (s.rp && s.rp.until > now && s.rp.u.includes(uid)))));
+        const live = rpSet().on && t > now - (5 * 60 + RP_AFTER) * 1000 && t < now + 60000 ? Object.entries(R.servers).filter(at).filter(([, s]) => (s.sv || 1) >= RP_NOW_V) : [];
+        if (live.length) { // that moment is still in a game server's memory: it uploads it now and keeps recording
+          if (url.searchParams.get('poll') !== '1') for (const [sid, s] of live) if (!(s.rpNow > now - 20000)) { s.rpNow = now; rpCmd(sid, { k: 'view', by: u.user }, true); }
+          return send(res, 200, { none: true, wait: true, why: 'Getting the replay from the game server.' });
+        }
+        const rec = t > now - 15 * 60000 && Object.entries(R.servers).some(([sid, s]) => s.rp && s.rp.until > now && ((sv && sid.slice(0, 8) === sv) || (uid && s.rp.u.includes(uid))));
+        return send(res, 200, rec ? { none: true, recording: true, why: `The game is still recording this. It keeps recording for ${RP_AFTER} seconds after something happens, then uploads the replay. Try again in a minute.` } : { none: true, why });
       } catch { return send(res, 200, { none: true, why }); }
     }
     if (req.method === 'POST' && p === '/api/replays') {
@@ -2853,7 +2859,7 @@ async function route(req, res, url, p) {
         if (!rpSet().on) return send(res, 409, { error: 'Replays are switched off. Turn them on in Settings, Automations.' });
         if (!sv || Date.now() - sv.last > LIVE_MS) return send(res, 404, { error: 'That server has already closed.' });
         if ((sv.sv || 1) < 27) return send(res, 409, { error: `This server runs game script version ${sv.sv || 1}. Replays need version 27 or newer.` });
-        rpCmd(sid, { k: 'button', by: u.user }); audit(u.user, `Asked server ${sid.slice(0, 8)} to save a replay`); return ok(res);
+        const now = (sv.sv || 1) >= RP_NOW_V; if (now) sv.rpNow = Date.now(); rpCmd(sid, { k: 'button', by: u.user }, now); audit(u.user, `Asked server ${sid.slice(0, 8)} to save a replay`); return send(res, 200, { ok: true, now, t: Date.now() });
       }
       return send(res, 400, { error: 'bad request' });
     }
