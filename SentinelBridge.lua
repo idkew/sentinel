@@ -11,6 +11,7 @@
 	                      are kept in this server's memory and uploaded only when something happens (a report, a moderation
 	                      action, a chat alert, an exploit flag, or staff typing !replay). Staff watch them on the website.
 	                      An outline of the map (the 300 largest anchored parts, as plain rectangles) is sent with each replay.
+	                      If the server closes while a replay is recording, what was recorded so far is uploaded straight away.
 	  * Exploit flags  -> speed, teleport and fly are measured here on the server and sent to Sentinel for staff to review.
 	                      Nothing ever happens to a player automatically because of a flag.
 
@@ -21,6 +22,8 @@
 	      player:SetAttribute("SentinelExempt", workspace:GetServerTimeNow() + 10) -- exempt for the next 10 seconds
 	      player:SetAttribute("SentinelExempt", true)                              -- always exempt (for example admins)
 	  Players standing on moving or unanchored parts, seated, climbing or swimming are never checked for speed or fly.
+	  Admin fly and noclip commands are checked like any other movement, so exempt staff who use them.
+	  If your game sets PlatformStand from a LocalScript (some gliders and vehicles do), exempt those players too.
 	  To see what the checks measure, set DEBUG_FLAGS = true below and watch the Developer Console (Server tab).
 	  * Report button  -> the optional SentinelClient script adds a Report button (pick a player + details); this script receives it
 
@@ -39,7 +42,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 27 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 28 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -684,6 +687,7 @@ local XCOOL, XHOUR = 120, 6 -- one flag per player and type every 2 minutes, at 
 local xs = {} -- per player: recent samples, hits, game moves
 local cfOK, cfWarned = true, false -- false once the "moved by the game" signal looks unreliable in this server
 local S = Enum.HumanoidStateType
+local XDEVICE = { [S.PlatformStanding] = true } -- states the player's own device reports. Fly and noclip tools use them, so they are still checked (PlatformStand set by a server script is skipped)
 local XSKIP = { [S.Seated] = "seated", [S.Climbing] = "climbing", [S.Swimming] = "swimming", [S.Ragdoll] = "ragdoll", [S.FallingDown] = "falling down", [S.Physics] = "physics", [S.PlatformStanding] = "platform stand", [S.Dead] = "dead" }
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -744,17 +748,18 @@ local function xSample(p, now)
 	elseif xExempt(p) then why = "exempt"
 	elseif hum.SeatPart or hum.Sit then why = "seated"
 	elseif hum.PlatformStand then why = "platform stand"
-	elseif XSKIP[state] then why = XSKIP[state]
+	elseif XSKIP[state] and not XDEVICE[state] then why = XSKIP[state]
 	elseif hrp.AssemblyRootPart ~= hrp then why = "attached to something"
 	elseif cfOK and now - (st.moved or -1e9) < 3 then why = "moved by the game"
 	end
 	rayParams.FilterDescendantsInstances = { char }
-	local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -15, 0), rayParams)
+	local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -6, 0), rayParams) -- ground within about 3 studs of the feet
 	local part = hit and hit.Instance
 	local moving = part ~= nil and part:IsA("BasePart") and (not part.Anchored or part.AssemblyLinearVelocity.Magnitude > 1)
-	local free = state == S.Freefall or state == S.Jumping
-	local smp = { t = now, p = hrp.Position, ws = hum.WalkSpeed, skip = why, ground = hit ~= nil, moving = moving, free = free, cf = st.cfN }
 	local prev = st.samples[#st.samples]
+	-- jumping, falling or knocked back: the height changes. Hovering in the air at one height is not excused (fly tools)
+	local free = (state == S.Freefall or state == S.Jumping) and prev ~= nil and math.abs(hrp.Position.Y - prev.p.Y) > 1
+	local smp = { t = now, p = hrp.Position, ws = hum.WalkSpeed, skip = why, ground = hit ~= nil, moving = moving, free = free, cf = st.cfN }
 	table.insert(st.samples, smp)
 	if #st.samples > 12 then table.remove(st.samples, 1) end
 	local hd, dt = 0, 1
@@ -928,7 +933,7 @@ local function rpBuild(c, kEnd) -- delta-encoded tracks: per player, runs of [ti
 	local t0 = math.floor(RP_EPOCH + c.k0 * 1000 / RP_HZ)
 	return { v = 1, hz = RP_HZ, t0 = t0, len = kEnd - c.k0, names = names, tracks = tracks, ev = ev }, users, names, t0
 end
-local function rpSend(c, kEnd)
+local function rpSend(c, kEnd, closing) -- closing: the server is shutting down, so upload faster
 	local okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd)
 	if not okB then warn("[Sentinel] Could not build a replay: " .. tostring(clip)) return end
 	local json = HttpService:JSONEncode(clip)
@@ -947,7 +952,7 @@ local function rpSend(c, kEnd)
 	local head = { t0 = t0, t1 = t0 + math.floor(clip.len * 1000 / RP_HZ), users = users, names = names, why = c.why, hz = RP_HZ, map = okM and map or nil }
 	for seq, part in cuts do
 		local sent = false
-		for attempt = 1, 3 do
+		for attempt = 1, closing and 2 or 3 do
 			local ok, res = pcall(HttpService.RequestAsync, HttpService, {
 				Url = URL .. "/game/replay", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
 				Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, clip = id, seq = seq, total = #cuts, head = seq == 1 and head or nil, data = part }),
@@ -957,13 +962,13 @@ local function rpSend(c, kEnd)
 				warn("[Sentinel] Replay not saved: " .. (res.StatusCode == 413 and "replay storage is full" or res.StatusCode == 409 and "replays are switched off" or "the game key was refused"))
 				return
 			end
-			task.wait(3 * attempt)
+			task.wait(closing and 1 or 3 * attempt)
 		end
 		if not sent then
 			warn("[Sentinel] Could not upload a replay (the website did not answer), so it was not saved.")
 			return
 		end
-		task.wait(2) -- at most one chunk every 2 seconds, well inside Roblox's HTTP limits
+		task.wait(closing and 0.5 or 2) -- at most one chunk every 2 seconds, well inside Roblox's HTTP limits
 	end
 end
 local function rpSample()
@@ -1079,15 +1084,6 @@ local function sync()
 	end
 	pending = table.move(pending, #sent + 1, #pending, 1, {}) -- drop only what was delivered
 	local data = HttpService:JSONDecode(res.Body)
-	for _, c in data.commands or {} do task.spawn(handle, c) end
-	muted = {}
-	for _, id in data.muted or {} do muted[id] = true end
-	chatOff = {}
-	if data.muteHide then
-		for _, id in data.muteHide do chatOff[id] = true end
-	else
-		for id in muted do chatOff[id] = true end -- an older panel: every mute takes the chat box away
-	end
 	if type(data.rp) == "table" then -- replay settings from the website
 		local was = RP.on
 		RP.on = data.rp.on == true
@@ -1098,6 +1094,15 @@ local function sync()
 	if type(data.xd) == "table" then -- exploit flag settings from the website
 		XD.on = data.xd.on ~= false
 		XD.lvl = XL[data.xd.lvl] and data.xd.lvl or "low"
+	end
+	for _, c in data.commands or {} do task.spawn(handle, c) end
+	muted = {}
+	for _, id in data.muted or {} do muted[id] = true end
+	chatOff = {}
+	if data.muteHide then
+		for _, id in data.muteHide do chatOff[id] = true end
+	else
+		for id in muted do chatOff[id] = true end -- an older panel: every mute takes the chat box away
 	end
 	local okMute, muteErr = pcall(applyMutes)
 	if not okMute then warn("[Sentinel] Mute error: " .. tostring(muteErr)) end
@@ -1168,6 +1173,13 @@ task.spawn(function() -- replays: 2 samples a second, only while the owner has t
 			if not ok then warn("[Sentinel] Replay recording error: " .. tostring(err)) end
 		end
 	end
+end)
+game:BindToClose(function() -- the server is closing (last player left, restart or shutdown): upload the clip being recorded now, or it is lost
+	if not rpClip then return end
+	local c = rpClip
+	rpClip = nil
+	local ok, err = pcall(rpSend, c, rpK(), true)
+	if not ok then warn("[Sentinel] Could not upload a replay while closing: " .. tostring(err)) end
 end)
 task.spawn(function() -- exploit checks, once a second
 	while true do
