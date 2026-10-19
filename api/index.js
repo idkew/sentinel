@@ -2507,7 +2507,8 @@ async function route(req, res, url, p) {
         const meta = rpZ(JSON.stringify({ total, names, hz: [1, 2].includes(h.hz) ? h.hz : 2, map: rpMap(h.map) }));
         rows.push({ id, seq: 0, wid, server: job.slice(0, 8), started_at: new Date(t0).toISOString(), ended_at: new Date(t1).toISOString(), trigger: (Array.isArray(h.why) ? h.why : []).slice(0, 20).map(rpWhy).filter(Boolean), user_ids: users, data: meta, bytes: meta.length, keep_until: keep, evidence: false });
       }
-      const dz = rpZ(data); rows.push({ id, seq, wid, server: job.slice(0, 8), trigger: [], user_ids: [], data: dz, bytes: dz.length, keep_until: keep, evidence: false });
+      const dz = rpZ(data); rows.push( // every row in one insert needs the same columns, or Supabase refuses them all
+        { id, seq, wid, server: job.slice(0, 8), started_at: null, ended_at: null, trigger: [], user_ids: [], data: dz, bytes: dz.length, keep_until: keep, evidence: false });
       let r; try { r = await cbFetch('replays?on_conflict=id,seq', { method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' }, body: JSON.stringify(rows), ms: 6000 }); } catch { return send(res, 503, { error: 'Try again' }); }
       if (!r.ok) { const t = await r.text().catch(() => ''); if (r.status === 404 || /replays|42P01|PGRST20/.test(t)) { logEvent('replay', 'Replays need the new SQL in supabase.sql', wid); return send(res, 503, { error: 'Replays need the new SQL in supabase.sql.' }); } logEvent('replay', 'Replay chunk not saved: HTTP ' + r.status); return send(res, 502, { error: 'Could not save' }); }
       if (seq === 1) feed(`Replay saved from server ${job.slice(0, 8)}`);
