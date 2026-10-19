@@ -145,3 +145,40 @@ revoke all on function public.panel_usage() from public, anon, authenticated;
 revoke all on function public.chat_box_usage_all() from public, anon, authenticated;
 grant execute on function public.panel_usage() to service_role;
 grant execute on function public.chat_box_usage_all() to service_role;
+
+-- ===== Added in Sentinel 6.8 (replays). Safe to run again: it only creates what is missing. =====
+
+-- Replays: a short top-down recording of one game server, saved only when something happens (a report, a moderation
+-- action, a chat alert, an exploit flag, or staff asking). Row seq 0 is the header; rows 1 and up hold the clip,
+-- deflate-compressed and base64-encoded by the website. Evidence copies have evidence = true and a later keep_until.
+create table if not exists public.replays (
+  id          text not null,                -- XXXXXXXXX-XXXXXXXX
+  seq         integer not null,
+  wid         text not null,
+  server      text not null default '',     -- short game server id
+  started_at  timestamptz,                  -- header row only
+  ended_at    timestamptz,                  -- header row only
+  trigger     jsonb not null default '[]',  -- header row only: what made it save
+  user_ids    bigint[] not null default '{}',
+  data        text not null default '',
+  bytes       integer not null default 0,
+  keep_until  timestamptz not null,
+  evidence    boolean not null default false,
+  created_at  timestamptz not null default now(),
+  primary key (id, seq)
+);
+create index if not exists replays_wid_time on public.replays (wid, started_at desc) where seq = 0;
+create index if not exists replays_users on public.replays using gin (user_ids);
+create index if not exists replays_keep on public.replays (keep_until);
+alter table public.replays enable row level security;
+revoke all on public.replays from anon, authenticated;
+
+-- Replay storage per workspace, and for every workspace (admin console).
+create or replace function public.replay_usage(w text) returns table (n bigint, bytes bigint)
+language sql stable as $$ select count(distinct id), coalesce(sum(bytes), 0) from public.replays where wid = w $$;
+create or replace function public.replay_usage_all() returns table (wid text, n bigint, bytes bigint)
+language sql stable as $$ select wid, count(distinct id), coalesce(sum(bytes), 0) from public.replays group by wid $$;
+revoke all on function public.replay_usage(text) from public, anon, authenticated;
+revoke all on function public.replay_usage_all() from public, anon, authenticated;
+grant execute on function public.replay_usage(text) to service_role;
+grant execute on function public.replay_usage_all() to service_role;
