@@ -59,7 +59,7 @@ const PERMS = [
   ['rulebook.manage', 'Edit the rulebook', 'Settings'], ['automations.manage', 'Change automations, flagged words and quotas', 'Settings'], ['audit.view', 'See the audit log', 'Settings'],
   ['webhooks.manage', 'Manage Discord notifications', 'Settings', 1], ['privacy.manage', 'Export and erase player data', 'Settings', 1],
   ['forms.review', 'Review form responses and applications', 'Team'], ['forms.manage', 'Create and edit forms', 'Settings'],
-  ['servers.manage', 'Close live servers', 'Game', 1], ['replays.view', 'Watch and save replays', 'Reports', 1], ['staff.review', 'See staff performance and give staff strikes', 'Team', 1],
+  ['servers.manage', 'Close live servers', 'Game', 1], ['replays.view', 'Watch and save replays', 'Reports', 1], ['staff.review', 'See staff performance and give staff strikes', 'Team', 1], ['cases.manage', 'Run internal affairs cases about staff', 'Team', 1],
 ];
 const ALLP = PERMS.map(p => p[0]);
 const defaultRanks = () => ({
@@ -74,10 +74,11 @@ const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhoo
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [] });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
 let ALT = { links: {}, leaves: [], fp: {}, stats: {} }; // linked accounts: their own row, loaded by the game sync and the Linked accounts page
+let IA = { list: [], seq: 0 }; // internal affairs cases about staff: their own row, loaded only by the Cases page
 let XF = { list: [], seq: 0 }; // exploit flags for staff to review: their own row, loaded by the game sync (only when a flag comes in) and the Exploit flags page
 let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
 const CTX = { uid: null, wid: null, guild: null };
@@ -131,7 +132,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}${hb}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -139,6 +140,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
+  ia: { get: () => IA, set: v => { IA = v && typeof v === 'object' && Array.isArray(v.list) ? { list: v.list, seq: v.seq || 0 } : { list: [], seq: 0 }; } },
   xflags: { get: () => XF, set: v => { XF = v && typeof v === 'object' && Array.isArray(v.list) ? { list: v.list, seq: v.seq || 0 } : { list: [], seq: 0 }; } },
   alts: { get: () => ALT, set: v => { ALT = v && typeof v === 'object' && v.links ? { links: v.links, leaves: v.leaves || [], fp: v.fp || {}, stats: v.stats || {} } : { links: {}, leaves: [], fp: {}, stats: {} }; } },
   vault: { get: () => VT, set: v => { VT = v && Array.isArray(v.items) ? v : { items: [] }; } }, // evidence staff keep: links, notes and copied chat boxes
@@ -154,13 +156,13 @@ const ROWS = {
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
 const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
-  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault', 'alts', 'xflags'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts', 'xflags'], '/api/alts': ['alts', 'play'], '/api/xflags': ['xflags', 'play'], '/api/replay': ['logs', 'calls', 'xflags', 'vault'], '/api/replays': ['live', 'cmds'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
+  '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault', 'alts', 'xflags', 'ia'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts', 'xflags', 'ia'], '/api/alts': ['alts', 'play'], '/api/xflags': ['xflags', 'play'], '/api/cases': ['ia', 'logs', 'calls', 'xflags'], '/api/replay': ['logs', 'calls', 'xflags', 'vault'], '/api/replays': ['live', 'cmds'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
 const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // never hang forever on the database
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; XF = { list: [], seq: 0 }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; XF = { list: [], seq: 0 }; IA = { list: [], seq: 0 }; IAQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -207,6 +209,9 @@ function migrate() { // bring older workspaces up to date
   D.strikes ||= [];
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
+  D.iaIdx ||= [];
+  if (!D.meta.v20) { D.meta.v20 = 1; if (!D.settings.cases || typeof D.settings.cases !== 'object') D.settings.cases = { mode: 'decider', reports: 3 }; } // cases: one higher-up decides, and 3 reports in a day open one
+  if (!D.meta.v19) { D.meta.v19 = 1; for (const [k, rk] of Object.entries(D.ranks)) if ((k === 'admin' || rk.perms.includes('ranks.manage')) && !rk.perms.includes('cases.manage')) rk.perms.push('cases.manage'); } // internal affairs cases: Administrator and up
   if (!D.meta.v18) { D.meta.v18 = 1; if (!D.settings.replays || typeof D.settings.replays !== 'object') D.settings.replays = { on: false, days: 7 }; for (const [k, rk] of Object.entries(D.ranks)) if ((k === 'admin' || k === 'mod' || rk.perms.includes('mod.ban')) && !rk.perms.includes('replays.view')) rk.perms.push('replays.view'); } // replays start off; Moderator and up can watch them
   if (!D.meta.v17) { D.meta.v17 = 1; if (!D.settings.xflags || typeof D.settings.xflags !== 'object') D.settings.xflags = { on: true, lvl: 'low' }; if (typeof D.settings.rejoin !== 'boolean') D.settings.rejoin = true; if (D.webhook && D.webhook.events && !('exploit' in D.webhook.events)) D.webhook.events.exploit = false; } // exploit flags start on at Low, !rejoin on, and their Discord notice off
   if (!D.meta.v16) { D.meta.v16 = 1; if (typeof D.settings.warnAck !== 'boolean') D.settings.warnAck = false; } // warning acknowledgement starts off
@@ -225,7 +230,8 @@ function migrate() { // bring older workspaces up to date
 function who(uid) {
   const m = D.members[uid]; if (!m) return null;
   const owner = D.meta.owner === uid, r = D.ranks[m.rank];
-  return { uid, user: m.name, isOwner: owner, rank: m.rank, pos: owner ? 1e9 : (r ? r.pos : 0), perms: new Set(owner ? ALLP : (r ? r.perms : [])), limit: owner ? 0 : (r ? r.limit || 0 : 0) };
+  const pl = owner ? ALLP : (r ? r.perms : []);
+  return { uid, user: m.name, isOwner: owner, rank: m.rank, pos: owner ? 1e9 : (r ? r.pos : 0), perms: new Set(m.iaPause && !owner ? pl.filter(p => !IA_PAUSE(p)) : pl), limit: owner ? 0 : (r ? r.limit || 0 : 0) };
 }
 const has = (u, p) => !!u && u.perms.has(p);
 const memberPos = id => id === D.meta.owner ? 1e9 : (D.ranks[(D.members[id] || {}).rank] || { pos: 0 }).pos;
@@ -911,6 +917,74 @@ function riskOf(id, now = Date.now()) { // 0 to 100, with the parts it is made o
   const up = Math.min(100, list.filter(x => x.points > 0).reduce((a, x) => a + x.points, 0)), down = list.filter(x => x.points < 0).reduce((a, x) => a + x.points, 0);
   return { score: Math.max(0, up + down), parts: list };
 }
+// ---- cases: investigations into a staff member's conduct (internal affairs) or a player's. Their own row; core only keeps a small index for the Inbox
+const IA_CATS = { abuse: 'Abuse of power', wrongful: 'Wrongful action', harass: 'Harassment', leak: 'Leaking', alt: 'Alt abuse', inactive: 'Inactivity', exploit: 'Exploiting', scam: 'Scamming', reports: 'Many reports', other: 'Other' };
+const IA_SCATS = ['abuse', 'wrongful', 'harass', 'leak', 'alt', 'inactive', 'other'], IA_PCATS = ['exploit', 'harass', 'scam', 'alt', 'reports', 'other'];
+const IA_FIND = { sustained: 'Sustained', notsustained: 'Not sustained', unfounded: 'Unfounded', exonerated: 'Exonerated' }, IA_ROLES = ['complainant', 'witness', 'subject', 'other'];
+const IA_PUN = { player: ['none', 'warn', 'kick', 'mute', 'ban', 'perm'], staff: ['none', 'warning', 'strike', 'rank', 'remove'] }, IA_OUT = ['revert', ...new Set([...IA_PUN.player, ...IA_PUN.staff])]; // what a vote or the decider can pick
+const IA_PAUSE = p => p.startsWith('mod.') || p === 'logbook.revert' || p === 'servers.manage'; // what a staff member cannot do while their case has their powers paused
+const IA_KEEP = 365 * 864e5, IA_MAX = 400, IA_OPEN_MAX = 300, IA_CAP = 1.5e6, IA_EV = 60, IA_TEAM = 15, IA_VOTE_MS = 48 * 36e5;
+const iaSet = () => { const c = D.settings.cases || {}; return { mode: c.mode === 'vote' ? 'vote' : 'decider', reports: Number.isInteger(c.reports) ? c.reports : 3 }; };
+const iaCan = (u, x) => !!u && (x.subj.kind === 'player' ? has(u, 'mod.ban') : has(u, 'cases.manage') && x.subj.uid !== u.uid && (u.isOwner || u.pos > memberPos(x.subj.uid))); // player cases: anyone who can ban. Staff cases: only people ranked above the subject, never the subject
+const iaIn = (x, uid) => x.team.some(m => m.uid === uid);
+const iaDecider = (u, x) => u.isOwner || (iaIn(x, u.uid) && memberPos(u.uid) >= Math.max(0, ...x.team.filter(m => D.members[m.uid]).map(m => memberPos(m.uid)))); // the highest rank among the case members, or the owner
+function iaOpt(kind, o) { // one punishment a vote or the decider can pick
+  if (!o || typeof o !== 'object' || !IA_PUN[kind].includes(o.k)) return null; const r = { k: o.k };
+  if (o.k === 'mute') r.n = clampInt(o.n, 1, 10080); if (o.k === 'ban') r.n = clampInt(o.n, 60, 525600);
+  if (o.k === 'rank') { if (!D.ranks[o.rank]) return null; r.rank = o.rank; r.rankName = D.ranks[o.rank].name; }
+  return r;
+}
+const iaDur = m => m % 1440 === 0 ? plural(m / 1440, 'day') : m % 60 === 0 ? plural(m / 60, 'hour') : plural(m, 'minute');
+const iaLbl = o => !o ? '' : o.k === 'mute' ? `Mute for ${iaDur(o.n)}` : o.k === 'ban' ? `Suspend for ${iaDur(o.n)}` : o.k === 'rank' ? `Change rank to ${o.rankName}` : { none: 'No action', warn: 'Warn', kick: 'Kick', perm: 'Permanent ban', warning: 'Staff warning', strike: 'Staff strike', remove: 'Remove from the team' }[o.k];
+function iaVoteEnd(x, now) { // a vote ends when every member has voted or after 48 hours. The most votes wins; a tie goes to the choice of the highest-ranked member who voted for one of the tied options
+  const v = x.vote; if (!v || v.done) return;
+  const voters = x.team.map(m => m.uid), cast = Object.keys(v.votes).filter(k => voters.includes(k));
+  if (cast.length < voters.length && now < v.ends) return;
+  v.done = true; v.at = now; const n = v.opts.map((_, i) => cast.filter(k => v.votes[k] === i).length), hi = Math.max(0, ...n);
+  if (!hi) { v.win = null; return; }
+  const tied = n.map((c, i) => c === hi ? i : -1).filter(i => i >= 0), top = cast.slice().sort((a, b) => memberPos(b) - memberPos(a)).find(k => tied.includes(v.votes[k]));
+  v.win = tied.length > 1 && top !== undefined ? v.votes[top] : tied[0]; x.decision = { ...v.opts[v.win], how: 'vote', t: now };
+}
+const iaFix = x => { x.subj.kind ||= 'staff'; if (!x.team) { x.team = x.inv ? [x.inv] : []; delete x.inv; } x.vote ||= null; x.decision ||= null; return x; }; // cases from 6.9 had one investigator
+const iaIndex = () => { const now = Date.now(); D.iaIdx = IA.list.map(x => [x.id, x.subj.uid, x.status, x.closedAt || 0, x.exp || 0, x.st.some(y => y.self) ? 1 : 0, x.subj.kind === 'player' ? 'p' : 's', x.team.length, x.vote && !x.vote.done ? x.vote.ends : 0, x.vote && !x.vote.done ? x.team.map(m => m.uid).filter(k => !(k in x.vote.votes)) : []]); };
+const iaPrune = now => { IA.list.forEach(iaFix); IA.list = IA.list.filter(x => !x.exp || x.exp > now); IA.list.forEach(x => iaVoteEnd(x, now)); iaIndex(); }; // closed cases are kept a year
+const iaFull = () => JSON.stringify(IA).length > IA_CAP;
+function iaNew(subj, by, byUid, cat, text, anon) {
+  const x = { id: 'IA-' + String(++IA.seq).padStart(4, '0'), subj, by, byUid, anon: !!anon, cat, text, prio: 'normal', status: 'open', team: [], ev: [], st: [], notes: [], vote: null, decision: null, finding: null, summary: '', outcome: [], views: [], paused: false, t: Date.now(), closedAt: 0, exp: 0 };
+  IA.list.unshift(x); return x;
+}
+function iaEvAdd(x, B, by) { // evidence from a report, exploit flag, chat alert, replay, chat box or link: copied in where it can be. Returns an error, or ''
+  if (x.ev.length >= IA_EV) return `This case has ${IA_EV} pieces of evidence, the most it can hold.`; if (iaFull()) return 'Case storage is full. Delete old closed cases first.';
+  const k = String(B.kind || ''), e = { id: rnd(6), k, note: cleanName(B.note, 200), by, t: Date.now() };
+  if (k === 'report') { const c = D.calls.find(y => y.id === +B.call); if (!c) return 'No report with that number.'; Object.assign(e, { cid: c.id, title: `Report #${c.id} by ${c.from.name}${c.target ? ' about ' + c.target.name : ''}`, text: String(c.text || '').slice(0, 300), time: c.t }); }
+  else if (k === 'xflag') { const f = XF.list.find(y => y.id === String(B.xflag || '')); if (!f) return 'That exploit flag is not there any more.'; Object.assign(e, { xid: f.id, title: `Exploit flag (${f.kind}) on ${f.name}`, text: xfText(f), time: f.t }); }
+  else if (k === 'alert') { const a = (D.alerts || []).find(y => y.id === String(B.alert || '')); if (!a) return 'That chat alert is not there any more.'; Object.assign(e, { aid: a.id, title: `Chat alert "${a.word}" on ${a.name}`, text: a.text, time: a.t, ...(a.box ? { bid: a.box } : {}) }); }
+  else if (k === 'replay') { const rid = String(B.replay || '').trim().toUpperCase(); if (!RP_ID_RE.test(rid)) return 'That is not a replay ID.'; e.rid = rid; }
+  else if (k === 'box') { const bid = String(B.box || '').trim().toUpperCase(); if (!BOX_ID_RE.test(bid)) return 'That is not a chat box ID.'; e.bid = bid; }
+  else if (k === 'link') { const l = cleanLinks([B.url], 1); if (!l.length) return 'Links must start with https:// or http://'; e.url = l[0]; }
+  else return 'bad request';
+  const key = y => [y.k, y.eid, y.cid, y.xid, y.aid, y.rid, y.k === 'alert' ? '' : y.bid, y.url].join('|'); if (x.ev.some(y => key(y) === key(e))) return 'That is already in this case.';
+  x.ev.push(e); return '';
+}
+let IAQ = []; // reports about a player made during this request: checked against the "too many reports" rule once the request has the case row
+async function iaReports() {
+  if (!IAQ.length) return; const ids = IAQ.splice(0), n = iaSet().reports, now = Date.now();
+  for (const tid of [...new Set(ids.map(id => (D.calls.find(c => c.id === id) || {}).target).filter(Boolean).map(t => t.userId).filter(t => Number.isInteger(t) && t > 0))]) {
+    const rs = D.calls.filter(c => c.target && c.target.userId === tid && now - c.t < 864e5), has0 = D.iaIdx.some(r => r[6] === 'p' && r[1] === tid && r[2] !== 'closed');
+    if (!has0 && (!n || rs.length < n)) continue;
+    await need('ia'); iaPrune(now);
+    let x = IA.list.find(y => y.subj.kind === 'player' && y.subj.uid === tid && y.status !== 'closed');
+    if (!x) { if (IA.list.filter(y => y.status !== 'closed').length >= IA_OPEN_MAX || IA.list.length >= IA_MAX || iaFull()) continue; x = iaNew({ kind: 'player', uid: tid, name: rs[0].target.name }, 'Automatic', null, 'reports', `Reported ${rs.length} times in 24 hours.`); audit('Automation', `Opened case ${x.id} after ${rs.length} reports about ${x.subj.name}`); }
+    for (const c of (has0 ? rs.filter(c => ids.includes(c.id)) : rs)) iaEvAdd(x, { kind: 'report', call: c.id, note: 'Added automatically' }, 'Automatic');
+  }
+  iaIndex();
+}
+const iaRow = x => ({ id: x.id, subj: x.subj, cat: x.cat, prio: x.prio, status: x.status, team: x.team, t: x.t, closedAt: x.closedAt || 0, finding: x.finding, n: x.ev.length, paused: !!x.paused, by: x.anon ? 'Anonymous' : x.by, vote: !!(x.vote && !x.vote.done), decision: x.decision ? iaLbl(x.decision) : '' });
+const iaOut = (x, u) => { const v = x.vote, voters = x.team.map(m => m.uid); return { ...iaRow(x), text: x.text, anon: !!x.anon, ev: x.ev, st: x.st, notes: x.notes, summary: x.summary || '', outcome: x.outcome, views: x.views.slice().reverse(), exp: x.exp || 0,
+  subjIn: x.subj.kind === 'player' || !!D.members[x.subj.uid], member: iaIn(x, u.uid), decider: iaDecider(u, x), mode: iaSet().mode, decision: x.decision ? { ...x.decision, label: iaLbl(x.decision) } : null,
+  vote: v ? { opts: v.opts.map(o => ({ ...o, label: iaLbl(o) })), counts: v.opts.map((_, i) => Object.entries(v.votes).filter(([k, c]) => c === i && voters.includes(k)).length), mine: u.uid in v.votes ? v.votes[u.uid] : null, voted: x.team.filter(m => m.uid in v.votes).map(m => m.name), waiting: x.team.filter(m => !(m.uid in v.votes)).map(m => m.name), by: v.by, t: v.t, ends: v.ends, done: !!v.done, win: v.win ?? null } : null }; };
+const iaMine = x => ({ id: x.id, subj: x.subj.name, cat: x.cat, t: x.t, closed: x.status === 'closed' }); // whoever raised it only learns that it was received or closed
+const iaSubj = x => { const me = x.st.find(y => y.self); return { id: x.id, cat: x.cat, finding: x.finding, summary: x.summary || '', closedAt: x.closedAt, statement: me ? me.text : null }; }; // the subject sees the finding, never who raised it or the evidence
 // ---- evidence vault: links, notes and copied chat boxes, each with an expiry and a log of who opened it
 const VAULT_CAP = 512 * 1024, VAULT_DAYS = [30, 90, 180, 365], CASE_RE = /^(call:\d{1,9}|appeal:[\w-]{1,24}|escal:[\w-]{1,24})$/;
 const vaultDays = () => VAULT_DAYS.includes(D.settings.vaultDays) ? D.settings.vaultDays : 180;
@@ -984,6 +1058,7 @@ async function erasePlayer(id) { // everything this workspace stores about one p
   await forgetInBoxes(CTX.wid, id); for (const o of Object.values(CBO)) o.msgs = o.msgs.filter(m => m.userId !== id);
   await need('alts'); for (const [k, L] of Object.entries(ALT.links)) if (L.a === id || L.b === id) delete ALT.links[k]; ALT.leaves = ALT.leaves.filter(x => x[0] !== id); for (const x of Object.values(ALT.fp)) x.u = x.u.filter(z => z !== id);
   await need('xflags'); XF.list = XF.list.filter(x => x.uid !== id); await rpForget(id);
+  await need('ia'); IA.list = IA.list.filter(x => !(x.subj.kind === 'player' && x.subj.uid === id)); for (const x of IA.list) x.ev = x.ev.filter(e => e.uid !== id); iaIndex(); // cases about them go, and copies of their logbook entries leave staff cases
   await need('vault'); VT.items = VT.items.filter(x => x.uid !== id); for (const x of VT.items) if (x.msgs) x.msgs = x.msgs.filter(m => m.userId !== id);
   if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
   const scrub = t => [...names].reduce((x, n) => x.split(n).join('[erased user]'), t);
@@ -1280,7 +1355,7 @@ function sync(b) {
       const near = R.chat.filter(c => c.jobId === id), pick = new Set([...near.slice(-15), ...(tg ? near.filter(c => c.userId === tg.userId).slice(-10) : [])]);
       const call = { id: ++D.callSeq, t: now, from: { userId: uid, name }, text: text || (tg ? 'Reported ' + tg.name : 'No details given'), server: id.slice(0, 8), status: 'open', by: null, note: '', ...(tg ? { target: tg } : {}), ...(id !== 'studio' && Number.isInteger(b.placeId) && b.placeId > 0 ? { jobId: id, placeId: b.placeId } : {}),
         chat: near.filter(c => pick.has(c)).map(({ t, userId, name, text, flagged }) => ({ t, userId, name, text, flagged })) };
-      const lead = callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
+      const lead = callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++; if (call.target) IAQ.push(call.id);
       feed(`Report #${call.id} from ${name}: ${call.text}${lead ? ` (grouped with #${lead.id})` : ''}`);
       notify('reports', `Report #${call.id} from ${name}`, call.text, [['Server', id.slice(0, 8)], ...(tg ? [['Reported player', tg.name]] : []), ...(lead ? [['Grouped with', `#${lead.id}, ${grpReporters(lead.id)} reporters`]] : [])], 0x635bff);
       cmd({ type: 'message', kind: 'ok', title: 'Report sent', body: `Report #${call.id} sent. A moderator will respond soon.`, userId: uid, text: `Report #${call.id} sent. A moderator will respond soon.` });
@@ -2244,7 +2319,7 @@ async function route(req, res, url, p) {
       const tid = await findId(tname); if (!tid) return send(res, 404, { error: 'We could not find a Roblox player with that username.' });
       const rid = rname && /^\w{3,20}$/.test(rname) ? await findId(rname) : null;
       const call = { id: ++D.callSeq, t: Date.now(), from: { userId: rid || 0, name: rid ? rname : 'Web report' }, text: `Reporting ${tname}: ${text}${link ? '\nEvidence: ' + link : ''}`, server: 'web', status: 'open', by: null, note: '', chat: [], web: true, target: { userId: tid, name: tname } };
-      const lead = callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++;
+      const lead = callMerge(call); D.calls.unshift(call); D.calls.length = Math.min(D.calls.length, 100); daily().r++; if (call.target) { IAQ.push(call.id); await iaReports(); }
       abuseTick('pub'); feed(`Web report #${call.id} about ${tname}${lead ? ` (grouped with #${lead.id})` : ''}`); notify('reports', `Web report #${call.id} about ${tname}`, text, [['From', rid ? rname : 'Anonymous']], 0x635bff);
       return send(res, 200, { ok: true });
     }
@@ -2545,7 +2620,7 @@ async function route(req, res, url, p) {
         const sid = String(b.jobId || 'studio').slice(0, 64), say = text => cmd({ type: 'message', kind: 'info', userId: e.userId, target: sid, title: 'Replay', text });
         if (!isStaffId(e.userId)) say('Only staff can save replays.'); else if (!rpSet().on) say('Replays are switched off for this game. The owner can turn them on in Settings, Automations.'); else if (rpCmd(sid, { k: 'staff', uid: e.userId, by: cleanName(e.name, 40) })) say('Saving a replay of this server. It will be ready on the website in about a minute.'); else say('This server could not save a replay yet. Try again in a few seconds.');
       }
-      const out = sync(b); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; await banSyncPull();
+      const out = sync(b); await iaReports(); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; await banSyncPull();
       return send(res, 200, out);
     }
 
@@ -2705,6 +2780,7 @@ async function route(req, res, url, p) {
       const gm = Object.keys(D.members).filter(id => id[0] === 'g'); // Google members may have linked a Roblox account: pick that up for activity tracking
       if (gm.length) { const r = await sbf(`${SB_URL}/rest/v1/panel_kv?select=key,roblox:value->roblox&key=in.(${gm.map(id => 'u:' + id).join(',')})`, { headers: sbHeaders() });
         if (r.ok) for (const row of await r.json()) { const m = D.members[row.key.slice(2)], rid = (row.roblox && row.roblox.id) || null; if (m && (m.robloxId || null) !== rid) m.robloxId = rid; } }
+      if (D.iaIdx.some(x => x[4] && x[4] <= now)) { await need('ia'); iaPrune(now); }
       const team = Object.entries(D.members).map(([id, m]) => { const rid = m.robloxId || (id[0] === 'r' ? id.slice(2) : null), pl = rid ? D.play[rid] : null;
         return { uid: id, name: m.name, rank: m.rank, group: !!m.group, owner: id === D.meta.owner, via: id[0] === 'g' ? 'Google' : 'Roblox', joined: m.joined, linked: !!rid, robloxId: rid,
           week: pl && pl.weekStart === ws ? Math.round(pl.week) : 0, onLeave: onLeave(id), online: !!rid && players.some(x => String(x.userId) === String(rid)) }; })
@@ -2713,7 +2789,8 @@ async function route(req, res, url, p) {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
         servers: Object.entries(R.servers).filter(([, s]) => now - s.last < LIVE_MS).map(([id, s]) => ({ id: id.slice(0, 8), players: s.players.length, uptime: now - (s.first || now), v: s.sv || 1, closing: !!(s.closed && now - s.closed < 180000), restarting: !!(s.restarting && now - s.restarting < 180000) })),
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
-        me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u) },
+        me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u), paused: !!(mem.iaPause && !u.isOwner) },
+        ia: { open: D.iaIdx.filter(x => x[2] === 'open' && !x[7] && (x[6] === 'p' ? has(u, 'mod.ban') : has(u, 'cases.manage') && x[1] !== uid && (u.isOwner || u.pos > memberPos(x[1])))).length, vote: D.iaIdx.filter(x => x[8] > now && (x[9] || []).includes(uid)).map(x => x[0]), closed: D.iaIdx.filter(x => x[6] !== 'p' && x[1] === uid && x[2] === 'closed' && !x[5] && now - x[3] < 30 * 864e5).map(x => x[0]) },
         workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), features: { chatLogs: feat('chatLogs'), machineBans: feat('machineBans') }, ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
@@ -2863,6 +2940,135 @@ async function route(req, res, url, p) {
         const now = (sv.sv || 1) >= RP_NOW_V; if (now) sv.rpNow = Date.now(); rpCmd(sid, { k: 'button', by: u.user }, now); audit(u.user, `Asked server ${sid.slice(0, 8)} to save a replay`); return send(res, 200, { ok: true, now, t: Date.now() });
       }
       return send(res, 400, { error: 'bad request' });
+    }
+    if (req.method === 'GET' && p === '/api/cases') { // cases: people who may work a case see it; everyone sees what they raised and the closed cases about them
+      const now = Date.now(); iaPrune(now); const id = String(url.searchParams.get('id') || ''), cats = { cats: IA_CATS, scats: IA_SCATS, pcats: IA_PCATS, finds: IA_FIND };
+      if (id) {
+        const x = IA.list.find(y => y.id === id), gone = () => send(res, 404, { error: 'That case is not there any more.' }); if (!x) return gone();
+        if (iaCan(u, x)) { if (!url.searchParams.get('nv')) x.views.push({ t: now, who: u.user }); // reloading after your own change is not a new visit
+          if (x.views.length > 50) x.views.splice(0, x.views.length - 50); return send(res, 200, { case: iaOut(x, u), ...cats }); }
+        if (x.subj.kind !== 'player' && x.subj.uid === uid && x.status === 'closed') return send(res, 200, { about: iaSubj(x), ...cats });
+        return gone();
+      }
+      const can = has(u, 'cases.manage') || has(u, 'mod.ban');
+      return send(res, 200, { can, set: iaSet(), owner: u.isOwner, ...cats, list: can ? IA.list.filter(x => iaCan(u, x)).map(iaRow) : [], mine: IA.list.filter(x => x.subj.kind !== 'player' && x.byUid === uid).map(iaMine), about: IA.list.filter(x => x.subj.kind !== 'player' && x.subj.uid === uid && x.status === 'closed').map(iaSubj) });
+    }
+    if (req.method === 'POST' && p === '/api/cases') {
+      const now = Date.now(); iaPrune(now);
+      const txt = (v, n) => String(v || '').replace(/\r/g, '').trim().slice(0, n), full = () => send(res, 413, { error: 'Case storage is full. Delete old closed cases first.' });
+      const room = () => IA.list.filter(x => x.status !== 'closed').length >= IA_OPEN_MAX ? send(res, 400, { error: 'There are too many open cases. Close some first.' }) : IA.list.length >= IA_MAX || iaFull() ? full() : null;
+      if (B.op === 'settings') { // how cases are decided, and when a player's reports open one
+        if (!u.isOwner) return ownerOnly(res); const cur = iaSet();
+        if (B.mode !== undefined && !['vote', 'decider'].includes(B.mode)) return send(res, 400, { error: 'Pick Vote or One higher-up decides.' });
+        if (B.reports !== undefined && !(Number.isInteger(B.reports) && B.reports >= 0 && B.reports <= 20)) return send(res, 400, { error: 'Pick a number from 0 to 20.' });
+        D.settings.cases = { mode: B.mode || cur.mode, reports: B.reports ?? cur.reports };
+        audit(u.user, `Cases are decided ${D.settings.cases.mode === 'vote' ? 'by a vote of the case members' : 'by the highest-ranked case member'}; ${D.settings.cases.reports ? 'a case opens after ' + D.settings.cases.reports + ' reports in 24 hours' : 'reports never open a case by themselves'}`); return ok(res);
+      }
+      if (B.op === 'raise') { // any team member can raise a complaint about another
+        const t = String(B.uid || ''), m = D.members[t]; if (!m) return send(res, 404, { error: 'That person is not on your team.' });
+        if (t === uid) return send(res, 400, { error: 'You cannot raise a case about yourself.' });
+        if (t === D.meta.owner) return send(res, 400, { error: 'Cases cannot be raised about the owner.' });
+        const cat = IA_SCATS.includes(B.cat) ? B.cat : ''; if (!cat) return send(res, 400, { error: 'Pick what it is about.' });
+        const text = txt(B.text, 2000); if (text.length < 10) return send(res, 400, { error: 'Describe what happened in a sentence or two.' });
+        if (IA.list.filter(x => x.byUid === uid && now - x.t < 864e5).length >= 5) return send(res, 429, { error: 'You can raise 5 complaints a day. Try again tomorrow.' });
+        const full0 = room(); if (full0) return full0;
+        const x = iaNew({ kind: 'staff', uid: t, name: m.name }, u.user, uid, cat, text, B.anon); iaIndex(); audit(x.anon ? 'A team member' : u.user, `Raised case ${x.id}`); return send(res, 200, { ok: true, id: x.id });
+      }
+      if (B.op === 'open') { // a case about a player, from a report, flag, alert or their profile. A player has at most one open case: more evidence goes into it
+        if (!has(u, 'mod.ban')) return deny(res);
+        const pid = +B.userId; if (!Number.isInteger(pid) || pid <= 0) return send(res, 400, { error: 'bad request' });
+        let x = IA.list.find(y => y.subj.kind === 'player' && y.subj.uid === pid && y.status !== 'closed'), merged = !!x;
+        if (!x) {
+          const cat = IA_PCATS.includes(B.cat) ? B.cat : 'other', full0 = room(); if (full0) return full0;
+          x = iaNew({ kind: 'player', uid: pid, name: cleanName(B.name, 40) || (D.play[pid] || {}).name || 'User ' + pid }, u.user, uid, cat, txt(B.text, 2000) || 'Opened by ' + u.user); x.team.push({ uid, name: u.user }); x.status = 'investigating';
+          audit(u.user, `Opened case ${x.id} about ${x.subj.name}`);
+        } else if (iaCan(u, x) && !iaIn(x, uid) && x.team.length < IA_TEAM) x.team.push({ uid, name: u.user });
+        if (B.kind) { const err = iaEvAdd(x, B, u.user); if (err && !(merged && err === 'That is already in this case.')) { if (!merged) { IA.list = IA.list.filter(y => y !== x); IA.seq--; } return send(res, 400, { error: err }); } }
+        iaIndex(); return send(res, 200, { ok: true, id: x.id, merged });
+      }
+      const x = IA.list.find(y => y.id === String(B.id || '')); if (!x) return send(res, 404, { error: 'That case is not there any more.' });
+      if (B.op === 'statement' && x.subj.kind !== 'player' && x.subj.uid === uid) { // the subject's own side, once the case is closed
+        if (x.status !== 'closed') return send(res, 404, { error: 'That case is not there any more.' });
+        if (x.st.some(y => y.self)) return send(res, 409, { error: 'You already added your statement.' });
+        const text = txt(B.text, 2000); if (text.length < 2) return send(res, 400, { error: 'Write your statement first.' }); if (iaFull()) return full();
+        x.st.push({ id: rnd(6), role: 'subject', who: u.user, text, by: u.user, t: now, self: 1 }); iaIndex(); audit(u.user, `Added their statement to case ${x.id}`); return ok(res);
+      }
+      if (!iaCan(u, x)) return send(res, 404, { error: 'That case is not there any more.' });
+      const open = x.status !== 'closed', shut = () => send(res, 409, { error: 'This case is closed. Reopen it first.' }), player = x.subj.kind === 'player';
+      if (B.op === 'join') {
+        if (!open) return shut(); if (iaIn(x, uid)) return ok(res); if (x.team.length >= IA_TEAM) return send(res, 400, { error: `A case can have ${IA_TEAM} members.` });
+        x.team.push({ uid, name: u.user }); if (x.status === 'open') x.status = 'investigating'; audit(u.user, `Joined case ${x.id}`); iaIndex(); return ok(res);
+      }
+      if (!iaIn(x, uid) && !u.isOwner) return send(res, 403, { error: 'Join the case first.' }); // only case members (and the owner) work a case
+      if (B.op === 'leave') {
+        x.team = x.team.filter(m => m.uid !== uid); if (x.vote && !x.vote.done) delete x.vote.votes[uid]; audit(u.user, `Left case ${x.id}`);
+      } else if (B.op === 'addm') {
+        if (!open) return shut(); const mu = who(String(B.uid || '')); if (!mu || !iaCan(mu, x)) return send(res, 400, { error: player ? 'They cannot work this case. Members need Ban players.' : 'They cannot work this case. Members need Run internal affairs cases and must rank above the person it is about.' });
+        if (iaIn(x, mu.uid)) return ok(res); if (x.team.length >= IA_TEAM) return send(res, 400, { error: `A case can have ${IA_TEAM} members.` });
+        x.team.push({ uid: mu.uid, name: mu.user }); if (x.status === 'open') x.status = 'investigating'; audit(u.user, `Added ${mu.user} to case ${x.id}`);
+      } else if (B.op === 'status') {
+        if (!['open', 'investigating', 'decision'].includes(B.status)) return send(res, 400, { error: 'bad request' });
+        if (!open) { Object.assign(x, { finding: null, summary: '', closedAt: 0, exp: 0, decision: null, vote: null }); audit(u.user, `Reopened case ${x.id}`); } else audit(u.user, `Moved case ${x.id} to ${{ open: 'open', investigating: 'investigating', decision: 'awaiting decision' }[B.status]}`);
+        x.status = B.status;
+      } else if (B.op === 'prio') {
+        if (!['low', 'normal', 'high'].includes(B.prio)) return send(res, 400, { error: 'bad request' }); x.prio = B.prio;
+      } else if (B.op === 'note') {
+        const text = txt(B.text, 1000); if (text.length < 2) return send(res, 400, { error: 'Write the note first.' }); if (x.notes.length >= 60) return send(res, 400, { error: 'This case has 60 notes, the most it can hold.' }); if (iaFull()) return full();
+        x.notes.push({ id: rnd(6), text, by: u.user, t: now });
+      } else if (B.op === 'statement') {
+        const role = IA_ROLES.includes(B.role) ? B.role : 'other', name = cleanName(B.who, 40), text = txt(B.text, 2000);
+        if (!name) return send(res, 400, { error: 'Write whose statement this is.' }); if (text.length < 2) return send(res, 400, { error: 'Write the statement first.' });
+        if (x.st.length >= 20) return send(res, 400, { error: 'This case has 20 statements, the most it can hold.' }); if (iaFull()) return full();
+        x.st.push({ id: rnd(6), role, who: name, text, by: u.user, t: now }); audit(u.user, `Added a statement to case ${x.id}`);
+      } else if (B.op === 'evidence') {
+        const err = iaEvAdd(x, B, u.user); if (err) return send(res, err.startsWith('That is already') ? 409 : err.startsWith('No report') || err.includes('not there any more') ? 404 : err.startsWith('Case storage') ? 413 : 400, { error: err });
+        audit(u.user, `Added evidence to case ${x.id}`);
+      } else if (B.op === 'unevidence') {
+        const n = x.ev.length; x.ev = x.ev.filter(y => y.id !== B.eid); if (x.ev.length === n) return send(res, 404, { error: 'That evidence was already removed.' }); audit(u.user, `Removed evidence from case ${x.id}`);
+      } else if (B.op === 'snapshot') { // staff cases: everything the subject did as staff in a time window, copied in as evidence
+        if (player) return send(res, 400, { error: 'bad request' });
+        const to = Math.min(+B.to || now, now), from = Math.max(+B.from || 0, to - 31 * 864e5); if (!(from < to)) return send(res, 400, { error: 'Pick a start before the end.' });
+        const have = new Set(x.ev.filter(y => y.k === 'entry').map(y => y.eid)), found = [];
+        for (const [pid, list] of Object.entries(D.logs)) for (const le of list) if (le.byUid === x.subj.uid && le.type !== 'Note' && le.time >= from && le.time <= to && !have.has(le.id)) found.push([+pid, le]);
+        found.sort((a, b) => a[1].time - b[1].time); const add = found.slice(0, Math.max(0, IA_EV - x.ev.length));
+        for (const [pid, le] of add) x.ev.push({ id: rnd(6), k: 'entry', uid: pid, eid: le.id, type: le.type, name: le.name, reason: String(le.reason || '').slice(0, 300), time: le.time, mod: le.by || '', note: 'Activity snapshot', by: u.user, t: now });
+        if (iaFull()) { x.ev.splice(x.ev.length - add.length, add.length); return full(); }
+        audit(u.user, `Added an activity snapshot to case ${x.id}`); iaIndex(); return send(res, 200, { ok: true, added: add.length, more: found.length - add.length });
+      } else if (B.op === 'pause') { // staff cases: stops the subject warning, kicking, muting, banning, reverting and closing servers while the case is open
+        if (player) return send(res, 400, { error: 'bad request' });
+        if (!open) return shut(); const m = D.members[x.subj.uid]; if (!m) return send(res, 404, { error: 'That person is no longer on your team.' });
+        if (B.on) { m.iaPause = x.id; x.paused = true; } else { if (m.iaPause === x.id) delete m.iaPause; x.paused = false; }
+        audit(u.user, `${B.on ? 'Paused' : 'Restored'} moderation powers for case ${x.id}`);
+      } else if (B.op === 'vote') { // vote mode: a member puts punishments to a vote of everyone on the case
+        if (iaSet().mode !== 'vote') return send(res, 409, { error: 'Your owner set cases to be decided by one higher-up, not a vote.' });
+        if (!open) return shut(); if (x.decision) return send(res, 409, { error: 'This case is already decided. Reopen it to decide again.' }); if (x.vote && !x.vote.done) return send(res, 409, { error: 'A vote is already running.' });
+        const kind = player ? 'player' : 'staff', opts = (Array.isArray(B.opts) ? B.opts : []).map(o => iaOpt(kind, o)).filter(Boolean).filter((o, i, a) => a.findIndex(y => iaLbl(y) === iaLbl(o)) === i).slice(0, 6);
+        if (opts.length < 2 || opts.length !== (B.opts || []).length) return send(res, 400, { error: 'Pick 2 to 6 different choices.' });
+        x.vote = { opts, votes: {}, by: u.user, t: now, ends: now + IA_VOTE_MS, done: false, win: null }; audit(u.user, `Started a vote on case ${x.id}`);
+      } else if (B.op === 'cast') {
+        const v = x.vote; if (!v || v.done) return send(res, 409, { error: 'There is no vote running.' }); if (!iaIn(x, uid)) return send(res, 403, { error: 'Only case members vote. Join the case first.' });
+        if (!Number.isInteger(B.i) || !v.opts[B.i]) return send(res, 400, { error: 'bad request' }); v.votes[uid] = B.i; iaVoteEnd(x, now);
+        if (v.done) audit('Automation', v.win === null ? `The vote on case ${x.id} ended without votes` : `Case ${x.id} was decided by vote: ${iaLbl(v.opts[v.win])}`);
+      } else if (B.op === 'endvote') { // the person who started it, or the owner, can call a vote off
+        if (!x.vote || x.vote.done) return send(res, 409, { error: 'There is no vote running.' }); if (x.vote.by !== u.user && !u.isOwner) return deny(res);
+        x.vote = null; audit(u.user, `Called off the vote on case ${x.id}`);
+      } else if (B.op === 'decide') { // decider mode: the highest-ranked member on the case, or the owner, picks the outcome
+        if (iaSet().mode !== 'decider') return send(res, 409, { error: 'Your owner set cases to be decided by a vote of the case members.' });
+        if (!open) return shut(); if (!iaDecider(u, x)) return send(res, 403, { error: 'Only the highest-ranked member on this case decides.' });
+        const o = iaOpt(player ? 'player' : 'staff', B.opt); if (!o) return send(res, 400, { error: 'Pick what should happen.' });
+        x.decision = { ...o, how: 'decider', by: u.user, t: now }; audit(u.user, `Decided case ${x.id}: ${iaLbl(o)}`);
+      } else if (B.op === 'close') {
+        if (!open) return send(res, 409, { error: 'This case is already closed.' }); if (!x.decision) return send(res, 409, { error: iaSet().mode === 'vote' ? 'Decide by a vote before closing.' : 'The highest-ranked member must decide before closing.' });
+        if (!IA_FIND[B.finding]) return send(res, 400, { error: 'Pick a finding.' }); const sum = txt(B.summary, 1000); if (sum.length < 10) return send(res, 400, { error: player ? 'Write a short summary.' : 'Write a short summary. The person it is about will see it.' });
+        Object.assign(x, { status: 'closed', finding: B.finding, summary: sum, closedAt: now, exp: now + IA_KEEP, paused: false }); if (!player) { const m = D.members[x.subj.uid]; if (m && m.iaPause === x.id) delete m.iaPause; }
+        audit(u.user, `Closed case ${x.id}: ${IA_FIND[B.finding]}`);
+      } else if (B.op === 'outcome') { // the action itself went through its own window and checks; this only records it on the case
+        if (!IA_OUT.includes(B.kind)) return send(res, 400, { error: 'bad request' }); if (x.outcome.length >= 20) return send(res, 400, { error: 'This case has 20 outcomes, the most it can hold.' });
+        x.outcome.push({ kind: B.kind, text: cleanName(B.text, 200), by: u.user, t: now });
+      } else if (B.op === 'delete') {
+        if (open) return send(res, 409, { error: 'Close the case before deleting it.' }); IA.list = IA.list.filter(y => y !== x); audit(u.user, `Deleted case ${x.id}`);
+      } else return send(res, 400, { error: 'bad request' });
+      iaIndex(); return ok(res);
     }
     if (req.method === 'GET' && p === '/api/xflags') { // exploit flags for staff to review
       if (!has(u, 'mod.kick')) return deny(res);
@@ -3576,6 +3782,7 @@ async function route(req, res, url, p) {
       const id = +url.searchParams.get('userId'); if (!Number.isInteger(id) || id < 1) return send(res, 400, { error: 'bad userId' });
       await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
       const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
+        cases: IA.list.filter(x => x.subj.kind === 'player' && x.subj.uid === id).map(x => ({ id: x.id, type: IA_CATS[x.cat], status: x.status, opened: x.t, closed: x.closedAt || null, decision: x.decision ? iaLbl(x.decision) : null, finding: x.finding ? IA_FIND[x.finding] : null })),
         reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x), exploitFlags: XF.list.filter(x => x.uid === id).map(xfOut), replays: await (async () => { try { const r = await cbFetch(`replays?select=id,started_at,ended_at,server,evidence&wid=eq.${CTX.wid}&seq=eq.0&user_ids=cs.%7B${id}%7D&limit=500`, { ms: 4000 }); return r.ok ? await r.json() : []; } catch { return []; } })(), linkedAccounts: Object.values(ALT.links).filter(L => L.a === id || L.b === id).map(altOut) };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
     }
