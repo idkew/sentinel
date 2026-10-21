@@ -67,14 +67,14 @@ const defaultRanks = () => ({
   mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'replays.view', 'training.use', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
   helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'training.use', 'sessions.host'], quota: 60, limit: 15 },
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false, exploit: false } }); // alerts, digest and health start off; only the owner turns them on
+const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false, exploit: false, lockdown: true } }); // alerts, digest and health start off; only the owner turns them on
 const OWNER_EVENTS = ['alerts', 'digest', 'health']; // webhook events only the owner can switch
 const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
 
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [] });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [], lockdown: { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] } });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
 let ALT = { links: {}, leaves: [], fp: {}, stats: {} }; // linked accounts: their own row, loaded by the game sync and the Linked accounts page
@@ -132,7 +132,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}${hb}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx', 'lockdown'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -209,7 +209,8 @@ function migrate() { // bring older workspaces up to date
   D.strikes ||= [];
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
-  D.iaIdx ||= [];
+  D.iaIdx ||= []; D.lockdown ||= { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] };
+  if (!D.meta.v21) { D.meta.v21 = 1; if (!D.settings.lockdown || typeof D.settings.lockdown !== 'object') D.settings.lockdown = { days: 3, auto: 0, mins: 30 }; if (D.webhook && D.webhook.events && !('lockdown' in D.webhook.events)) D.webhook.events.lockdown = true; } // raid lockdown: accounts under 3 days, never on by itself
   if (!D.meta.v20) { D.meta.v20 = 1; if (!D.settings.cases || typeof D.settings.cases !== 'object') D.settings.cases = { mode: 'decider', reports: 3 }; } // cases: one higher-up decides, and 3 reports in a day open one
   if (!D.meta.v19) { D.meta.v19 = 1; for (const [k, rk] of Object.entries(D.ranks)) if ((k === 'admin' || rk.perms.includes('ranks.manage')) && !rk.perms.includes('cases.manage')) rk.perms.push('cases.manage'); } // internal affairs cases: Administrator and up
   if (!D.meta.v18) { D.meta.v18 = 1; if (!D.settings.replays || typeof D.settings.replays !== 'object') D.settings.replays = { on: false, days: 7 }; for (const [k, rk] of Object.entries(D.ranks)) if ((k === 'admin' || k === 'mod' || rk.perms.includes('mod.ban')) && !rk.perms.includes('replays.view')) rk.perms.push('replays.view'); } // replays start off; Moderator and up can watch them
@@ -1125,6 +1126,17 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
   }
 }
 const isStaffId = uid => !!D.members['r_' + uid] || Object.values(D.members).some(m => m.robloxId && String(m.robloxId) === String(uid));
+// ---- raid lockdown: brand-new Roblox accounts are kicked as they join, until it is lifted or runs out. Needs Bridge v30, which sends the account age with each join
+const LD_DAYS = [1, 3, 7, 30], LD_AUTO = [0, 5, 10, 20], LD_MINS = [0, 15, 30, 60, 240], LD_WIN = 5 * 6e4, LD_MSG = "This game isn't letting brand-new accounts join right now. Try again later.";
+const ldSet = () => { const s = D.settings.lockdown || {}; return { days: LD_DAYS.includes(s.days) ? s.days : 3, auto: LD_AUTO.includes(s.auto) ? s.auto : 0, mins: LD_MINS.includes(s.mins) && s.mins ? s.mins : 30 }; };
+const ldOn = now => { const L = D.lockdown; if (L.on && L.until && L.until <= now) { L.on = false; audit('Automation', `Raid lockdown ended (${plural(L.kept, 'account')} kept out)`); } return L.on; };
+const ldStart = (by, mins, now) => Object.assign(D.lockdown, { on: true, until: mins ? now + mins * 6e4 : 0, by, t: now, kept: 0 });
+function ldJoin(uid, name, age, sid, now) { // a join from a new account: counted towards turning on by itself, and kicked while lockdown is on. Staff are never touched
+  const s = ldSet(), L = D.lockdown; if (!uid || !Number.isInteger(age) || age < 0 || age >= s.days || isStaffId(uid)) return;
+  L.recent = L.recent.filter(t => now - t < LD_WIN); L.recent.push(now); if (L.recent.length > 50) L.recent.splice(0, L.recent.length - 50);
+  if (!ldOn(now) && s.auto && L.recent.length >= s.auto) { ldStart('Automatic', s.mins, now); L.recent = []; audit('Automation', `Turned on raid lockdown for ${plural(s.mins, 'minute')}: ${s.auto} new accounts joined within 5 minutes`); notify('lockdown', 'Raid lockdown turned on', `${s.auto} accounts under ${plural(s.days, 'day')} old joined within 5 minutes. New accounts are kept out for ${plural(s.mins, 'minute')}.`, [], 0xdf1b41); }
+  if (L.on) { cmd({ type: 'kick', userId: uid, target: sid, reason: 'Raid lockdown', display: LD_MSG }); L.kept++; feed(`Lockdown kept out ${name} (account ${plural(age, 'day')} old)`); }
+}
 function amPrune(now) { for (const [k, v] of Object.entries(R.am)) { if (Array.isArray(v)) { const f = v.filter(t => t > now - 36e5); if (f.length) R.am[k] = f; else delete R.am[k]; } else if (!(v > now - 6e5)) delete R.am[k]; } }
 function amHit(id, uid, name, why, now) { // apply an automatic rule's action once per player per 30 seconds
   const r = rule(id), k = `c:${id}:${uid}`; if ((R.am[k] || 0) > now - 30000) return false; R.am[k] = now;
@@ -1324,7 +1336,7 @@ function sync(b) {
   for (const e of (Array.isArray(b.events) ? b.events : []).slice(0, 300)) {
     if (!e) continue;
     const text = String(e.text || '').slice(0, 200), name = String(e.name || '?').slice(0, 40), uid = Number.isInteger(e.userId) ? e.userId : 0;
-    if (e.type === 'join') autoJoin(uid, name, now);
+    if (e.type === 'join') { autoJoin(uid, name, now); ldJoin(uid, name, e.age, id, now); }
     if (e.type === 'join' && D.meta && scriptInfo().outdated && Date.now() - (D.meta.scriptAlertAt || 0) > 6 * 36e5) { // tell the owner and anyone who can change settings, in game
       const dev = Object.entries(D.members).some(([mid, m]) => m.robloxId && String(m.robloxId) === String(uid) && (mid === D.meta.owner || has(who(mid), 'automations.manage')));
       if (dev) { D.meta.scriptAlertAt = Date.now(); const msg = 'Your Sentinel game script is out of date. Open Settings, then Game on the website, download the new script and paste it into your game.'; cmd({ type: 'message', kind: 'warn', title: 'Sentinel update available', body: msg, text: 'Sentinel update: ' + msg, userId: uid }); }
@@ -2783,7 +2795,7 @@ async function route(req, res, url, p) {
       if (D.iaIdx.some(x => x[4] && x[4] <= now)) { await need('ia'); iaPrune(now); }
       const team = Object.entries(D.members).map(([id, m]) => { const rid = m.robloxId || (id[0] === 'r' ? id.slice(2) : null), pl = rid ? D.play[rid] : null;
         return { uid: id, name: m.name, rank: m.rank, group: !!m.group, owner: id === D.meta.owner, via: id[0] === 'g' ? 'Google' : 'Roblox', joined: m.joined, linked: !!rid, robloxId: rid,
-          week: pl && pl.weekStart === ws ? Math.round(pl.week) : 0, onLeave: onLeave(id), online: !!rid && players.some(x => String(x.userId) === String(rid)) }; })
+          week: pl && pl.weekStart === ws ? Math.round(pl.week) : 0, prof: m.prof || null, onLeave: onLeave(id), online: !!rid && players.some(x => String(x.userId) === String(rid)) }; })
         .sort((a, b) => memberPos(b.uid) - memberPos(a.uid) || a.name.localeCompare(b.name));
       return send(res, 200, {
         connected: liveServers() > 0, serverCount: liveServers(), players, bans, mutes, feed: (D.feed || []).slice(0, 20), history: R.history,
@@ -2791,6 +2803,7 @@ async function route(req, res, url, p) {
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u), paused: !!(mem.iaPause && !u.isOwner) },
         ia: { open: D.iaIdx.filter(x => x[2] === 'open' && !x[7] && (x[6] === 'p' ? has(u, 'mod.ban') : has(u, 'cases.manage') && x[1] !== uid && (u.isOwner || u.pos > memberPos(x[1])))).length, vote: D.iaIdx.filter(x => x[8] > now && (x[9] || []).includes(uid)).map(x => x[0]), closed: D.iaIdx.filter(x => x[6] !== 'p' && x[1] === uid && x[2] === 'closed' && !x[5] && now - x[3] < 30 * 864e5).map(x => x[0]) },
+        lockdown: { on: ldOn(now), until: D.lockdown.until, days: ldSet().days, kept: D.lockdown.kept, by: D.lockdown.by, t: D.lockdown.t, oldBridge: (D.meta.scriptV || 0) < 30 },
         workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), features: { chatLogs: feat('chatLogs'), machineBans: feat('machineBans') }, ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
         perms: PERMS.map(([id, label, group, danger]) => ({ id, label, group, danger: !!danger })), team,
@@ -3158,7 +3171,7 @@ async function route(req, res, url, p) {
     if (req.method === 'GET' && p === '/api/vault') { // a list without the contents: opening an item is logged
       if (!has(u, 'logbook.note')) return deny(res);
       const id = +url.searchParams.get('userId') || 0, cs = String(url.searchParams.get('case') || ''), all = vaultItems(), used = vaultSize();
-      const items = cs ? all.filter(x => (x.cases || []).includes(cs)) : id ? all.filter(x => x.uid === id) : [];
+      const items = url.searchParams.get('all') === '1' ? all : cs ? all.filter(x => (x.cases || []).includes(cs)) : id ? all.filter(x => x.uid === id) : [];
       return send(res, 200, { items: items.map(vaultMeta), used, cap: VAULT_CAP, warn: used >= VAULT_CAP * 0.8, days: vaultDays(), canDeleteAll: has(u, 'logbook.revert') });
     }
     if (req.method === 'GET' && p === '/api/vault/item') {
@@ -3379,6 +3392,12 @@ async function route(req, res, url, p) {
       return send(res, 400, { error: 'bad request' });
     }
     if (req.method === 'POST' && p === '/api/team') {
+      if (B.op === 'profile') { // everyone edits only their own profile: a short bio, their timezone and the hours they are usually on
+        const bio = cleanName(B.bio, 160), tz = String(B.tz || '').slice(0, 64), hr = x => x === null || x === '' || x === undefined ? null : Number.isInteger(+x) && +x >= 0 && +x <= 23 ? +x : NaN, from = hr(B.from), to = hr(B.to);
+        if (tz) try { new Intl.DateTimeFormat('en', { timeZone: tz }); } catch { return send(res, 400, { error: 'That timezone is not recognised.' }); }
+        if (Number.isNaN(from) || Number.isNaN(to) || (from === null) !== (to === null)) return send(res, 400, { error: 'Pick both hours, or neither.' });
+        if (!bio && !tz && from === null) delete D.members[uid].prof; else D.members[uid].prof = { bio, tz, from, to }; return ok(res);
+      }
       if (B.op === 'leave') { if (u.isOwner) return send(res, 400, { error: 'The owner cannot leave. Delete the workspace instead.' }); delete D.members[uid]; audit(u.user, 'Left the workspace'); res.setHeader('Set-Cookie', clearCookie('ws')); return ok(res); }
       if (!has(u, 'team.manage')) return deny(res);
       if (B.op === 'invite') {
@@ -3621,6 +3640,18 @@ async function route(req, res, url, p) {
         list.push({ id: typeof x.id === 'string' && /^[A-Za-z0-9_-]{1,8}$/.test(x.id) && !list.some(y => y.id === x.id) ? x.id : rnd(4), name, action, minutes: action === 'mute' || action === 'ban' ? clampInt(x.minutes, 0, 525600) : 0, reason });
       }
       D.settings.presets = list; audit(u.user, `Saved ${list.length} reason preset${list.length === 1 ? '' : 's'}`); return ok(res);
+    }
+    if (req.method === 'POST' && p === '/api/lockdown') { // raid lockdown: switch it on or off, or change the account age and when it turns on by itself
+      const now = Date.now(), s = ldSet();
+      if (B.op === 'settings') {
+        if (!has(u, 'automations.manage')) return deny(res);
+        const n = { days: +B.days, auto: +B.auto, mins: +B.mins }; if (!LD_DAYS.includes(n.days) || !LD_AUTO.includes(n.auto) || !n.mins || !LD_MINS.includes(n.mins)) return send(res, 400, { error: 'bad request' });
+        D.settings.lockdown = n; audit(u.user, `Raid lockdown: accounts under ${plural(n.days, 'day')} old, ${n.auto ? `turns on by itself for ${plural(n.mins, 'minute')} after ${n.auto} new accounts in 5 minutes` : 'never turns on by itself'}`); return ok(res);
+      }
+      if (!has(u, 'servers.manage')) return deny(res);
+      if (B.op === 'on') { const m = +B.mins; if (!LD_MINS.includes(m)) return send(res, 400, { error: 'bad request' }); ldStart(u.user, m, now); audit(u.user, `Turned on raid lockdown ${m ? 'for ' + plural(m, 'minute') : 'until lifted'}`); notify('lockdown', 'Raid lockdown turned on', `By ${u.user}. Accounts under ${plural(s.days, 'day')} old are kept out ${m ? 'for ' + plural(m, 'minute') : 'until it is lifted'}.`, [], 0xdf1b41); return ok(res); }
+      if (B.op === 'off') { if (!ldOn(now)) return send(res, 400, { error: 'Lockdown is already off.' }); D.lockdown.on = false; audit(u.user, `Lifted raid lockdown (${plural(D.lockdown.kept, 'account')} kept out)`); return ok(res); }
+      return send(res, 400, { error: 'bad request' });
     }
     if (req.method === 'POST' && p === '/api/server') { // close or restart one live server, or all of them. Close: everyone is removed and it cannot be rejoined while it empties. Restart: everyone is moved to a fresh server
       if (!has(u, 'servers.manage')) return deny(res);
