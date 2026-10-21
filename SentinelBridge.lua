@@ -44,7 +44,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 29 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 30 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -1144,7 +1144,7 @@ Players.PlayerAdded:Connect(function(p)
 	if restarting then task.defer(restartMove, { p }) end -- joined while this server is restarting: moved along too
 	xWatch(p)
 	rpEv("join", p.UserId, p.Name)
-	queue({ type = "join", userId = p.UserId, name = p.Name, follow = (p.FollowUserId and p.FollowUserId > 0) and p.FollowUserId or nil }) -- follow: the player they joined by following, if any (helps spot one person switching accounts)
+	queue({ type = "join", userId = p.UserId, name = p.Name, age = p.AccountAge, follow = (p.FollowUserId and p.FollowUserId > 0) and p.FollowUserId or nil }) -- follow: the player they joined by following, if any (helps spot one person switching accounts)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
@@ -1155,7 +1155,7 @@ Players.PlayerRemoving:Connect(function(p)
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
 end)
 for _, p in Players:GetPlayers() do
-	queue({ type = "join", userId = p.UserId, name = p.Name })
+	queue({ type = "join", userId = p.UserId, name = p.Name, age = p.AccountAge })
 	xWatch(p)
 end
 
