@@ -74,10 +74,11 @@ const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhoo
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [], lockdown: { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] } });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [], lockdown: { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] }, tcSeq: 0, cov: { last: 0, w: {} } });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
 let ALT = { links: {}, leaves: [], fp: {}, stats: {} }; // linked accounts: their own row, loaded by the game sync and the Linked accounts page
+let TC = { msgs: [], seq: 0 }; // team chat: the staff team's own room, its own row
 let IA = { list: [], seq: 0 }; // internal affairs cases about staff: their own row, loaded only by the Cases page
 let XF = { list: [], seq: 0 }; // exploit flags for staff to review: their own row, loaded by the game sync (only when a flag comes in) and the Exploit flags page
 let CBO = {}, CBQ = [], OCQ = [], FB = [], FR = [], DG = {}, BOTQ = [], U = null, G = { workspaces: 0 }, HOOKS = []; // U = the signed-in person's account, G = global counters, HOOKS = Discord messages to send after saving
@@ -132,7 +133,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}${hb}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx', 'lockdown'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx', 'lockdown', 'tcSeq', 'cov'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -140,6 +141,7 @@ const ROWS = {
   play: { get: () => D.play, set: v => { D.play = v; } },
   live: { get: () => ({ servers: R.servers, history: R.history }), set: v => { R.servers = v.servers || {}; R.history = v.history || []; } },
   cmds: { get: () => ({ cmds: R.cmds, nextId: R.nextId }), set: v => { R.cmds = v.cmds || []; R.nextId = v.nextId || 1; } },
+  tchat: { get: () => TC, set: v => { TC = v && typeof v === 'object' && Array.isArray(v.msgs) ? { msgs: v.msgs, seq: v.seq || 0 } : { msgs: [], seq: 0 }; } },
   ia: { get: () => IA, set: v => { IA = v && typeof v === 'object' && Array.isArray(v.list) ? { list: v.list, seq: v.seq || 0 } : { list: [], seq: 0 }; } },
   xflags: { get: () => XF, set: v => { XF = v && typeof v === 'object' && Array.isArray(v.list) ? { list: v.list, seq: v.seq || 0 } : { list: [], seq: 0 }; } },
   alts: { get: () => ALT, set: v => { ALT = v && typeof v === 'object' && v.links ? { links: v.links, leaves: v.leaves || [], fp: v.fp || {}, stats: v.stats || {} } : { links: {}, leaves: [], fp: {}, stats: {} }; } },
@@ -154,7 +156,7 @@ const ROWS = {
   forms: { get: () => ({ responses: FR }), set: v => { FR = (v && Array.isArray(v.responses)) ? v.responses : []; } }, // form responses (applications, reports), newest first // feedback and questions from every workspace, answered from the admin page
 };
 const phys = k => k === 'dguild' ? (/^\d{5,25}$/.test(CTX.guild || '') ? 'dg:' + CTX.guild : (() => { throw new Error('bad guild'); })()) : k === 'user' ? 'u:' + CTX.uid : k === 'glob' ? 'g:stats' : k === 'fb' ? 'g:feedback' : `w${CTX.wid}:${k}`;
-const NEEDS = { '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
+const NEEDS = { '/api/tchat': ['tchat'], '/api/bans/import': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/state': ['play', 'live', 'calls', 'chat'], '/api/lookup': ['play', 'live', 'logs', 'chat', 'calls'], '/api/player': ['play', 'live', 'logs', 'chat', 'calls'],
   '/api/action': ['logs', 'play', 'cmds', 'live', 'chat'], '/api/escalation': ['logs'], '/api/analytics': ['logs'], '/api/appeals': ['logs', 'cmds', 'play'], '/api/approvals': ['logs', 'cmds', 'play', 'live'], '/api/backups': ['logs', 'play', 'calls', 'forms'], '/api/feedback': ['fb'], '/api/backup/download': ['logs', 'play', 'calls', 'forms'], '/api/backup/import': ['logs', 'play', 'calls', 'forms'], '/api/forms': ['forms'], '/api/logbook': ['logs', 'play'], '/api/entry': ['logs', 'play', 'cmds'],
   '/api/session': ['play', 'logs', 'cmds', 'live'], '/api/call': ['calls', 'cmds', 'live', 'cbo'], '/api/chatlogs': ['cbo', 'live'], '/api/escalate': ['calls', 'logs'], '/api/training': ['logs', 'play'], '/api/chatlogs/box': ['cbo', 'live'], '/api/export': ['logs', 'play', 'calls', 'chat', 'vault', 'alts', 'xflags', 'ia'], '/api/erase': ['logs', 'play', 'calls', 'chat', 'cbo', 'vault', 'alts', 'xflags', 'ia'], '/api/alts': ['alts', 'play'], '/api/xflags': ['xflags', 'play'], '/api/cases': ['ia', 'logs', 'calls', 'xflags'], '/api/replay': ['logs', 'calls', 'xflags', 'vault'], '/api/replays': ['live', 'cmds'], '/api/vault': ['vault', 'cbo', 'calls', 'logs'], '/api/vault/item': ['vault'], '/api/reputation': ['logs', 'play', 'calls', 'vault'], '/api/server': ['live', 'cmds'], '/api/staffperf': ['logs', 'play', 'calls'] };
 const loaded = {};
@@ -162,7 +164,7 @@ const sbf = (u, o) => fetch(u, { ...o, signal: AbortSignal.timeout(8000) }); // 
 const sbHeaders = () => ({ apikey: SB_KEY, ...(SB_KEY.startsWith('eyJ') ? { Authorization: 'Bearer ' + SB_KEY } : {}), 'Content-Type': 'application/json' });
 function resetState() {
   for (const k of Object.keys(D)) delete D[k]; Object.assign(D, freshD());
-  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; XF = { list: [], seq: 0 }; IA = { list: [], seq: 0 }; IAQ = []; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
+  Object.assign(R, { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, nextId: 1 }); CTX.ro = false; EVQ = []; U = null; FB = []; FR = []; DG = {}; BOTQ = []; CTX.guild = null; OCQ = []; CBO = {}; CBQ = []; VT = { items: [] }; ALT = { links: {}, leaves: [], fp: {}, stats: {} }; XF = { list: [], seq: 0 }; IA = { list: [], seq: 0 }; IAQ = []; TC = { msgs: [], seq: 0 }; G = { workspaces: 0 }; HOOKS = []; CTX.uid = CTX.wid = null;
   for (const k of Object.keys(loaded)) delete loaded[k];
 }
 async function need(...keys) {
@@ -210,6 +212,7 @@ function migrate() { // bring older workspaces up to date
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
   D.iaIdx ||= []; D.lockdown ||= { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] };
+  if (!D.meta.v22) { D.meta.v22 = 1; if (typeof D.tcSeq !== 'number') D.tcSeq = 0; if (!D.cov || typeof D.cov !== 'object') D.cov = { last: 0, w: {} }; } // team chat counter and the staff coverage grid
   if (!D.meta.v21) { D.meta.v21 = 1; if (!D.settings.lockdown || typeof D.settings.lockdown !== 'object') D.settings.lockdown = { days: 3, auto: 0, mins: 30 }; if (D.webhook && D.webhook.events && !('lockdown' in D.webhook.events)) D.webhook.events.lockdown = true; } // raid lockdown: accounts under 3 days, never on by itself
   if (!D.meta.v20) { D.meta.v20 = 1; if (!D.settings.cases || typeof D.settings.cases !== 'object') D.settings.cases = { mode: 'decider', reports: 3 }; } // cases: one higher-up decides, and 3 reports in a day open one
   if (!D.meta.v19) { D.meta.v19 = 1; for (const [k, rk] of Object.entries(D.ranks)) if ((k === 'admin' || rk.perms.includes('ranks.manage')) && !rk.perms.includes('cases.manage')) rk.perms.push('cases.manage'); } // internal affairs cases: Administrator and up
@@ -325,6 +328,7 @@ const closeSession = h => { if (h.cur) { if (h.cur.s >= 5) { h.j.push([h.cur.t, 
 const playOf = (userId, name) => (D.play[userId] ||= { name, total: 0, week: 0, weekStart: 0, points: 0 });
 function tick(p, dt, now) {
   const u = playOf(p.userId, p.name), ws = weekStart(now), dk = dayKey(now); u.name = p.name;
+  const nl = (u.names ||= []), dn = p.displayName || '', ln = nl[nl.length - 1]; if (!ln || ln[0] !== p.name || ln[1] !== dn) { nl.push([p.name, dn, now]); if (nl.length > 10) nl.splice(0, nl.length - 10); } // name history: every username and display name they joined with, the last 10
   if (u.weekStart !== ws) { u.weekStart = ws; u.week = 0; }
   u.total += dt; u.week += dt; if (u.day !== dk) { u.day = dk; daily().u++; }
   const h = phist(p.userId), di = Math.floor(now / 864e5);
@@ -1097,6 +1101,16 @@ function addPoints(userId, name, amount, reason, by, byUid = null) {
   feed(`Points ${amount > 0 ? '+' : ''}${amount} for ${name} (${reason})`, by);
   cmd({ type: 'message', kind: amount > 0 ? 'ok' : undefined, title: 'Points', body: `${amount > 0 ? 'You earned' : 'You lost'} ${Math.abs(amount)} points: ${reason}`, userId, text: `${amount > 0 ? 'You earned' : 'You lost'} ${Math.abs(amount)} points: ${reason}` });
 }
+const COV_WEEKS = 4;
+function covSample(now) { // staff coverage: once a minute, one sample into this week's hour-of-week cell (UTC): [minutes, minutes with players but no staff, players summed]
+  const mk = Math.floor(now / 6e4); if (D.cov.last === mk) return; D.cov.last = mk;
+  const ids = allPlayers().map(p => p.userId), st = ids.filter(isStaffId).length, pl = ids.length - st, d = new Date(now), i = d.getUTCDay() * 24 + d.getUTCHours(), wk = String(weekStart(now));
+  const g = (D.cov.w[wk] ||= Array.from({ length: 168 }, () => [0, 0, 0])); g[i][0]++; if (pl > 0 && !st) g[i][1]++; g[i][2] += pl;
+  const ks = Object.keys(D.cov.w).sort((a, b) => a - b); for (const k of ks.slice(0, Math.max(0, ks.length - COV_WEEKS))) delete D.cov.w[k];
+}
+const covOut = () => { const W = Object.values(D.cov.w), c = Array.from({ length: 168 }, () => [0, 0, 0]); for (const g of W) g.forEach((x, i) => { c[i][0] += x[0]; c[i][1] += x[1]; c[i][2] += x[2]; }); return { weeks: W.length, cells: c.map(([n, gap, sum]) => [n, gap, n ? Math.round(sum / n * 10) / 10 : 0]) }; };
+const TC_KEEP = 30 * 864e5, TC_MAX = 300;
+const tcCanDel = (u, uid, x) => x.uid === uid || u.isOwner || (has(u, 'team.manage') && (!D.members[x.uid] || above(u, memberPos(x.uid)))); // your own messages, or anyone's below you if you manage the team
 function allPlayers() {
   const now = Date.now(), out = [];
   for (const [j, s] of Object.entries(R.servers)) { if (now - s.last > LIVE_MS) continue; for (const p of s.players) out.push({ ...p, server: j.slice(0, 8) }); }
@@ -1376,6 +1390,7 @@ function sync(b) {
   boxSweep(now);
   const total = allPlayers().length;
   if (total > D.stats.peak) D.stats.peak = total;
+  covSample(now);
   if (total > ((D.daily[dayKey(now)] || {}).p || 0)) daily().p = total;
   const hist = R.history; if (!hist.length || now - hist[hist.length - 1].t > 6e4) { hist.push({ t: now, n: total }); if (hist.length > 120) hist.shift(); }
   for (const p of players) { const x = D.bans[p.userId]; if (x && live(x) && !R.cmds.some(c => c.type === 'kick' && c.userId === p.userId && now - c.t < 10000)) cmd({ type: 'kick', userId: p.userId, reason: 'Banned: ' + x.reason, display: banText(x) }); }
@@ -1396,7 +1411,7 @@ async function avatars(ids) {
 async function findId(name) {
   try { const r = await j('https://users.roblox.com/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: [name], excludeBannedUsers: false }) }); const u = r.data && r.data[0]; if (u) return u.id; } catch {}
   const n = name.toLowerCase(), p = allPlayers().find(p => p.name.toLowerCase() === n); if (p) return p.userId;
-  const k = Object.entries(D.play).find(([, x]) => (x.name || '').toLowerCase() === n); return k ? +k[0] : null;
+  const k = Object.entries(D.play).find(([, x]) => (x.name || '').toLowerCase() === n) || Object.entries(D.play).find(([, x]) => (x.names || []).some(y => y[0].toLowerCase() === n)); return k ? +k[0] : null; // a name they used before still finds them
 }
 function auditExtras(id, online) {
   const h = (D.hist[id % SH] || {})[id] || { d: {}, j: [] }, now = Date.now(), joins = h.j.slice().reverse().map(([t, s, sv]) => ({ t, s, sv }));
@@ -1416,6 +1431,7 @@ async function profile(id) {
   return { risk: riskOf(id), userId: id, name: rb ? rb.name : online ? online.name : local ? local.name : 'User ' + id, displayName: rb ? rb.displayName : online ? online.displayName : '', created: rb ? rb.created : null,
     avatar: (await avatars([id]))[id] || null, online: !!online, server: online ? online.server : null,
     banned: ban && live(ban) ? ban : null, muted: mute && live(mute) ? mute : null, signal: D.signals[id] || null, logbook: (D.logs[id] || []).slice().reverse().map(e => ({ ...e, ...entryState(e, id) })),
+    names: local && (local.names || []).length > 1 ? local.names.slice().reverse() : [],
     play: local ? { total: Math.round(local.total), week: local.weekStart === ws ? Math.round(local.week) : 0, points: local.points } : null,
     reports: D.calls.filter(c => c.from.userId === id).slice(0, 20).map(c => ({ id: c.id, t: c.t, text: c.text, status: c.status })),
     against: D.calls.filter(c => c.target && c.target.userId === id && c.status !== 'resolved').length,
@@ -2803,6 +2819,7 @@ async function route(req, res, url, p) {
         presets: presets(), myStrikes: (D.strikes || []).filter(x => x.uid === uid && x.status === 'active' && (!x.expires || x.expires > now)).map(({ id, level, reason, by, t, expires }) => ({ id, level, reason, by, t, expires })),
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u), paused: !!(mem.iaPause && !u.isOwner) },
         ia: { open: D.iaIdx.filter(x => x[2] === 'open' && !x[7] && (x[6] === 'p' ? has(u, 'mod.ban') : has(u, 'cases.manage') && x[1] !== uid && (u.isOwner || u.pos > memberPos(x[1])))).length, vote: D.iaIdx.filter(x => x[8] > now && (x[9] || []).includes(uid)).map(x => x[0]), closed: D.iaIdx.filter(x => x[6] !== 'p' && x[1] === uid && x[2] === 'closed' && !x[5] && now - x[3] < 30 * 864e5).map(x => x[0]) },
+        tchat: Math.min(99, Math.max(0, (D.tcSeq || 0) - (mem.tcSeen || 0))),
         lockdown: { on: ldOn(now), until: D.lockdown.until, days: ldSet().days, kept: D.lockdown.kept, by: D.lockdown.by, t: D.lockdown.t, oldBridge: (D.meta.scriptV || 0) < 30 },
         workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), features: { chatLogs: feat('chatLogs'), machineBans: feat('machineBans') }, ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
@@ -2837,7 +2854,7 @@ async function route(req, res, url, p) {
       const sum = a => a.reduce((x, y) => x + y, 0), ap = D.appeals.filter(a => a.t > cut);
       return send(res, 200, { range: rng, days, joins: ser('j'), peak: ser('p'), unique: ser('u'), actions: ser('a'), reports: ser('r'), types,
         staff: Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, n]) => ({ name, n })),
-        totals: { joins: sum(ser('j')), unique: sum(ser('u')), actions: sum(ser('a')), reports: sum(ser('r')), peak: Math.max(0, ...ser('p')) },
+        coverage: covOut(), totals: { joins: sum(ser('j')), unique: sum(ser('u')), actions: sum(ser('a')), reports: sum(ser('r')), peak: Math.max(0, ...ser('p')) },
         appeals: { sent: ap.length, accepted: ap.filter(a => a.status === 'accepted').length, denied: ap.filter(a => a.status === 'denied').length, open: D.appeals.filter(a => a.status === 'open').length } });
     }
     if (p === '/api/logbook') {
@@ -2953,6 +2970,47 @@ async function route(req, res, url, p) {
         const now = (sv.sv || 1) >= RP_NOW_V; if (now) sv.rpNow = Date.now(); rpCmd(sid, { k: 'button', by: u.user }, now); audit(u.user, `Asked server ${sid.slice(0, 8)} to save a replay`); return send(res, 200, { ok: true, now, t: Date.now() });
       }
       return send(res, 400, { error: 'bad request' });
+    }
+    if (p === '/api/tchat') { // team chat: everyone on the team. The last 300 messages from the past 30 days are kept
+      const now = Date.now(), mem = D.members[uid]; if (TC.msgs.some(x => now - x.t >= TC_KEEP)) TC.msgs = TC.msgs.filter(x => now - x.t < TC_KEEP);
+      if (req.method === 'GET') { if (!CTX.ro && mem.tcSeen !== D.tcSeq) mem.tcSeen = D.tcSeq; return send(res, 200, { msgs: TC.msgs.slice(-100).map(x => ({ ...x, mine: x.uid === uid, del: tcCanDel(u, uid, x) })), seq: D.tcSeq }); }
+      if (B.op === 'send') {
+        const t = String(B.text || '').replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f]/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 500); if (!t) return send(res, 400, { error: 'Write a message first.' });
+        const w = limit('tc:' + uid, 20, 60000); if (w) return tooMany(res, w);
+        TC.msgs.push({ id: ++TC.seq, uid, name: mem.name, text: t, t: now }); if (TC.msgs.length > TC_MAX) TC.msgs.splice(0, TC.msgs.length - TC_MAX);
+        D.tcSeq = (D.tcSeq || 0) + 1; mem.tcSeen = D.tcSeq; return ok(res);
+      }
+      if (B.op === 'delete') { const x = TC.msgs.find(y => y.id === +B.id); if (!x) return send(res, 404, { error: 'That message is already gone.' }); if (!tcCanDel(u, uid, x)) return deny(res); TC.msgs = TC.msgs.filter(y => y !== x); if (x.uid !== uid) audit(u.user, `Deleted a team chat message by ${x.name}`); return ok(res); }
+      return send(res, 400, { error: 'bad request' });
+    }
+    if (req.method === 'POST' && p === '/api/bans/import') { // the owner bans a list of players at once, e.g. moved over from another system. Each ban is a normal ban
+      if (!u.isOwner) return deny(res);
+      const items = [...new Set(String(B.list || '').split(/[\s,;]+/).map(x => x.trim().replace(/^@/, '')).filter(Boolean))];
+      if (!items.length) return send(res, 400, { error: 'Paste at least one Roblox ID or username.' }); if (items.length > 200) return send(res, 400, { error: `That is ${items.length} entries. Import at most 200 at a time.` });
+      const minutes = +B.minutes; if (![0, 1440, 10080, 43200].includes(minutes)) return send(res, 400, { error: 'bad request' });
+      const why = cleanName(B.reason, 200); if (!why) return send(res, 400, { error: 'Write a reason.' });
+      const w = limit('bimp:' + uid, 3, 36e5); if (w) return tooMany(res, w);
+      const isId = x => /^\d{1,15}$/.test(x), isName = x => /^[A-Za-z0-9_]{3,20}$/.test(x), names = items.filter(x => !isId(x) && isName(x)), found = {};
+      for (let i = 0; i < names.length; i += 100) { // Roblox looks up 100 usernames per request
+        try { const x = await fetch(RBX_USERS + '/v1/usernames/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames: names.slice(i, i + 100), excludeBannedUsers: false }), signal: AbortSignal.timeout(6000) }).then(r => r.json()); for (const y of x.data || []) found[String(y.requestedUsername || y.name).toLowerCase()] = { id: y.id, name: y.name }; } catch {}
+      }
+      const ids = items.filter(x => isId(x) && !(D.play[x] || {}).name), idName = {}; // names for bare IDs, so the ban list doesn't say User 123
+      for (let i = 0; i < ids.length; i += 100) { try { const x = await fetch(RBX_USERS + '/v1/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userIds: ids.slice(i, i + 100).map(Number), excludeBannedUsers: false }), signal: AbortSignal.timeout(6000) }).then(r => r.json()); for (const y of x.data || []) idName[y.id] = y.name; } catch {} }
+      for (const n of names) if (!found[n.toLowerCase()]) { const k = Object.entries(D.play).find(([, x]) => (x.name || '').toLowerCase() === n.toLowerCase()); if (k) found[n.toLowerCase()] = { id: +k[0], name: k[1].name }; }
+      const seen = new Set(), skipped = [], h0 = HOOKS.length; let banned = 0;
+      for (const v of items) {
+        const f0 = isId(v) ? { id: +v, name: (D.play[v] || {}).name || idName[v] || 'User ' + v } : found[v.toLowerCase()];
+        if (!f0) { skipped.push({ v, why: isName(v) ? 'No Roblox account with that name' : 'Not a Roblox ID or username' }); continue; }
+        if (!(f0.id > 0)) { skipped.push({ v, why: 'Not a Roblox ID or username' }); continue; }
+        if (seen.has(f0.id)) { skipped.push({ v, why: 'Listed twice' }); continue; } seen.add(f0.id);
+        if (isStaffId(f0.id)) { skipped.push({ v, why: 'On your staff team' }); continue; }
+        if (D.bans[f0.id] && live(D.bans[f0.id])) { skipped.push({ v, why: 'Already banned' }); continue; }
+        const [c, o] = doAction(u, uid, { action: 'ban', userId: f0.id, name: f0.name, minutes, reason: 'Imported: ' + why, ctx: false });
+        if (c === 200 && !o.pending) banned++; else skipped.push({ v, why: o.error || 'Could not ban' });
+      }
+      HOOKS.splice(h0); // one Discord message for the whole import, not one per ban
+      if (banned) { audit(u.user, `Imported ${plural(banned, 'ban')} (${why})`); notify('bans', `Imported ${plural(banned, 'ban')}`, why, [['Length', minutes ? fmtMin(minutes) : 'Permanent'], ['By', u.user]], 0xe5484d); }
+      return send(res, 200, { ok: true, banned, skipped });
     }
     if (req.method === 'GET' && p === '/api/cases') { // cases: people who may work a case see it; everyone sees what they raised and the closed cases about them
       const now = Date.now(); iaPrune(now); const id = String(url.searchParams.get('id') || ''), cats = { cats: IA_CATS, scats: IA_SCATS, pcats: IA_PCATS, finds: IA_FIND };
