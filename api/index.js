@@ -212,6 +212,7 @@ function migrate() { // bring older workspaces up to date
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
   D.iaIdx ||= []; D.lockdown ||= { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] };
+  if (!D.meta.v23) { D.meta.v23 = 1; if (!D.settings.bar || !Array.isArray(D.settings.bar.ranks)) D.settings.bar = { ranks: [] }; } // the in-game staff bar: no ranks until the owner picks them
   if (!D.meta.v22) { D.meta.v22 = 1; if (typeof D.tcSeq !== 'number') D.tcSeq = 0; if (!D.cov || typeof D.cov !== 'object') D.cov = { last: 0, w: {} }; } // team chat counter and the staff coverage grid
   if (!D.meta.v21) { D.meta.v21 = 1; if (!D.settings.lockdown || typeof D.settings.lockdown !== 'object') D.settings.lockdown = { days: 3, auto: 0, mins: 30 }; if (D.webhook && D.webhook.events && !('lockdown' in D.webhook.events)) D.webhook.events.lockdown = true; } // raid lockdown: accounts under 3 days, never on by itself
   if (!D.meta.v20) { D.meta.v20 = 1; if (!D.settings.cases || typeof D.settings.cases !== 'object') D.settings.cases = { mode: 'decider', reports: 3 }; } // cases: one higher-up decides, and 3 reports in a day open one
@@ -312,6 +313,14 @@ function callMerge(call) { // before the new report is added: join an open repor
   if (!lead) return null;
   call.grp = lead.id; if (lead.status === 'claimed') { call.status = 'claimed'; call.by = lead.by; }
   return lead;
+}
+function callDo(u, uid, c, op, note0) { // claim, resolve or dismiss a report with every report merged into it; each reporter hears about their own. The website and the in-game staff bar share it
+  const g = grpOf(c), mem = grpMembers(g);
+  if (op === 'claim') { const now = mem.filter(x => x.status === 'open'); for (const x of now) { x.status = 'claimed'; x.by = u.user; } obTick(uid, 'report'); callTell(now, 'info', 'Report update', 'is being handled by a moderator.'); return; }
+  const note = cleanName(note0, 200), now = mem.filter(x => x.status !== 'resolved'), dis = op === 'dismiss';
+  for (const x of now) { x.status = 'resolved'; x.outcome = dis ? 'dismissed' : 'resolved'; x.by = x.by || u.user; x.note = note; x.resolved = Date.now(); }
+  obTick(uid, 'report'); callTell(now, dis ? 'info' : 'ok', dis ? 'Report closed' : 'Report resolved', dis ? 'was closed. Staff looked into it and took no action.' : `resolved${note ? ': ' + note : '.'}`);
+  feed(`Report #${g} ${dis ? 'closed, no action' : 'resolved'}${now.length > 1 ? ` (${now.length} reports)` : ''}`, u.user);
 }
 function callTell(list, kind, title, line) { // one in-game message per reporter, naming their own report numbers
   const by = {}; for (const c of list) if (c.from.userId > 0) (by[c.from.userId] ||= []).push(c.id);
@@ -1139,11 +1148,25 @@ function act({ action, userId, name, reason, minutes, by = 'Automation', byUid =
     if (r.enabled && n >= r.warns) act({ action: 'ban', userId, name, reason: `Automatic: ${r.warns} warnings`, minutes: r.minutes, by: 'Automation' });
   }
 }
+const memberOfRid = rid => { const e = Object.entries(D.members).find(([k, m]) => k === 'r_' + rid || (m.robloxId && String(m.robloxId) === String(rid))); return e ? e[0] : null; }; // the team member a Roblox account belongs to
+const barRanks = () => ((D.settings.bar || {}).ranks || []).filter(k => D.ranks[k]);
+const barOn = mid => !!(mid && D.members[mid]) && (mid === D.meta.owner || barRanks().includes(D.members[mid].rank)); // the in-game staff bar: the owner, and every rank the owner ticked
+function gameKeyOf(raw) { // a game key from the Roblox script and its workspace, checked before the workspace loads. gameKeyOk finishes the check once it has
+  const k = String(raw || '').replace(/[\[\]\s"'`]/g, ''), isNew = /^[a-f0-9]{12}-[A-Za-z0-9]{28}$/.test(k), [wid, rot, sig] = isNew ? [k.slice(0, 12)] : k.split('.');
+  if (!/^[a-f0-9]{12}$/.test(wid || '') || (!isNew && (!/^\d{1,6}$/.test(rot || '') || !sig || !same(k, gameKey(wid, +rot))))) return null;
+  return { k, isNew, wid, rot };
+}
+const gameKeyOk = g => !(g.isNew ? !D.meta.codeHash || !same(codeHash(g.k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +g.rot));
 const isStaffId = uid => !!D.members['r_' + uid] || Object.values(D.members).some(m => m.robloxId && String(m.robloxId) === String(uid));
 // ---- raid lockdown: brand-new Roblox accounts are kicked as they join, until it is lifted or runs out. Needs Bridge v30, which sends the account age with each join
 const LD_DAYS = [1, 3, 7, 30], LD_AUTO = [0, 5, 10, 20], LD_MINS = [0, 15, 30, 60, 240], LD_WIN = 5 * 6e4, LD_MSG = "This game isn't letting brand-new accounts join right now. Try again later.";
 const ldSet = () => { const s = D.settings.lockdown || {}; return { days: LD_DAYS.includes(s.days) ? s.days : 3, auto: LD_AUTO.includes(s.auto) ? s.auto : 0, mins: LD_MINS.includes(s.mins) && s.mins ? s.mins : 30 }; };
 const ldOn = now => { const L = D.lockdown; if (L.on && L.until && L.until <= now) { L.on = false; audit('Automation', `Raid lockdown ended (${plural(L.kept, 'account')} kept out)`); } return L.on; };
+function ldTurn(u, on, mins, now) { // a staff member turns raid lockdown on or off, on the website or with the in-game staff bar
+  if (!on) { if (!ldOn(now)) return [400, { error: 'Lockdown is already off.' }]; D.lockdown.on = false; audit(u.user, `Lifted raid lockdown (${plural(D.lockdown.kept, 'account')} kept out)`); return [200, { ok: true }]; }
+  const m = +mins, s = ldSet(); if (!LD_MINS.includes(m)) return [400, { error: 'bad request' }]; ldStart(u.user, m, now); audit(u.user, `Turned on raid lockdown ${m ? 'for ' + plural(m, 'minute') : 'until lifted'}`);
+  notify('lockdown', 'Raid lockdown turned on', `By ${u.user}. Accounts under ${plural(s.days, 'day')} old are kept out ${m ? 'for ' + plural(m, 'minute') : 'until it is lifted'}.`, [], 0xdf1b41); return [200, { ok: true }];
+}
 const ldStart = (by, mins, now) => Object.assign(D.lockdown, { on: true, until: mins ? now + mins * 6e4 : 0, by, t: now, kept: 0 });
 function ldJoin(uid, name, age, sid, now) { // a join from a new account: counted towards turning on by itself, and kicked while lockdown is on. Staff are never touched
   const s = ldSet(), L = D.lockdown; if (!uid || !Number.isInteger(age) || age < 0 || age >= s.days || isStaffId(uid)) return;
@@ -2089,7 +2112,7 @@ if (!has(u, 'appeals.review')) return [403, { error: 'Your rank does not allow t
   else if (B.decision === 'deny') { a.status = 'denied'; a.reply = reply || null; delete a.approvals; } else return [400, { error: 'bad request' }];
   a.by = u.user; a.note = note; a.reviewed = Date.now(); obTick(uid, 'appeal'); audit(u.user, `${a.status === 'accepted' ? 'Accepted' : 'Denied'} the appeal from ${a.name}`); return [200, { ok: true }];
     }
-function doAction(u, uid, B) { // one moderation action, shared by the website and the Discord bot; returns [status, body]
+function doAction(u, uid, B, src) { // one moderation action, shared by the website, the Discord bot and the in-game staff bar (src 'game'); returns [status, body]
       const reason0 = cleanName(B.reason, 300); let action = B.action, minutes = clampInt(B.minutes, 0, 525600), ruleId = null, reason = reason0 || 'No reason given';
   if (B.ruleId) {
     const r = D.rulebook.find(x => x.id === B.ruleId); if (!r) return [404, { error: 'That rule no longer exists' }];
@@ -2121,7 +2144,7 @@ function doAction(u, uid, B) { // one moderation action, shared by the website a
   }
   const ev = cleanLinks(B.evidence, 5), pnote = cleanName(B.note, 500);
   const ctx = B.ctx === false || !['warn', 'kick', 'mute', 'ban'].includes(action) ? [] : R.chat.filter(m => m.userId === B.userId && Date.now() - m.t < 36e5).slice(-15).map(m => ({ t: m.t, text: m.text }));
-  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, alts: B.alts !== false, extra: { ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}), ...(Array.isArray(B.boxes) && B.boxes.length ? { boxes: B.boxes.slice(0, 5) } : {}) } });
+  act({ action, userId: B.userId, name: nm, reason, minutes, by: u.user, byUid: uid, ruleId, hide: B.hideChat !== false, alts: B.alts !== false, extra: { ...(src === 'game' ? { via: 'game' } : {}), ...(ev.length ? { ev } : {}), ...(pnote ? { note: pnote } : {}), ...(ctx.length ? { ctx } : {}), ...(Array.isArray(B.boxes) && B.boxes.length ? { boxes: B.boxes.slice(0, 5) } : {}) } });
   const mw = action === 'mute' ? muteWarn(B.hideChat !== false) : action === 'unban' ? unbanWarn() : null;
   return [200, { ok: true, applied: { action, minutes }, ...(mw ? { warn: mw } : {}) }];
     }
@@ -2648,8 +2671,50 @@ async function route(req, res, url, p) {
         const sid = String(b.jobId || 'studio').slice(0, 64), say = text => cmd({ type: 'message', kind: 'info', userId: e.userId, target: sid, title: 'Replay', text });
         if (!isStaffId(e.userId)) say('Only staff can save replays.'); else if (!rpSet().on) say('Replays are switched off for this game. The owner can turn them on in Settings, Automations.'); else if (rpCmd(sid, { k: 'staff', uid: e.userId, by: cleanName(e.name, 40) })) say('Saving a replay of this server. It will be ready on the website in about a minute.'); else say('This server could not save a replay yet. Try again in a few seconds.');
       }
-      const out = sync(b); await iaReports(); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; await banSyncPull();
+      const out = sync(b); await iaReports(); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; out.bar = ((R.servers[job] || {}).players || []).map(x => x.userId).filter(x => barOn(memberOfRid(x))); await banSyncPull(); // bar: the players here who get the in-game staff bar
       return send(res, 200, out);
+    }
+
+    if (req.method === 'POST' && p === '/game/staff') { // the in-game staff bar. The game script asks for one staff member; their Roblox ID comes from Roblox's own server, never from their screen
+      const b = await body(req), g = gameKeyOf(b.key); if (!g) { const w = limit('badkey:' + ip, 30, 60000); return w ? tooMany(res, w) : send(res, 403, { error: 'bad key' }); }
+      const rid = Number.isInteger(b.userId) && b.userId > 0 ? b.userId : 0, sid = String(b.jobId || 'studio').slice(0, 64), op = String(b.op || ''), now = Date.now();
+      const w1 = limit(`gstaff:${g.wid}:${rid}`, 30, 60000); if (w1) return tooMany(res, w1);
+      setWid(g.wid); await need('core', ...new Set(['play', 'live', 'cmds', 'calls', 'logs', 'chat', ...(NEEDS['/api/action'] || [])]));
+      if (!D.meta || D.meta.deleted || D.meta.suspended || !gameKeyOk(g)) return send(res, 403, { error: 'bad key' });
+      const mid = memberOfRid(rid); if (!rid || !barOn(mid)) return send(res, 403, { error: 'The staff bar is not turned on for you.' });
+      const u = who(mid);
+      if (D.meta.require2fa && isAdminLevel(u)) { setUid(mid); await need('user'); if (!(U && U.mfa && U.mfa.on)) return send(res, 403, { error: 'Your role needs two-step verification. Turn it on in Sentinel, Settings, Security.' }); }
+      const sv = R.servers[sid], here = sv && now - sv.last < LIVE_MS ? sv.players : [];
+      if (op === 'home') {
+        const all = allPlayers();
+        return send(res, 200, { name: D.members[mid].name, rank: u.isOwner ? 'Owner' : (D.ranks[u.rank] || {}).name || '', game: D.meta.name,
+          can: { act: ['warn', 'kick', 'mute', 'ban'].filter(a => has(u, ACT_PERM[a])), permban: has(u, 'mod.permban'), reports: has(u, 'reports.handle'), announce: has(u, 'announce'), lockdown: has(u, 'servers.manage'), replay: rpSet().on },
+          here: here.length, hereStaff: here.filter(x => isStaffId(x.userId)).length, all: all.length, allStaff: all.filter(x => isStaffId(x.userId)).length, servers: liveServers(),
+          reports: has(u, 'reports.handle') ? D.calls.filter(c => c.status === 'open').length : 0, lockdown: { on: ldOn(now), until: D.lockdown.until || 0, kept: D.lockdown.kept || 0 } });
+      }
+      if (op === 'players') return send(res, 200, { players: here.map(x => { const L = (D.logs[x.userId] || []).filter(e => e.status !== 'reverted'), n = t => L.filter(e => t.includes(e.type)).length;
+        return { userId: x.userId, name: x.name, displayName: x.displayName, staff: isStaffId(x.userId), muted: !!(D.mutes[x.userId] && live(D.mutes[x.userId])), watch: !!D.watch[x.userId], warns: n(['Warned']), bans: n(['Banned', 'Suspended']), notes: n(['Note']) }; }) });
+      const t = Number.isInteger(b.target) && b.target > 0 ? b.target : 0;
+      if (op === 'history') { if (!t) return send(res, 400, { error: 'bad request' }); return send(res, 200, { entries: (D.logs[t] || []).slice(-5).reverse().map(e => ({ type: e.type, reason: e.reason, by: e.by, time: e.time, minutes: e.minutes || 0, undone: e.status === 'reverted' })) }); }
+      if (op === 'act') {
+        const a = String(b.action || ''); if (!t || !['warn', 'kick', 'mute', 'unmute', 'ban'].includes(a)) return send(res, 400, { error: 'bad request' });
+        if (t === rid) return send(res, 400, { error: 'You cannot do that to yourself.' });
+        const tm = memberOfRid(t); if (tm && !above(u, memberPos(tm))) return send(res, 403, { error: 'You can only do that to staff ranked below you.' });
+        const why = cleanName(b.reason, 300); if (!why && a !== 'unmute') return send(res, 400, { error: 'Write a reason.' });
+        const mins = a === 'mute' || a === 'ban' ? clampInt(b.minutes, 0, 525600) : 0, nm = (here.find(x => x.userId === t) || D.play[t] || {}).name || 'User ' + t;
+        const [c, o] = doAction(u, mid, { action: a, userId: t, name: nm, minutes: mins, reason: why }, 'game'); return send(res, c, o);
+      }
+      if (op === 'reports' || op === 'report') {
+        if (!has(u, 'reports.handle')) return send(res, 403, { error: 'Your rank does not allow that.' });
+        if (op === 'reports') return send(res, 200, { reports: D.calls.filter(c => c.status !== 'resolved').slice(0, 20).map(c => ({ id: c.id, t: c.t, from: c.from.name, target: c.target ? c.target.name : '', text: String(c.text || '').slice(0, 200), status: c.status, by: c.by || '', here: c.server === sid.slice(0, 8) })) });
+        const c = D.calls.find(x => x.id === b.id), d = String(b.do || ''); if (!c) return send(res, 404, { error: 'That report is not there any more.' });
+        if (d === 'claim' && c.status === 'open') callDo(u, mid, c, 'claim'); else if ((d === 'resolve' || d === 'dismiss') && c.status !== 'resolved') callDo(u, mid, c, d, b.note); else return send(res, 409, { error: 'Someone already handled that report.' });
+        return ok(res);
+      }
+      if (op === 'announce') { const text = cleanName(b.text, 200); if (!text) return send(res, 400, { error: 'Write the message first.' }); const [c, o] = doAction(u, mid, { action: 'announce', reason: text, ...(b.all === true ? {} : { server: sid.slice(0, 8) }) }, 'game'); return send(res, c, o); }
+      if (op === 'lockdown') { if (!has(u, 'servers.manage')) return send(res, 403, { error: 'Your rank does not allow that.' }); const [c, o] = ldTurn(u, b.on === true, b.mins, now); return send(res, c, o); }
+      if (op === 'replay') { if (!rpSet().on) return send(res, 400, { error: 'Replays are switched off for this game.' }); if (!rpCmd(sid, { k: 'staff', uid: rid, by: u.user })) return send(res, 409, { error: 'This server could not save a replay yet. Try again in a few seconds.' }); return ok(res); }
+      return send(res, 400, { error: 'bad request' });
     }
 
     // ---- the website ----
@@ -2820,6 +2885,7 @@ async function route(req, res, url, p) {
         me: { uid, name: mem.name, rank: mem.rank, owner: u.isOwner, perms: [...u.perms], linked: !!mem.robloxId, pos: u.pos, mfa: !!(U && U.mfa && U.mfa.on), admin: isAdminLevel(u), paused: !!(mem.iaPause && !u.isOwner) },
         ia: { open: D.iaIdx.filter(x => x[2] === 'open' && !x[7] && (x[6] === 'p' ? has(u, 'mod.ban') : has(u, 'cases.manage') && x[1] !== uid && (u.isOwner || u.pos > memberPos(x[1])))).length, vote: D.iaIdx.filter(x => x[8] > now && (x[9] || []).includes(uid)).map(x => x[0]), closed: D.iaIdx.filter(x => x[6] !== 'p' && x[1] === uid && x[2] === 'closed' && !x[5] && now - x[3] < 30 * 864e5).map(x => x[0]) },
         tchat: Math.min(99, Math.max(0, (D.tcSeq || 0) - (mem.tcSeen || 0))),
+        bar: barRanks(),
         lockdown: { on: ldOn(now), until: D.lockdown.until, days: ldSet().days, kept: D.lockdown.kept, by: D.lockdown.by, t: D.lockdown.t, oldBridge: (D.meta.scriptV || 0) < 30 },
         workspace: { id: CTX.wid, name: D.meta.name, require2fa: !!D.meta.require2fa, machine: machineOn(), features: { chatLogs: feat('chatLogs'), machineBans: feat('machineBans') }, ...(u.isOwner && D.meta.oc && D.meta.oc.last && !D.meta.oc.last.ok && D.meta.oc.last.machine ? { machineErr: { t: D.meta.oc.last.t, msg: D.meta.oc.last.msg } } : {}), group: D.meta.group && D.meta.group.id ? { id: D.meta.group.id, name: D.meta.group.name, autoJoin: !!D.meta.group.autoJoin } : null, everConnected: !!D.meta.connectedAt, ...(has(u, 'automations.manage') ? { script: scriptInfo(), client: clientInfo() } : {}), ...(u.isOwner ? { placeId: D.meta.placeId || null, placeLock: !!D.meta.placeLock, lastPlace: D.meta.lastPlace ?? null } : {}) },
         ranks: Object.entries(D.ranks).map(([id, r]) => ({ id, ...r, count: Object.values(D.members).filter(m => m.rank === id).length })).sort((a, b) => b.pos - a.pos),
@@ -3296,13 +3362,8 @@ async function route(req, res, url, p) {
       if (!has(u, 'reports.handle')) return deny(res);
       const c = D.calls.find(c => c.id === B.id); if (!c) return send(res, 404, { error: 'No such report' });
       const g = grpOf(c), mem = grpMembers(g);
-      if (B.op === 'claim' && c.status === 'open') { const now = mem.filter(x => x.status === 'open'); for (const x of now) { x.status = 'claimed'; x.by = u.user; } obTick(uid, 'report'); callTell(now, 'info', 'Report update', 'is being handled by a moderator.'); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
-      else if ((B.op === 'resolve' || B.op === 'dismiss') && c.status !== 'resolved') { // closes every report in the group; each reporter hears about their own
-        const note = cleanName(B.note, 200), now = mem.filter(x => x.status !== 'resolved'), dis = B.op === 'dismiss';
-        for (const x of now) { x.status = 'resolved'; x.outcome = dis ? 'dismissed' : 'resolved'; x.by = x.by || u.user; x.note = note; x.resolved = Date.now(); }
-        obTick(uid, 'report'); callTell(now, dis ? 'info' : 'ok', dis ? 'Report closed' : 'Report resolved', dis ? 'was closed. Staff looked into it and took no action.' : `resolved${note ? ': ' + note : '.'}`);
-        feed(`Report #${g} ${dis ? 'closed, no action' : 'resolved'}${now.length > 1 ? ` (${now.length} reports)` : ''}`, u.user);
-      }
+      if (B.op === 'claim' && c.status === 'open') { callDo(u, uid, c, 'claim'); return send(res, 200, { ok: true, join: callOut(c).join || '' }); }
+      else if ((B.op === 'resolve' || B.op === 'dismiss') && c.status !== 'resolved') callDo(u, uid, c, B.op, B.note);
       else if (B.op === 'merge') { // put a report (and anything grouped under it) into another report's group
         const into = D.calls.find(x => x.id === B.into); if (!into) return send(res, 404, { error: 'No such report' });
         const tg = grpOf(into); if (tg === g) return send(res, 400, { error: 'These reports are already together.' });
@@ -3699,6 +3760,11 @@ async function route(req, res, url, p) {
       }
       D.settings.presets = list; audit(u.user, `Saved ${list.length} reason preset${list.length === 1 ? '' : 's'}`); return ok(res);
     }
+    if (req.method === 'POST' && p === '/api/bar') { // the in-game staff bar: the owner picks which ranks get it
+      if (!u.isOwner) return ownerOnly(res);
+      const ranks = [...new Set(Array.isArray(B.ranks) ? B.ranks : [])].filter(k => typeof k === 'string' && D.ranks[k]);
+      D.settings.bar = { ranks }; audit(u.user, ranks.length ? `In-game staff bar: ${ranks.map(k => D.ranks[k].name).join(', ')}` : 'In-game staff bar: owner only'); return ok(res);
+    }
     if (req.method === 'POST' && p === '/api/lockdown') { // raid lockdown: switch it on or off, or change the account age and when it turns on by itself
       const now = Date.now(), s = ldSet();
       if (B.op === 'settings') {
@@ -3707,8 +3773,7 @@ async function route(req, res, url, p) {
         D.settings.lockdown = n; audit(u.user, `Raid lockdown: accounts under ${plural(n.days, 'day')} old, ${n.auto ? `turns on by itself for ${plural(n.mins, 'minute')} after ${n.auto} new accounts in 5 minutes` : 'never turns on by itself'}`); return ok(res);
       }
       if (!has(u, 'servers.manage')) return deny(res);
-      if (B.op === 'on') { const m = +B.mins; if (!LD_MINS.includes(m)) return send(res, 400, { error: 'bad request' }); ldStart(u.user, m, now); audit(u.user, `Turned on raid lockdown ${m ? 'for ' + plural(m, 'minute') : 'until lifted'}`); notify('lockdown', 'Raid lockdown turned on', `By ${u.user}. Accounts under ${plural(s.days, 'day')} old are kept out ${m ? 'for ' + plural(m, 'minute') : 'until it is lifted'}.`, [], 0xdf1b41); return ok(res); }
-      if (B.op === 'off') { if (!ldOn(now)) return send(res, 400, { error: 'Lockdown is already off.' }); D.lockdown.on = false; audit(u.user, `Lifted raid lockdown (${plural(D.lockdown.kept, 'account')} kept out)`); return ok(res); }
+      if (B.op === 'on' || B.op === 'off') { const [c, o] = ldTurn(u, B.op === 'on', B.mins, now); return send(res, c, o); }
       return send(res, 400, { error: 'bad request' });
     }
     if (req.method === 'POST' && p === '/api/server') { // close or restart one live server, or all of them. Close: everyone is removed and it cannot be rejoined while it empties. Restart: everyone is moved to a fresh server
