@@ -28,6 +28,9 @@
 	  If your game sets PlatformStand from a LocalScript (some gliders and vehicles do), exempt those players too.
 	  To see what the checks measure, set DEBUG_FLAGS = true below and watch the Developer Console (Server tab).
 	  * Report button  -> the optional SentinelClient script adds a Report button (pick a player + details); this script receives it
+	  * Staff bar      -> staff in the ranks the owner picks get a bar at the bottom of the screen (SentinelClient 7 draws it).
+	                      Their requests come here, and this script asks Sentinel with the game key and the Roblox ID that
+	                      Roblox gives this server. The player's screen never sees the key, and Sentinel checks their rank every time.
 
 	SETUP
 	1. Put this in a *Script* in ServerScriptService.
@@ -44,7 +47,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 30 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 31 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -449,6 +452,84 @@ reportEvent.OnServerEvent:Connect(function(plr, targetUserId, text)
 	lastCall[plr.UserId] = os.clock()
 	queue({ type = "modcall", userId = plr.UserId, name = plr.Name, text = text, target = target and { userId = target.UserId, name = target.Name } or nil })
 end)
+
+------------------------------------------------------------------ the in-game staff bar
+local barList, barLast = {}, {} -- who gets the bar in this server (from Sentinel on every check-in), and each one's last request
+local BAR_OPS = { home = true, players = true, history = true, act = true, reports = true, report = true, announce = true, lockdown = true, replay = true }
+local function barArgs(a) -- only the fields the bar uses, with the right types and lengths
+	if type(a) ~= "table" then a = {} end
+	local out = {}
+	for _, k in ipairs({ "target", "minutes", "id", "mins" }) do
+		local v = a[k]
+		if type(v) == "number" and v == v and v >= 0 and v < 1e15 then out[k] = math.floor(v) end
+	end
+	for k, n in pairs({ action = 10, reason = 300, text = 200, note = 200, ["do"] = 10 }) do
+		if type(a[k]) == "string" then out[k] = string.sub(a[k], 1, n) end
+	end
+	if a.all == true then out.all = true end
+	if a.on == true then out.on = true end
+	return out
+end
+local function barFilter(plr, list, field) -- Roblox's rules: text other people wrote goes through the text filter before it is shown in game
+	local done = {}
+	for i, x in ipairs(list) do
+		local t = type(x) == "table" and x[field]
+		if type(t) ~= "string" or t == "" then
+			done[i] = true
+		else
+			task.spawn(function()
+				local ok, res = pcall(function()
+					return TextService:FilterStringAsync(t, plr.UserId):GetNonChatStringForUserAsync(plr.UserId)
+				end)
+				x[field] = ok and type(res) == "string" and res or ""
+				done[i] = true
+			end)
+		end
+	end
+	local t0 = os.clock()
+	while os.clock() - t0 < 6 do
+		local all = true
+		for i = 1, #list do if not done[i] then all = false end end
+		if all then return end
+		task.wait(0.05)
+	end
+	for i, x in ipairs(list) do if not done[i] then x[field] = "" end end -- the filter was too slow: hide it rather than show it unfiltered
+end
+local function barAsk(plr, op, a) -- returns what the bar shows: { ok = true, data = ... } or { ok = false, error = "..." }
+	if not barList[plr.UserId] then return { ok = false, error = "The staff bar is not turned on for you." } end
+	if type(op) ~= "string" or not BAR_OPS[op] then return { ok = false, error = "Unknown request." } end
+	if os.clock() - (barLast[plr.UserId] or -999) < 0.5 then return { ok = false, error = "Slow down a little." } end
+	barLast[plr.UserId] = os.clock()
+	local body = barArgs(a)
+	body.key, body.jobId, body.userId, body.op = KEY, game.JobId, plr.UserId, op
+	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
+		Url = URL .. "/game/staff", Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(body),
+	})
+	if not ok then return { ok = false, error = "Sentinel can't be reached right now. Try again in a minute." } end
+	local okJ, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+	if not okJ or type(data) ~= "table" then data = {} end
+	if not res.Success then return { ok = false, error = type(data.error) == "string" and data.error or "Something went wrong. Try again." } end
+	if op == "reports" and type(data.reports) == "table" then barFilter(plr, data.reports, "text") end
+	if op == "history" and type(data.entries) == "table" then barFilter(plr, data.entries, "reason") end
+	return { ok = true, data = data }
+end
+local staffFn = ReplicatedStorage:FindFirstChild("SentinelStaff")
+if not staffFn then
+	staffFn = Instance.new("RemoteFunction")
+	staffFn.Name = "SentinelStaff"
+	staffFn.Parent = ReplicatedStorage
+end
+staffFn.OnServerInvoke = barAsk
+local function applyBar(list) -- the player script shows the bar while SentinelStaff is set on the player
+	barList = {}
+	for _, id in ipairs(list) do
+		if type(id) == "number" then barList[id] = true end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do
+		local want = barList[p.UserId] or nil
+		if p:GetAttribute("SentinelStaff") ~= want then p:SetAttribute("SentinelStaff", want) end
+	end
+end
 
 local mutedNote = {}
 -- every other chat channel (team chat, quick words and so on) also refuses a muted player's messages
@@ -1104,6 +1185,7 @@ local function sync()
 		XD.on = data.xd.on ~= false
 		XD.lvl = XL[data.xd.lvl] and data.xd.lvl or "low"
 	end
+	if type(data.bar) == "table" then applyBar(data.bar) end
 	for _, c in data.commands or {} do task.spawn(handle, c) end
 	muted = {}
 	for _, id in data.muted or {} do muted[id] = true end
@@ -1148,6 +1230,7 @@ Players.PlayerAdded:Connect(function(p)
 	task.defer(sync)
 end)
 Players.PlayerRemoving:Connect(function(p)
+	barLast[p.UserId] = nil
 	clientReady[p], clientVer[p], activeBanner[p], ackWant[p], devSent[p] = nil, nil, nil, nil, nil
 	xs[p], lastRejoin[p.UserId], rejoining[p] = nil, nil, nil
 	if bouncing[p] then bouncing[p] = nil return end
