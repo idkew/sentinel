@@ -7,12 +7,16 @@
 	  * Chat monitor   -> every chat message is sent to the panel (kept in memory there, never saved)
 	  * Players can type in chat:   !modcall <message>   (report to moderators),   !attend   (join a session)
 	                                and   !rejoin   (move to a fresh server; the owner can switch it off on the website)
-	  * Replays        -> when the owner turns them on, the last 5 minutes of player positions, deaths, joins, leaves and chat
+	  * Replays        -> when the owner turns them on, the last 5 minutes of player positions (5 times a second), health,
+	                      deaths (with the killer when the game tags it), tools held and used, joins, leaves and chat
 	                      are kept in this server's memory and uploaded only when something happens (a report, a moderation
 	                      action, a chat alert, an exploit flag, or staff typing !replay), with 30 more seconds after it.
 	                      If nothing happens, nothing leaves the server. Staff watch them on the website: opening a replay
 	                      makes the server upload what it has straight away, and recording carries on.
-	                      An outline of the map (the 300 largest anchored parts, as plain rectangles) is sent with each replay.
+	                      An outline of the map (the 300 largest anchored parts, as plain rectangles) is sent with each replay,
+	                      and a simple 3D copy of it (up to 1200 larger parts as plain blocks, with their colours and materials) for the 3D viewer,
+	                      the shape of the terrain (its top surface on an 8 stud grid) and the game's time of day, light and fog.
+	                      Each player's position is recorded with the way they are facing.
 	                      If the server closes while a replay is recording, what was recorded so far is uploaded straight away.
 	  * Exploit flags  -> speed, teleport and fly are measured here on the server and sent to Sentinel for staff to review.
 	                      Nothing ever happens to a player automatically because of a flag.
@@ -47,7 +51,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 31 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 33 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -785,7 +789,32 @@ local function xChar(p, char) -- a new character: start fresh, and listen for mo
 	if not st then return end
 	st.spawn, st.samples, st.hits, st.air = os.clock(), {}, { speed = {}, teleport = {} }, nil
 	local hum = char:WaitForChild("Humanoid", 10)
-	if hum then hum.Died:Connect(function() rpEv("death", p.UserId) end) end
+	if hum then
+		hum.Died:Connect(function()
+			local tag = hum:FindFirstChild("creator")
+			local killer = tag and tag:IsA("ObjectValue") and tag.Value
+			rpEv("death", p.UserId, (killer and killer:IsA("Player") and killer ~= p) and killer.UserId or nil)
+		end)
+	end
+	local lastUse, hooked = 0, {}
+	local function tool(t, on) -- the tool they hold, and each time they use it (at most 2 a second)
+		if not t:IsA("Tool") then return end
+		if on then
+			rpEv("tool", p.UserId, string.sub(t.Name, 1, 40))
+			if not hooked[t] then
+				hooked[t] = true
+				t.Activated:Connect(function()
+					if t.Parent ~= char or os.clock() - lastUse < 0.5 then return end
+					lastUse = os.clock()
+					rpEv("use", p.UserId)
+				end)
+			end
+		elseif not char:FindFirstChildOfClass("Tool") then rpEv("tool", p.UserId, "") end
+	end
+	char.ChildAdded:Connect(function(t) tool(t, true) end)
+	char.ChildRemoved:Connect(function(t) tool(t, false) end)
+	local held = char:FindFirstChildOfClass("Tool")
+	if held then tool(held, true) end
 	local hrp = char:WaitForChild("HumanoidRootPart", 10)
 	if not hrp or xs[p] ~= st then return end
 	hrp:GetPropertyChangedSignal("CFrame"):Connect(function() -- fires when a server script sets the CFrame (teleports, PivotTo), not for normal movement
@@ -921,7 +950,7 @@ end
 
 ------------------------------------------------------------------ replays: a rolling recording in memory, uploaded only when something happens
 local RP = { on = false, min = 5, after = 30 } -- from the website at every check-in. Off until the owner turns it on
-local RP_HZ, RP_MAXP, RP_MAXLEN, RP_CHUNK, RP_MAXBYTES = 2, 50, 600, 60000, 1500000 -- 2 samples a second, 50 players, 10 minute clips, 60 KB chunks, 1.5 MB per clip
+local RP_HZ, RP_MAXP, RP_MAXLEN, RP_CHUNK, RP_MAXBYTES = 5, 50, 600, 60000, 3000000 -- 5 samples a second, 50 players, 10 minute clips, 60 KB chunks, 3 MB per clip
 local RP0 = os.clock()
 local RP_EPOCH = DateTime.now().UnixTimestampMillis - RP0 * 1000 -- wall-clock time of tick 0
 local rpFrames, rpEvents, rpNames = {}, {}, {}
@@ -973,6 +1002,102 @@ local function rpMap() -- large anchored parts as rectangles seen from above: { 
 	rpMapCache = out
 	return out
 end
+local M = Enum.Material -- materials as small codes the website draws: 0 plastic, 1 grass, 2 brick, 3 wood, 4 metal, 5 concrete, 6 sand, 7 rock, 8 ice, 9 neon, 10 glass, 11 water, 12 snow, 13 mud, 14 cobblestone, 15 marble, 16 fabric, 17 lava, 18 salt
+local RP_MAT = {}
+for code, names in { { "Grass", "LeafyGrass" }, { "Brick" }, { "Wood", "WoodPlanks" }, { "Metal", "DiamondPlate", "CorrodedMetal", "Foil" }, { "Concrete", "Pavement", "Asphalt" }, { "Sand", "Sandstone" },
+	{ "Slate", "Rock", "Basalt" }, { "Ice", "Glacier" }, { "Neon" }, { "Glass", "ForceField" }, { "Water" }, { "Snow" }, { "Mud", "Ground" }, { "Cobblestone" }, { "Marble", "Granite", "Limestone" },
+	{ "Fabric", "Cardboard", "Carpet" }, { "CrackedLava" }, { "Salt" } } do
+	for _, n in names do
+		local ok, m = pcall(function() return M[n] end)
+		if ok and m then RP_MAT[m] = code end
+	end
+end
+local function rpMat(m) return RP_MAT[m] or 0 end
+local rpMap3Cache = nil -- the 3D map, worked out once per server
+local function rpMap3() -- larger anchored parts as plain shapes: { x, y, z, size x2, size y2, size z2, rot x, rot y, rot z, colour, transparency 0-10, shape, material }. At most 1200
+	if rpMap3Cache then return rpMap3Cache end
+	local cx, cz, n = 0, 0, 0 -- the middle of where players are, so big maps keep the parts near them
+	for _, p in Players:GetPlayers() do
+		local hrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+		if hrp then cx += hrp.Position.X cz += hrp.Position.Z n += 1 end
+	end
+	if n > 0 then cx, cz = cx / n, cz / n end
+	local list, seen = {}, 0
+	for _, d in workspace:GetDescendants() do
+		seen += 1
+		if seen % 2000 == 0 then task.wait() end -- big maps: never hold up the game
+		if seen > 60000 then break end
+		if d:IsA("BasePart") and d.Anchored and d.Transparency < 0.95 and not d:IsA("Terrain") then
+			local sz, p = d.Size, d.Position
+			local face = math.max(sz.X * sz.Y, sz.X * sz.Z, sz.Y * sz.Z)
+			if math.max(sz.X, sz.Y, sz.Z) >= 2 and face >= 4 and (n == 0 or math.abs(p.X - cx) + math.abs(p.Z - cz) < 1200) then
+				local shape = d:IsA("WedgePart") and 3 or 0
+				if d:IsA("Part") then
+					if d.Shape == Enum.PartType.Cylinder then shape = 1 elseif d.Shape == Enum.PartType.Ball then shape = 2 end
+				end
+				local o, c = d.Orientation, d.Color
+				table.insert(list, { math.floor(p.X + 0.5), math.floor(p.Y + 0.5), math.floor(p.Z + 0.5),
+					math.max(1, math.floor(sz.X * 2 + 0.5)), math.max(1, math.floor(sz.Y * 2 + 0.5)), math.max(1, math.floor(sz.Z * 2 + 0.5)),
+					math.floor(o.X + 0.5), math.floor(o.Y + 0.5), math.floor(o.Z + 0.5),
+					math.floor(c.R * 255 + 0.5) * 65536 + math.floor(c.G * 255 + 0.5) * 256 + math.floor(c.B * 255 + 0.5),
+					math.floor(d.Transparency * 10 + 0.5), shape, rpMat(d.Material), face })
+			end
+		end
+	end
+	table.sort(list, function(a, b) return a[14] > b[14] end)
+	local out = {}
+	for i = 1, math.min(1200, #list) do
+		local a = list[i]
+		a[14] = nil
+		out[i] = a
+	end
+	rpMap3Cache = out
+	return out
+end
+local rpTerrCache = nil -- the terrain's top surface, worked out once per server. false: this place has no terrain
+local function rpTerrain() -- a height grid: { x0, z0, c = cell size, w, d, h = runs of [height, count], m = runs of [material, count] }. Height -9999: no terrain there
+	if rpTerrCache ~= nil then return rpTerrCache or nil end
+	local T = workspace.Terrain
+	if T:CountCells() == 0 then rpTerrCache = false return nil end
+	local x0, x1, z0, z1 = math.huge, -math.huge, math.huge, -math.huge -- the area: where the map's parts and the players are, at most 2048 studs a side
+	local function grow(x, z) x0, x1, z0, z1 = math.min(x0, x), math.max(x1, x), math.min(z0, z), math.max(z1, z) end
+	for _, a in rpMap3() do grow(a[1], a[3]) end
+	for _, p in Players:GetPlayers() do
+		local hrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+		if hrp then grow(hrp.Position.X, hrp.Position.Z) end
+	end
+	if x0 == math.huge then x0, x1, z0, z1 = -256, 256, -256, 256 end
+	local cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+	local half = math.min(1024, math.max(128, (x1 - x0) / 2 + 64, (z1 - z0) / 2 + 64))
+	local cell = math.max(8, math.ceil(half * 2 / 160 / 8) * 8) -- 8 studs, coarser on very big maps so the grid stays at most 160 x 160
+	local n = math.floor(half * 2 / cell)
+	x0, z0 = math.floor(cx - n * cell / 2), math.floor(cz - n * cell / 2)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { T }
+	params.IgnoreWater = false
+	local h, m, lh, lm, ch, cm, any = {}, {}, nil, nil, 0, 0, false
+	local function push(list, v, last, c) if v == last then return c + 1 end if last ~= nil then table.insert(list, last) table.insert(list, c) end return 1 end
+	for j = 0, n - 1 do
+		for i = 0, n - 1 do
+			local x, z = x0 + (i + 0.5) * cell, z0 + (j + 0.5) * cell
+			local hit = workspace:Raycast(Vector3.new(x, 2000, z), Vector3.new(0, -4000, 0), params)
+			local hv, mv = -9999, 0
+			if hit then hv, mv, any = math.floor(hit.Position.Y + 0.5), rpMat(hit.Material), true end
+			ch = push(h, hv, lh, ch) lh = hv
+			cm = push(m, mv, lm, cm) lm = mv
+		end
+		if j % 3 == 2 then task.wait() end -- about 500 rays a frame: never holds up the game
+	end
+	push(h, nil, lh, ch) push(m, nil, lm, cm)
+	rpTerrCache = any and { x0 = x0, z0 = z0, c = cell, w = n, d = n, h = h, m = m } or false
+	return rpTerrCache or nil
+end
+local function rpLight() -- the game's time of day, light and fog, so the replay looks the same
+	local L = game:GetService("Lighting")
+	local function c3(c) return math.floor(c.R * 255 + 0.5) * 65536 + math.floor(c.G * 255 + 0.5) * 256 + math.floor(c.B * 255 + 0.5) end
+	return { time = math.floor(L.ClockTime * 10 + 0.5) / 10, amb = c3(L.Ambient), out = c3(L.OutdoorAmbient), fog = c3(L.FogColor), fogEnd = math.floor(math.min(L.FogEnd, 1e6)), br = math.floor(L.Brightness * 10 + 0.5) / 10 }
+end
 local function rpCut(json, i) -- a chunk end that never splits a multi-byte character
 	local j = math.min(#json, i + RP_CHUNK - 1)
 	while j < #json and j > i do
@@ -982,14 +1107,16 @@ local function rpCut(json, i) -- a chunk end that never splits a multi-byte char
 	end
 	return j
 end
-local function rpBuild(c, kEnd) -- delta-encoded tracks: per player, runs of [tick, x, y, z, state, then dx, dy, dz, state for every next sample]
+local function rpBuild(c, kEnd, step) -- delta-encoded tracks: per player, runs of [tick, x, y, z, state, facing, health, then dx, dy, dz, state, facing, health for every next sample]. step 2: every 2nd sample
+	step = step or 1
 	local tracks, users, names, last = {}, {}, {}, {}
 	for _, f in rpFrames do
 		local k = f[1]
-		if k >= c.k0 and k <= kEnd then
+		if k >= c.k0 and k <= kEnd and (k - c.k0) % step == 0 then
 			local d = f[2]
-			for i = 1, #d, 5 do
-				local uid, x, y, z, st = d[i], d[i + 1], d[i + 2], d[i + 3], d[i + 4]
+			k = c.k0 + (k - c.k0) / step
+			for i = 1, #d, 7 do
+				local uid, x, y, z, st, yaw, hp = d[i], d[i + 1], d[i + 2], d[i + 3], d[i + 4], d[i + 5], d[i + 6]
 				local key = tostring(uid)
 				local segs = tracks[key]
 				if not segs then
@@ -1001,9 +1128,9 @@ local function rpBuild(c, kEnd) -- delta-encoded tracks: per player, runs of [ti
 				local L = last[uid]
 				if L and L.k == k - 1 then
 					local seg = segs[#segs]
-					table.insert(seg, x - L.x) table.insert(seg, y - L.y) table.insert(seg, z - L.z) table.insert(seg, st)
+					table.insert(seg, x - L.x) table.insert(seg, y - L.y) table.insert(seg, z - L.z) table.insert(seg, st) table.insert(seg, yaw) table.insert(seg, hp)
 				else
-					table.insert(segs, { k - c.k0, x, y, z, st })
+					table.insert(segs, { k - c.k0, x, y, z, st, yaw, hp })
 				end
 				last[uid] = { k = k, x = x, y = y, z = z }
 			end
@@ -1011,15 +1138,25 @@ local function rpBuild(c, kEnd) -- delta-encoded tracks: per player, runs of [ti
 	end
 	local ev = {}
 	for _, e in rpEvents do
-		if e[1] >= c.k0 and e[1] <= kEnd then table.insert(ev, { e[1] - c.k0, e[2], e[3], e[4] }) end
+		if e[1] >= c.k0 and e[1] <= kEnd then table.insert(ev, { math.floor((e[1] - c.k0) / step), e[2], e[3], e[4] }) end
 	end
 	local t0 = math.floor(RP_EPOCH + c.k0 * 1000 / RP_HZ)
-	return { v = 1, hz = RP_HZ, t0 = t0, len = kEnd - c.k0, names = names, tracks = tracks, ev = ev }, users, names, t0
+	return { v = 3, hz = RP_HZ / step, t0 = t0, len = math.floor((kEnd - c.k0) / step), names = names, tracks = tracks, ev = ev }, users, names, t0
 end
 local function rpSend(c, kEnd, closing) -- closing: the server is shutting down or someone is waiting to watch, so upload faster
-	local okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd)
-	if not okB then warn("[Sentinel] Could not build a replay: " .. tostring(clip)) return end
-	local json = HttpService:JSONEncode(clip)
+	local okM3, map3 = pcall(rpMap3)
+	local okT, terr = pcall(rpTerrain)
+	local okL, light = pcall(rpLight)
+	local okB, clip, users, names, t0, json
+	for _, step in { 1, 2, 5 } do -- a very busy clip: keep fewer samples a second rather than lose it
+		okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd, step)
+		if not okB then warn("[Sentinel] Could not build a replay: " .. tostring(clip)) return end
+		if okM3 then clip.map3 = map3 end -- inside the clip, so it is uploaded in chunks like the rest
+		if okT and terr then clip.terrain = terr end
+		if okL then clip.light = light end
+		json = HttpService:JSONEncode(clip)
+		if #json <= RP_MAXBYTES then break end
+	end
 	if #json > RP_MAXBYTES then
 		warn("[Sentinel] This replay is too big to upload (" .. math.floor(#json / 1000) .. " KB), so it was not saved.")
 		return
@@ -1032,7 +1169,7 @@ local function rpSend(c, kEnd, closing) -- closing: the server is shutting down 
 		i = j + 1
 	end
 	local okM, map = pcall(rpMap)
-	local head = { t0 = t0, t1 = t0 + math.floor(clip.len * 1000 / RP_HZ), users = users, names = names, why = c.why, hz = RP_HZ, map = okM and map or nil }
+	local head = { t0 = t0, t1 = t0 + math.floor(clip.len * 1000 / clip.hz), users = users, names = names, why = c.why, hz = clip.hz, map = okM and map or nil }
 	for seq, part in cuts do
 		local sent = false
 		for attempt = 1, closing and 2 or 3 do
@@ -1076,7 +1213,10 @@ local function rpSample()
 				elseif st == S.Freefall or st == S.Jumping or st == S.Flying then code = 1
 				elseif st == S.Climbing or st == S.Swimming then code = 4 end
 				local pos = hrp.Position
+				local _, ry = hrp.CFrame:ToOrientation()
 				table.insert(d, p.UserId) table.insert(d, math.floor(pos.X * 2 + 0.5)) table.insert(d, math.floor(pos.Y * 2 + 0.5)) table.insert(d, math.floor(pos.Z * 2 + 0.5)) table.insert(d, code)
+				table.insert(d, math.floor((math.deg(ry) % 360) / 2 + 0.5) % 180) -- which way they face, in 2 degree steps
+				table.insert(d, hum.MaxHealth > 0 and math.clamp(math.floor(hum.Health / hum.MaxHealth * 20 + 0.5), 0, 20) or 20) -- health, in steps of 5%
 				rpNames[p.UserId] = p.Name
 				n += 1
 			end
@@ -1257,7 +1397,7 @@ task.spawn(function()
 		task.wait(INTERVAL)
 	end
 end)
-task.spawn(function() -- replays: 2 samples a second, only while the owner has them on
+task.spawn(function() -- replays: 5 samples a second, only while the owner has them on
 	while true do
 		task.wait(1 / RP_HZ)
 		if RP.on then
