@@ -672,6 +672,70 @@ function rpWhy(w) {
   if (Number.isInteger(w.uid) && w.uid > 0) x.uid = w.uid; for (const [k, n] of [['by', 40], ['a', 12], ['w', 40], ['x', 12]]) if (typeof w[k] === 'string' && w[k]) x[k] = cleanName(w[k], n);
   if (Number.isFinite(w.t)) x.t = Math.round(w.t); if (Number.isInteger(w.at) && w.at >= 0) x.at = w.at; return x;
 }
+const rpMap3 = m => Array.isArray(m) ? m.slice(0, 1500).filter(a => Array.isArray(a) && (a.length === 12 || a.length === 13) && a.every((v, i) => Number.isFinite(v) && (i === 9 || Math.abs(v) < 1e7))).map(a => a.length === 12 ? [...a, 0].map(Math.round) : a.map(Math.round)).filter(a => a[3] > 0 && a[4] > 0 && a[5] > 0 && a[3] < 8000 && a[4] < 8000 && a[5] < 8000 && a[9] >= 0 && a[9] <= 0xffffff && a[10] >= 0 && a[10] <= 10 && a[11] >= 0 && a[11] <= 3 && a[12] >= 0 && a[12] <= 20) : null; // 3D map: [x, y, z, size x2, size y2, size z2, rot x, rot y, rot z, colour, transparency 0-10, shape]
+function rpTerr(t) { // terrain from Bridge 33: { x0, z0, c (cell size), w, d, h and m as runs of [value, count] covering every cell }. Height -9999: no terrain there
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null; const int = Number.isInteger, { x0, z0, c, w, d } = t;
+  if (![x0, z0].every(v => int(v) && Math.abs(v) < 1e6) || !int(c) || c < 4 || c > 64 || !int(w) || !int(d) || w < 1 || d < 1 || w > 200 || d > 200) return null;
+  const runs = (a, ok) => { if (!Array.isArray(a) || a.length % 2 || a.length > 2 * w * d) return null; let n = 0; for (let i = 0; i < a.length; i += 2) { if (!ok(a[i]) || !int(a[i + 1]) || a[i + 1] < 1) return null; n += a[i + 1]; } return n === w * d ? a : null; };
+  const h = runs(t.h, v => int(v) && (v === -9999 || Math.abs(v) < 1e5)), m = runs(t.m, v => int(v) && v >= 0 && v <= 20); return h && m ? { x0, z0, c, w, d, h, m } : null;
+}
+const rpLight = l => { if (!l || typeof l !== 'object') return null; const c = v => Number.isInteger(v) && v >= 0 && v <= 0xffffff, n = (v, a, b) => Number.isFinite(v) && v >= a && v <= b; return n(l.time, 0, 24) && c(l.amb) && c(l.out) && c(l.fog) && n(l.fogEnd, 0, 1e6) && n(l.br, 0, 20) ? { time: l.time, amb: l.amb, out: l.out, fog: l.fog, fogEnd: l.fogEnd, br: l.br } : null; }; // the game's time of day, light and fog
+const RP_EV = ['chat', 'death', 'join', 'leave', 'tool', 'use'];
+const rpEvs = ev => (Array.isArray(ev) ? ev : []).slice(0, 6000).filter(e => Array.isArray(e) && Number.isInteger(e[0]) && e[0] >= 0 && RP_EV.includes(e[1]) && Number.isInteger(e[2]) && e[2] > 0).map(e => { // [tick, kind, player, extra]: chat text, the killer, the tool held ('' when none) or the name on join
+  const x = [e[0], e[1], e[2]];
+  if (e[1] === 'chat') x.push(String(e[3] ?? '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 300)); else if (e[1] === 'death') { if (Number.isInteger(e[3]) && e[3] > 0) x.push(e[3]); } else if (e[1] === 'tool') x.push(cleanName(e[3], 40)); else if (e[1] === 'join' && typeof e[3] === 'string') x.push(cleanName(e[3], 40));
+  return x;
+});
+const RP_NOTES = 100; // staff notes pinned to moments of a replay, in an extra row of the clip (seq -1)
+const rpNotes = rows => { const x = rows.find(y => y.seq === -1); try { const a = x ? JSON.parse(rpUnz(x.data)) : []; return Array.isArray(a) ? a : []; } catch { return []; } };
+async function rpNotesSave(rid, head, notes) {
+  const dz = rpZ(JSON.stringify(notes)), row = { id: rid, seq: -1, wid: CTX.wid, server: head.server, started_at: null, ended_at: null, trigger: [], user_ids: [], data: dz, bytes: dz.length, keep_until: head.keep_until, evidence: !!head.evidence };
+  try { const x = await cbFetch('replays?on_conflict=id,seq', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify([row]), ms: 6000 }); return x.ok; } catch { return false; }
+}
+function rpTrim(rows, head, from, to) { // keep only from..to (seconds from the start): tracks, events and notes cut and re-chunked, so only that part uses storage
+  let meta; try { meta = JSON.parse(rpUnz(head.data)); } catch { return { error: 'This replay could not be read.' }; }
+  const parts = rows.filter(x => x.seq > 0 && x.seq <= meta.total).sort((a, b) => a.seq - b.seq); if (parts.length < meta.total) return { error: 'This replay is still uploading. Try again in a minute.' };
+  let clip; try { clip = JSON.parse(parts.map(x => rpUnz(x.data)).join('')); } catch { return { error: 'This replay could not be read.' }; }
+  const hz = clip.hz || meta.hz || 2, len = clip.len || 0; if (!Number.isFinite(from) || !Number.isFinite(to) || from < 0 || to <= from) return { error: 'Pick where the part starts and ends.' };
+  const a = Math.max(0, Math.floor(from * hz)), b = Math.min(len, Math.ceil(to * hz)); if (b - a < hz) return { error: 'Keep at least one second.' };
+  const F = clip.v === 3 ? 7 : clip.v === 2 ? 6 : 5, Dn = F - 1, tracks = {}; // samples: [tick, x, y, z, state, (facing), (health)], then [dx, dy, dz, state, (facing), (health)]
+  for (const [id, segs] of Object.entries(clip.tracks || {})) {
+    const out = [];
+    for (const g of Array.isArray(segs) ? segs : []) {
+      let k = g[0], cur = g.slice(1, F), prev = null, seg = null;
+      const emit = () => { if (k < a || k > b) { seg = null; return; } if (!seg) { seg = [k - a, ...cur]; out.push(seg); } else seg.push(cur[0] - prev[0], cur[1] - prev[1], cur[2] - prev[2], ...cur.slice(3)); prev = cur; };
+      emit(); for (let i = F; i + Dn <= g.length; i += Dn) { k++; cur = [cur[0] + g[i], cur[1] + g[i + 1], cur[2] + g[i + 2], ...g.slice(i + 3, i + Dn)]; emit(); }
+    }
+    if (out.length) tracks[id] = out;
+  }
+  const t0 = (Number.isFinite(clip.t0) ? clip.t0 : Date.parse(head.started_at)) + Math.round(a * 1000 / hz), nc = { ...clip, t0, len: b - a, tracks, ev: (clip.ev || []).filter(e => Array.isArray(e) && e[0] >= a && e[0] <= b).map(e => [e[0] - a, ...e.slice(1)]) };
+  const json = JSON.stringify(nc), pieces = []; for (let i = 0; i < json.length; i += 60000) pieces.push(json.slice(i, i + 60000));
+  const hd = rpZ(JSON.stringify({ ...meta, total: pieces.length })), sec = a / hz, out = [{ ...head, started_at: new Date(t0).toISOString(), ended_at: new Date(t0 + Math.round((b - a) * 1000 / hz)).toISOString(), trigger: (head.trigger || []).filter(w => !Number.isInteger(w.at) || (w.at >= a && w.at <= b)).map(w => Number.isInteger(w.at) ? { ...w, at: w.at - a } : w), user_ids: Object.keys(tracks).map(Number), data: hd, bytes: hd.length }];
+  pieces.forEach((p, i) => { const dz = rpZ(p); out.push({ ...head, seq: i + 1, started_at: null, ended_at: null, trigger: [], user_ids: [], data: dz, bytes: dz.length }); });
+  const notes = rpNotes(rows).filter(n => n.t >= sec && n.t <= b / hz).map(n => ({ ...n, t: Math.round((n.t - sec) * 10) / 10 }));
+  if (notes.length) { const dz = rpZ(JSON.stringify(notes)); out.push({ ...head, seq: -1, started_at: null, ended_at: null, trigger: [], user_ids: [], data: dz, bytes: dz.length }); }
+  return { rows: out, from: sec, to: b / hz };
+}
+const RBX_CDN = env.RBXCDN_TEST_BASE || ''; // the override is for tests only
+const AV3 = new Map(); let AV3B = 0; // the 3D avatars staff watch replays with: Roblox's files, kept a day, at most about 40 MB
+const av3Url = h => { if (/^https:\/\/[\w.-]+\.rbxcdn\.com\//.test(h)) return h; if (!/^[\w-]{8,120}$/.test(h)) return null; if (RBX_CDN) return RBX_CDN + '/' + h; let i = 31; for (const c of h) i ^= c.charCodeAt(0); return `https://t${i % 8}.rbxcdn.com/${h}`; };
+async function av3Get(key, url, json) { // one file from Roblox, cached; null when it is missing, too big or not from Roblox's servers
+  const hit = AV3.get(key); if (hit && Date.now() - hit.t < 864e5) return hit.v;
+  if (!url || !(RBX_CDN && url.startsWith(RBX_CDN) || /^https:\/\/[\w.-]+\.(rbxcdn|roblox)\.com\//.test(url) || url.startsWith(RBX_THUMBS))) return null;
+  let v = null; try { const r = await fetch(url, { signal: AbortSignal.timeout(8000) }); if (r.ok) { const b = Buffer.from(await r.arrayBuffer()); if (b.length <= 3e6) v = json ? JSON.parse(b.toString('utf8')) : b; } } catch {}
+  if (v === null) return null;
+  const sz = json ? 2000 : v.length; AV3.set(key, { t: Date.now(), v, sz }); AV3B += sz;
+  for (const [k, x] of AV3) { if (AV3B <= 4e7) break; AV3.delete(k); AV3B -= x.sz; }
+  return v;
+}
+async function av3Meta(id) { // where Roblox keeps a player's 3D avatar: { obj, mtl, textures }
+  const hit = AV3.get('m:' + id); if (hit && Date.now() - hit.t < 864e5) return hit.v;
+  let x; try { x = await j(`${RBX_THUMBS}/v1/users/avatar-3d?userId=${id}`); } catch { return null; }
+  if (!x || x.state !== 'Completed' || !x.imageUrl) return x && x.state === 'Pending' ? 'pending' : null;
+  const m = await av3Get('j:' + id, x.imageUrl, true); if (!m || typeof m.obj !== 'string' || typeof m.mtl !== 'string') return null;
+  const v = { obj: m.obj, mtl: m.mtl, textures: (Array.isArray(m.textures) ? m.textures : []).filter(t => typeof t === 'string').slice(0, 12), aabb: m.aabb || null, camera: m.camera && m.camera.position ? { position: m.camera.position } : null };
+  AV3.set('m:' + id, { t: Date.now(), v, sz: 500 }); AV3B += 500; return v;
+}
 const rpMap = m => Array.isArray(m) ? m.slice(0, 300).filter(a => Array.isArray(a) && a.length === 5 && a.every(v => Number.isFinite(v) && Math.abs(v) < 1e6)).map(a => a.map(Math.round)) : null; // map outline: [x, z, width, depth, rotation]
 function rpCmd(sid, why, fast) { // ask one live server (game script 27 or newer) to save a replay. fast: upload it straight away (someone wants to watch)
   const sv = R.servers[sid], now = Date.now(); if (!rpSet().on || !sv || now - sv.last > LIVE_MS || (sv.sv || 1) < 27 || !('cmds' in loaded)) return false;
@@ -1004,7 +1068,7 @@ const VAULT_CAP = 512 * 1024, VAULT_DAYS = [30, 90, 180, 365], CASE_RE = /^(call
 const vaultDays = () => VAULT_DAYS.includes(D.settings.vaultDays) ? D.settings.vaultDays : 180;
 const vaultItems = () => { const now = Date.now(); if (VT.items.some(x => x.exp <= now)) VT.items = VT.items.filter(x => x.exp > now); return VT.items; }; // expired items are deleted the next time the vault is read
 const vaultSize = () => JSON.stringify(VT).length;
-const vaultMeta = x => ({ id: x.id, uid: x.uid || null, name: x.name || '', cases: x.cases || [], kind: x.kind, title: x.title, ...(x.rid ? { rid: x.rid, size: x.size || 0 } : {}), by: x.by, byUid: x.byUid, t: x.t, exp: x.exp, n: x.msgs ? x.msgs.length : 0, opened: (x.log || []).length });
+const vaultMeta = x => ({ id: x.id, uid: x.uid || null, name: x.name || '', cases: x.cases || [], kind: x.kind, title: x.title, ...(x.rid ? { rid: x.rid, size: x.size || 0, ...(x.part ? { part: x.part } : {}) } : {}), by: x.by, byUid: x.byUid, t: x.t, exp: x.exp, n: x.msgs ? x.msgs.length : 0, opened: (x.log || []).length });
 function caseInfo(cs) { // what a case points at, or null when it is gone
   const [k, v] = cs.split(':');
   if (k === 'call') { const c = D.calls.find(c => c.id === +v); return c ? { uid: c.target ? c.target.userId : c.from.userId, name: c.target ? c.target.name : c.from.name } : null; }
@@ -2622,7 +2686,7 @@ async function route(req, res, url, p) {
       if (!D.meta || D.meta.deleted || D.meta.suspended || (isNew ? !D.meta.codeHash || !same(codeHash(k.slice(13)), D.meta.codeHash) : (D.meta.codeHash || (D.meta.rot || 0) !== +rot))) return send(res, 403, { error: 'bad key' });
       if (!rpSet().on) return send(res, 409, { error: 'Replays are switched off.' });
       const seq = b.seq, total = b.total, data = b.data;
-      if (typeof b.clip !== 'string' || !/^[\w{}-]{1,64}$/.test(b.clip) || !Number.isInteger(total) || total < 1 || total > 30 || !Number.isInteger(seq) || seq < 1 || seq > total || typeof data !== 'string' || data.length > 70000) return send(res, 400, { error: 'bad request' });
+      if (typeof b.clip !== 'string' || !/^[\w{}-]{1,64}$/.test(b.clip) || !Number.isInteger(total) || total < 1 || total > 60 || !Number.isInteger(seq) || seq < 1 || seq > total || typeof data !== 'string' || data.length > 70000) return send(res, 400, { error: 'bad request' });
       const id = rpId(wid, job, b.clip), now = Date.now(), keep = new Date(now + rpSet().days * 864e5).toISOString(), rows = [];
       if (seq === 1) { // the first chunk carries the header
         const h = b.head && typeof b.head === 'object' ? b.head : {}, used = await rpUsed(wid);
@@ -2630,7 +2694,7 @@ async function route(req, res, url, p) {
         const t0 = Number.isFinite(h.t0) && Math.abs(h.t0 - now) < 864e5 ? Math.round(h.t0) : now - 60000, t1 = Number.isFinite(h.t1) && h.t1 >= t0 ? Math.round(Math.min(h.t1, t0 + 11 * 60000)) : now;
         const users = [...new Set((Array.isArray(h.users) ? h.users : []).filter(x => Number.isInteger(x) && x > 0))].slice(0, 60), names = {};
         for (const [u, n] of Object.entries(h.names && typeof h.names === 'object' ? h.names : {}).slice(0, 60)) if (/^\d{1,15}$/.test(u)) names[u] = cleanName(n, 40) || 'User ' + u;
-        const meta = rpZ(JSON.stringify({ total, names, hz: [1, 2].includes(h.hz) ? h.hz : 2, map: rpMap(h.map) }));
+        const meta = rpZ(JSON.stringify({ total, names, hz: [1, 2, 2.5, 5].includes(h.hz) ? h.hz : 2, map: rpMap(h.map) }));
         rows.push({ id, seq: 0, wid, server: job.slice(0, 8), started_at: new Date(t0).toISOString(), ended_at: new Date(t1).toISOString(), trigger: (Array.isArray(h.why) ? h.why : []).slice(0, 20).map(rpWhy).filter(Boolean), user_ids: users, data: meta, bytes: meta.length, keep_until: keep, evidence: false });
       }
       const dz = rpZ(data); rows.push( // every row in one insert needs the same columns, or Supabase refuses them all
@@ -2995,10 +3059,22 @@ async function route(req, res, url, p) {
       const uids = (head.user_ids || []).map(Number), inR = t => t >= t0 - 2000 && t <= t1 + 2000, PUN = ['Warned', 'Kicked', 'Muted', 'Suspended', 'Banned'], markers = [];
       for (const uid of uids) for (const e of D.logs[uid] || []) if (PUN.includes(e.type) && inR(e.time)) markers.push({ t: e.time, kind: 'action', uid, text: `${e.type} by ${e.by}${e.reason ? ': ' + e.reason : ''}`.slice(0, 200) });
       for (const c of D.calls) { const who = c.target ? c.target.userId : c.from.userId; if (inR(c.t) && (uids.includes(who) || uids.includes(c.from.userId))) markers.push({ t: c.t, kind: 'report', uid: who, text: `Report #${c.id} from ${c.from.name}: ${c.text}`.slice(0, 200) }); }
-      for (const x of XF.list) if (inR(x.t) && uids.includes(x.uid)) markers.push({ t: x.t, kind: 'xflag', uid: x.uid, text: xfText(x) });
+      for (const x of XF.list) if (inR(x.t) && uids.includes(x.uid)) markers.push({ t: x.t, kind: 'xflag', uid: x.uid, text: xfText(x), x: x.kind });
       for (const a of D.alerts || []) if (inR(a.t) && uids.includes(a.userId)) markers.push({ t: a.t, kind: 'alert', uid: a.userId, text: `Chat alert "${a.word}"` });
       markers.sort((a, b) => a.t - b.t);
-      return send(res, 200, { ...base, hz: clip.hz || meta.hz || 2, t0: Number.isFinite(clip.t0) ? clip.t0 : t0, len: clip.len || 0, names: { ...(clip.names || {}), ...base.names }, tracks: clip.tracks || {}, ev: clip.ev || [], map: base.map || rpMap(clip.map), markers });
+      return send(res, 200, { ...base, hz: clip.hz || meta.hz || 2, t0: Number.isFinite(clip.t0) ? clip.t0 : t0, len: clip.len || 0, names: { ...(clip.names || {}), ...base.names }, tracks: clip.tracks || {}, ev: rpEvs(clip.ev), map: base.map || rpMap(clip.map), map3: rpMap3(clip.map3), terrain: rpTerr(clip.terrain), light: rpLight(clip.light), v: [2, 3].includes(clip.v) ? clip.v : 1, flagWords: D.flagWords, markers, notes: rpNotes(rows).map(n => ({ ...n, del: n.byUid === uid || has(u, 'logbook.revert') })) });
+    }
+    if (req.method === 'GET' && p === '/api/avatar3d') { // a player's 3D avatar for the replay viewer, fetched from Roblox here so the browser never has to
+      if (!has(u, 'replays.view')) return deny(res);
+      const w = limit('av3:' + uid, 400, 60000); if (w) return tooMany(res, w);
+      const id = +url.searchParams.get('id'), fk = url.searchParams.get('f'), h = String(url.searchParams.get('h') || '');
+      if (!Number.isInteger(id) || id < 1 || id > 1e15 || !['meta', 'obj', 'mtl', 'tex'].includes(fk)) return send(res, 400, { error: 'bad request' });
+      const m = await av3Meta(id); if (m === 'pending') return send(res, 202, { pending: true }); if (!m) return send(res, 404, { error: 'No 3D avatar' });
+      if (fk === 'meta') return send(res, 200, { aabb: m.aabb, camera: m.camera, textures: m.textures.length });
+      const hash = fk === 'tex' ? (m.textures.includes(h) ? h : null) : m[fk]; if (!hash) return send(res, 404, { error: 'not found' });
+      let b = await av3Get('f:' + hash, av3Url(hash)); if (!b) return send(res, 404, { error: 'not found' });
+      if (fk === 'mtl') b = Buffer.from(b.toString('utf8').replace(/^(\s*map_\w+\s+)(\S+)\s*$/gm, (z, a, t) => m.textures.includes(t) ? `${a}/api/avatar3d?id=${id}&f=tex&h=${encodeURIComponent(t)}` : '')); // textures load through here too
+      res.writeHead(200, { 'Content-Type': fk === 'tex' ? 'image/png' : 'text/plain; charset=utf-8', 'Cache-Control': 'private, max-age=86400' }); return res.end(b);
     }
     if (req.method === 'GET' && p === '/api/replays') { // find the replay that covers a moment, or the storage used
       if (!has(u, 'replays.view')) return deny(res);
@@ -3028,6 +3104,25 @@ async function route(req, res, url, p) {
         audit(u.user, `Replays ${D.settings.replays.on ? 'on, kept ' + D.settings.replays.days + ' days' : 'off'}`); return ok(res);
       }
       if (!has(u, 'replays.view')) return deny(res);
+      if (B.op === 'note-add' || B.op === 'note-del') { // notes pinned to a moment, seen by everyone who can watch the replay
+        const w = limit('rpnote:' + uid, 30, 60000); if (w) return tooMany(res, w);
+        const rid = String(B.id || '').toUpperCase(); if (!RP_ID_RE.test(rid)) return send(res, 400, { error: 'That is not a replay ID.' });
+        let rows; try { rows = await rpRows(rid); } catch { return send(res, 503, { error: 'Replays are not set up yet.' }); }
+        const head = rows.find(x => x.seq === 0); if (!head) return send(res, 404, { error: 'That replay is not there any more.' });
+        const notes = rpNotes(rows);
+        if (B.op === 'note-add') {
+          const text = cleanName(B.text, 200), t = +B.t, len = (Date.parse(head.ended_at) - Date.parse(head.started_at)) / 1000;
+          if (text.length < 2) return send(res, 400, { error: 'Write the note first.' }); if (!Number.isFinite(t) || t < 0 || t > len + 5) return send(res, 400, { error: 'bad request' });
+          if (notes.length >= RP_NOTES) return send(res, 409, { error: `A replay can have up to ${RP_NOTES} notes. Remove one first.` });
+          const n = { id: rnd(6), t: Math.round(t * 10) / 10, text, by: u.user, byUid: uid, at: Date.now() }; notes.push(n); notes.sort((a, b) => a.t - b.t);
+          if (!await rpNotesSave(rid, head, notes)) return send(res, 502, { error: 'Could not save the note. Try again.' });
+          audit(u.user, `Added a note to replay ${rid}: ${text.slice(0, 60)}`); return send(res, 200, { ok: true, note: { ...n, del: true } });
+        }
+        const i = notes.findIndex(x => x.id === String(B.nid || '')); if (i < 0) return send(res, 404, { error: 'That note is not there any more.' });
+        if (notes[i].byUid !== uid && !has(u, 'logbook.revert')) return deny(res);
+        const [gone] = notes.splice(i, 1); if (!await rpNotesSave(rid, head, notes)) return send(res, 502, { error: 'Could not remove the note. Try again.' });
+        audit(u.user, `Removed a note from replay ${rid}${gone.by !== u.user ? ' (written by ' + gone.by + ')' : ''}`); return ok(res);
+      }
       if (B.op === 'save') { // Save replay now, from the Servers page
         const sid = Object.keys(R.servers).find(k => k.slice(0, 8) === String(B.id || '')), sv = sid && R.servers[sid];
         if (!rpSet().on) return send(res, 409, { error: 'Replays are switched off. Turn them on in Settings, Automations.' });
@@ -3329,10 +3424,12 @@ async function route(req, res, url, p) {
           let rows; try { rows = await rpRows(rid); } catch { return send(res, 503, { error: 'Replays are not set up yet.' }); }
           const head = rows.find(y => y.seq === 0); if (!head) return send(res, 404, { error: 'That replay is not there any more.' });
           if (head.evidence) return send(res, 409, { error: 'This replay is already a kept copy.' });
-          const size = rows.reduce((a, y) => a + (y.bytes || 0), 0), used = await rpUsed(); if (used.bytes + size > rpCap()) { rpFull(); return send(res, 413, { error: 'Replay storage is full. Remove evidence copies you no longer need, or keep replays for fewer days.' }); }
-          const nid = boxId(), keepIso = new Date(x.exp).toISOString(), copy = rows.map(y => ({ ...y, id: nid, wid: CTX.wid, keep_until: keepIso, evidence: true }));
+          let src = rows, part = null; if (B.from !== undefined || B.to !== undefined) { const tr = rpTrim(rows, head, +B.from, +B.to); if (tr.error) return send(res, 400, { error: tr.error }); src = tr.rows; part = tr; } // only the part they picked
+          const size = src.reduce((a, y) => a + (y.bytes || 0), 0), used = await rpUsed(); if (used.bytes + size > rpCap()) { rpFull(); return send(res, 413, { error: 'Replay storage is full. Remove evidence copies you no longer need, or keep replays for fewer days.' }); }
+          const nid = boxId(), keepIso = new Date(x.exp).toISOString(), copy = src.map(y => ({ ...y, id: nid, wid: CTX.wid, keep_until: keepIso, evidence: true }));
           const rr = await cbFetch('replays?on_conflict=id,seq', { method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' }, body: JSON.stringify(copy), ms: 8000 }); if (!rr.ok) return send(res, 502, { error: 'Could not keep the replay. Try again.' });
           x.rid = nid; x.server = head.server; x.size = size; x.title ||= `Replay from server ${head.server}, ${new Date(Date.parse(head.started_at)).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+          if (part) { const ms = v => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, '0')}`; x.part = [part.from, part.to]; x.title = cleanName(`${x.title} (part ${ms(part.from)} to ${ms(part.to)})`, 80); }
         }
         items.push(x); audit(u.user, `Added ${kind === 'box' ? 'a chat box copy' : 'a ' + kind} to the evidence vault${x.name ? ' for ' + x.name : ''}`);
         return send(res, 200, { ok: true, id: x.id, warn: vaultSize() >= VAULT_CAP * 0.8 });
