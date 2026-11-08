@@ -16,7 +16,9 @@
 	                      An outline of the map (the 300 largest anchored parts, as plain rectangles) is sent with each replay,
 	                      and a simple 3D copy of it (up to 1200 larger parts as plain blocks, with their colours and materials) for the 3D viewer,
 	                      the shape of the terrain (its top surface on an 8 stud grid) and the game's time of day, light and fog.
-	                      Each player's position is recorded with the way they are facing.
+	                      Each player's position is recorded with the way they are facing. Parts that move (doors, lifts, vehicles,
+	                      loose parts) are followed too. With player script 8, how each character is posed (neck, shoulders, hips)
+	                      and where their camera looks are added, so replays show real movement.
 	                      If the server closes while a replay is recording, what was recorded so far is uploaded straight away.
 	  * Exploit flags  -> speed, teleport and fly are measured here on the server and sent to Sentinel for staff to review.
 	                      Nothing ever happens to a player automatically because of a flag.
@@ -31,6 +33,11 @@
 	  Admin fly and noclip commands are checked like any other movement, so exempt staff who use them.
 	  If your game sets PlatformStand from a LocalScript (some gliders and vehicles do), exempt those players too.
 	  To see what the checks measure, set DEBUG_FLAGS = true below and watch the Developer Console (Server tab).
+	  * AuthLock       -> locked areas, such as an admin room. In Studio, put a box part over the area (it can be invisible,
+	                      with CanCollide off), add the tag SentinelAuthLock and, if you like, a text attribute Zone with its name.
+	                      Several parts can share one Zone name. The zone shows up on the AuthLock page of the website, where
+	                      you pick who may go in: Sentinel staff ranks and a Roblox group rank. Anyone else who gets in is sent
+	                      back to where they last stood, sees a notice, and staff are told. Checked here on the server only.
 	  * Report button  -> the optional SentinelClient script adds a Report button (pick a player + details); this script receives it
 	  * Staff bar      -> staff in the ranks the owner picks get a bar at the bottom of the screen (SentinelClient 7 draws it).
 	                      Their requests come here, and this script asks Sentinel with the game key and the Roblox ID that
@@ -51,7 +58,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local Debris = game:GetService("Debris")
 
-local SCRIPT_VERSION = 33 -- raised whenever this script changes, so Sentinel can tell you when to update
+local SCRIPT_VERSION = 34 -- raised whenever this script changes, so Sentinel can tell you when to update
 local URL = "http://127.0.0.1:3000"
 local KEY = "[INPUT CODE HERE]" -- paste your game code from the Sentinel website between the quotes
 local INTERVAL = 4
@@ -976,6 +983,37 @@ rpTrigger = function(why) -- start a clip (with the minutes before), or make the
 		rpClip = { k0 = k0, stop = k + RP.after * RP_HZ, why = { why } }
 	end
 end
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+local function rpB64(t) -- small numbers 0-255 as short url-safe text, 4 letters for every 3 numbers
+	local out, n = {}, #t
+	for i = 1, n, 3 do
+		local v = t[i] * 65536 + (t[i + 1] or 0) * 256 + (t[i + 2] or 0)
+		local c = { math.floor(v / 262144) % 64, math.floor(v / 4096) % 64, math.floor(v / 64) % 64, v % 64 }
+		for j = 1, (n - i >= 2) and 4 or (n - i == 1) and 3 or 2 do table.insert(out, string.sub(B64, c[j] + 1, c[j] + 1)) end
+	end
+	return table.concat(out)
+end
+local poseEvent = ReplicatedStorage:FindFirstChild("SentinelPose") -- player script 8: how each player's own character is posed, for drawing replays only
+if not poseEvent then
+	local okU, ev = pcall(Instance.new, "UnreliableRemoteEvent")
+	poseEvent = okU and ev or Instance.new("RemoteEvent")
+	poseEvent.Name = "SentinelPose"
+	poseEvent.Parent = ReplicatedStorage
+end
+poseEvent:SetAttribute("On", false)
+local rpPose, rpPoseAt = {}, {}
+poseEvent.OnServerEvent:Connect(function(plr, t) -- 17 numbers 0-255: neck, shoulders and hips (3 each), then where the camera looks. Never used for anything but drawing
+	if not RP.on or type(t) ~= "table" or #t ~= 17 then return end
+	local now = os.clock()
+	if now - (rpPoseAt[plr] or 0) < 0.12 then return end
+	for i = 1, 17 do
+		local v = t[i]
+		if type(v) ~= "number" or v ~= v or v < 0 or v > 255 or v % 1 ~= 0 then return end
+	end
+	rpPoseAt[plr], rpPose[plr] = now, rpB64(t)
+end)
+local rpMvParts, rpMvLast, rpMvBase = nil, {}, {} -- moving parts: the map's parts by row; their last place; their place before the oldest kept sample
+local RP_MVMAX = 150 -- at most 150 parts move in one sample
 local rpMapCache = nil -- the map outline, worked out once per server
 local function rpMap() -- large anchored parts as rectangles seen from above: { x, z, width, depth, rotation }. At most 300, no images, about 6 KB
 	if rpMapCache then return rpMapCache end
@@ -1014,8 +1052,14 @@ for code, names in { { "Grass", "LeafyGrass" }, { "Brick" }, { "Wood", "WoodPlan
 end
 local function rpMat(m) return RP_MAT[m] or 0 end
 local rpMap3Cache = nil -- the 3D map, worked out once per server
-local function rpMap3() -- larger anchored parts as plain shapes: { x, y, z, size x2, size y2, size z2, rot x, rot y, rot z, colour, transparency 0-10, shape, material }. At most 1200
+local rpMap3Busy = false
+local function rpMap3() -- larger parts as plain shapes: { x, y, z, size x2, size y2, size z2, rot x, rot y, rot z, colour, transparency 0-10, shape, material }. At most 1200. Parts that move are followed in each sample
 	if rpMap3Cache then return rpMap3Cache end
+	if rpMap3Busy then
+		while rpMap3Busy do task.wait(0.2) end
+		return rpMap3Cache or {}
+	end
+	rpMap3Busy = true
 	local cx, cz, n = 0, 0, 0 -- the middle of where players are, so big maps keep the parts near them
 	for _, p in Players:GetPlayers() do
 		local hrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
@@ -1027,7 +1071,8 @@ local function rpMap3() -- larger anchored parts as plain shapes: { x, y, z, siz
 		seen += 1
 		if seen % 2000 == 0 then task.wait() end -- big maps: never hold up the game
 		if seen > 60000 then break end
-		if d:IsA("BasePart") and d.Anchored and d.Transparency < 0.95 and not d:IsA("Terrain") then
+		local mdl = (d:IsA("BasePart") and not d.Anchored) and d:FindFirstAncestorWhichIsA("Model") or nil
+		if d:IsA("BasePart") and d.Transparency < 0.95 and not d:IsA("Terrain") and not (mdl and mdl:FindFirstChildOfClass("Humanoid")) then -- not players or characters: they are drawn as avatars
 			local sz, p = d.Size, d.Position
 			local face = math.max(sz.X * sz.Y, sz.X * sz.Z, sz.Y * sz.Z)
 			if math.max(sz.X, sz.Y, sz.Z) >= 2 and face >= 4 and (n == 0 or math.abs(p.X - cx) + math.abs(p.Z - cz) < 1200) then
@@ -1040,18 +1085,19 @@ local function rpMap3() -- larger anchored parts as plain shapes: { x, y, z, siz
 					math.max(1, math.floor(sz.X * 2 + 0.5)), math.max(1, math.floor(sz.Y * 2 + 0.5)), math.max(1, math.floor(sz.Z * 2 + 0.5)),
 					math.floor(o.X + 0.5), math.floor(o.Y + 0.5), math.floor(o.Z + 0.5),
 					math.floor(c.R * 255 + 0.5) * 65536 + math.floor(c.G * 255 + 0.5) * 256 + math.floor(c.B * 255 + 0.5),
-					math.floor(d.Transparency * 10 + 0.5), shape, rpMat(d.Material), face })
+					math.floor(d.Transparency * 10 + 0.5), shape, rpMat(d.Material), face, d })
 			end
 		end
 	end
 	table.sort(list, function(a, b) return a[14] > b[14] end)
-	local out = {}
+	local out, inst = {}, {}
 	for i = 1, math.min(1200, #list) do
 		local a = list[i]
-		a[14] = nil
+		inst[i] = a[15]
+		a[14], a[15] = nil, nil
 		out[i] = a
 	end
-	rpMap3Cache = out
+	rpMap3Cache, rpMvParts, rpMap3Busy = out, inst, false
 	return out
 end
 local rpTerrCache = nil -- the terrain's top surface, worked out once per server. false: this place has no terrain
@@ -1107,14 +1153,49 @@ local function rpCut(json, i) -- a chunk end that never splits a multi-byte char
 	end
 	return j
 end
-local function rpBuild(c, kEnd, step) -- delta-encoded tracks: per player, runs of [tick, x, y, z, state, facing, health, then dx, dy, dz, state, facing, health for every next sample]. step 2: every 2nd sample
-	step = step or 1
+local function rpBuild(c, kEnd, step, pose, moves) -- delta-encoded tracks: per player, runs of [tick, x, y, z, state, facing, health, then dx, dy, dz, state, facing, health for every next sample]. step 2: every 2nd sample
+	-- pose: 1 every pose, 2 every 2nd, 0 none (poses: per player [tick, text, ...]). moves: the parts that moved (mv: per map row [tick, x, y, z, rot x, rot y, rot z, ...], tick 0 is where it was at the start)
+	step, pose = step or 1, pose or 1
 	local tracks, users, names, last = {}, {}, {}, {}
+	local poses, mv, mvN = {}, {}, 0
+	if moves then
+		local cur = {}
+		for i, st in rpMvBase do cur[i] = st end
+		for _, f in rpFrames do
+			if f[1] < c.k0 and f[4] then for i, st in f[4] do cur[i] = st end end
+		end
+		for i, st in cur do
+			if mvN < RP_MVMAX then
+				mv[tostring(i)] = { 0, st[1], st[2], st[3], st[4], st[5], st[6] }
+				mvN += 1
+			end
+		end
+	end
 	for _, f in rpFrames do
 		local k = f[1]
+		if moves and f[4] and f[1] >= c.k0 and f[1] <= kEnd then
+			local kk = math.floor((f[1] - c.k0) / step)
+			for i, st in f[4] do
+				local key = tostring(i)
+				local m = mv[key]
+				if not m and mvN < RP_MVMAX then m = {} mv[key] = m mvN += 1 end
+				if m then
+					if #m >= 7 and m[#m - 6] == kk then for j = 1, 7 do table.remove(m) end end -- two in one thinned sample: the newer one
+					table.insert(m, kk) for j = 1, 6 do table.insert(m, st[j]) end
+				end
+			end
+		end
 		if k >= c.k0 and k <= kEnd and (k - c.k0) % step == 0 then
 			local d = f[2]
 			k = c.k0 + (k - c.k0) / step
+			if pose > 0 and f[3] and (k - c.k0) % pose == 0 then
+				for uid, ps in f[3] do
+					local key = tostring(uid)
+					local L = poses[key]
+					if not L then L = {} poses[key] = L end
+					table.insert(L, k - c.k0) table.insert(L, ps)
+				end
+			end
 			for i = 1, #d, 7 do
 				local uid, x, y, z, st, yaw, hp = d[i], d[i + 1], d[i + 2], d[i + 3], d[i + 4], d[i + 5], d[i + 6]
 				local key = tostring(uid)
@@ -1141,15 +1222,18 @@ local function rpBuild(c, kEnd, step) -- delta-encoded tracks: per player, runs 
 		if e[1] >= c.k0 and e[1] <= kEnd then table.insert(ev, { math.floor((e[1] - c.k0) / step), e[2], e[3], e[4] }) end
 	end
 	local t0 = math.floor(RP_EPOCH + c.k0 * 1000 / RP_HZ)
-	return { v = 3, hz = RP_HZ / step, t0 = t0, len = math.floor((kEnd - c.k0) / step), names = names, tracks = tracks, ev = ev }, users, names, t0
+	local clip = { v = 3, hz = RP_HZ / step, t0 = t0, len = math.floor((kEnd - c.k0) / step), names = names, tracks = tracks, ev = ev }
+	if next(poses) then clip.poses = poses end
+	if next(mv) then clip.mv = mv end
+	return clip, users, names, t0
 end
 local function rpSend(c, kEnd, closing) -- closing: the server is shutting down or someone is waiting to watch, so upload faster
 	local okM3, map3 = pcall(rpMap3)
 	local okT, terr = pcall(rpTerrain)
 	local okL, light = pcall(rpLight)
 	local okB, clip, users, names, t0, json
-	for _, step in { 1, 2, 5 } do -- a very busy clip: keep fewer samples a second rather than lose it
-		okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd, step)
+	for _, try in { { 1, 1, true }, { 1, 2, true }, { 1, 0, true }, { 1, 0, false }, { 2, 0, false }, { 5, 0, false } } do -- a very busy clip: fewer poses, then no poses, then no moving parts, then fewer samples a second, rather than lose it
+		okB, clip, users, names, t0 = pcall(rpBuild, c, kEnd, try[1], try[2], try[3])
 		if not okB then warn("[Sentinel] Could not build a replay: " .. tostring(clip)) return end
 		if okM3 then clip.map3 = map3 end -- inside the clip, so it is uploaded in chunks like the rest
 		if okT and terr then clip.terrain = terr end
@@ -1199,7 +1283,8 @@ local function rpNow() -- someone on the website wants to watch: end the clip he
 end
 local function rpSample()
 	local k = rpK()
-	local d, n = {}, 0
+	local d, n, ps = {}, 0, nil
+	local now = os.clock()
 	for _, p in Players:GetPlayers() do
 		if n < RP_MAXP and not bouncing[p] then
 			local char = p.Character
@@ -1218,20 +1303,149 @@ local function rpSample()
 				table.insert(d, math.floor((math.deg(ry) % 360) / 2 + 0.5) % 180) -- which way they face, in 2 degree steps
 				table.insert(d, hum.MaxHealth > 0 and math.clamp(math.floor(hum.Health / hum.MaxHealth * 20 + 0.5), 0, 20) or 20) -- health, in steps of 5%
 				rpNames[p.UserId] = p.Name
+				if rpPose[p] and now - (rpPoseAt[p] or 0) < 0.6 then
+					ps = ps or {}
+					ps[p.UserId] = rpPose[p]
+				end
 				n += 1
 			end
 		end
 	end
-	table.insert(rpFrames, { k, d })
+	local mv, mn = nil, 0
+	if rpMvParts then -- parts that moved since the last sample: doors, lifts, vehicles, anything loose
+		for i, part in rpMvParts do
+			if mn >= RP_MVMAX then break end -- the rest are picked up next time
+			if part.Parent then
+				local pp, o = part.Position, part.Orientation
+				local a1, a2, a3 = math.floor(pp.X * 2 + 0.5), math.floor(pp.Y * 2 + 0.5), math.floor(pp.Z * 2 + 0.5)
+				local a4, a5, a6 = math.floor(o.X + 0.5), math.floor(o.Y + 0.5), math.floor(o.Z + 0.5)
+				local L = rpMvLast[i]
+				if not L then rpMvLast[i] = { a1, a2, a3, a4, a5, a6 }
+				elseif L[1] ~= a1 or L[2] ~= a2 or L[3] ~= a3 or L[4] ~= a4 or L[5] ~= a5 or L[6] ~= a6 then
+					if not rpMvBase[i] then rpMvBase[i] = L end -- where it stood before it first moved
+					local cur = { a1, a2, a3, a4, a5, a6 }
+					rpMvLast[i] = cur
+					mv = mv or {}
+					mv[i] = cur
+					mn += 1
+				end
+			end
+		end
+	end
+	table.insert(rpFrames, { k, d, ps, mv })
 	local keepFrom = k - RP.min * 60 * RP_HZ
 	if rpClip then keepFrom = math.min(keepFrom, rpClip.k0) end -- never drop what the clip being recorded still needs
-	while rpFrames[1] and rpFrames[1][1] < keepFrom do table.remove(rpFrames, 1) end
+	while rpFrames[1] and rpFrames[1][1] < keepFrom do
+		local f = table.remove(rpFrames, 1)
+		if f[4] then for i, st in f[4] do rpMvBase[i] = st end end -- the oldest kept place moves on with it
+	end
 	while rpEvents[1] and rpEvents[1][1] < keepFrom do table.remove(rpEvents, 1) end
 	if rpClip and k >= rpClip.stop then
 		local c = rpClip
 		rpClip = nil
 		task.spawn(rpSend, c, k)
 	end
+end
+
+------------------------------------------------------------------ AuthLock: locked areas. Parts tagged SentinelAuthLock, checked here on the server only
+local CollectionService = game:GetService("CollectionService")
+local AL_TAG = "SentinelAuthLock"
+local AL = nil -- the rules from the website; nil until the first check-in answer (or while AuthLock is off), and nothing is enforced then
+local alParts, alSt, alGrp = {}, {}, {} -- tagged parts; per player: last safe spot and checks inside; per player: Roblox group rank
+local function alZone(part) -- the zone name: the part's Zone attribute, or its name
+	local z = part:GetAttribute("Zone")
+	z = string.gsub(type(z) == "string" and z or part.Name, "%c", "")
+	z = string.sub(z, 1, 40)
+	return z ~= "" and z or "Zone"
+end
+local function alAdd(x) if x:IsA("BasePart") then alParts[x] = true end end
+for _, x in CollectionService:GetTagged(AL_TAG) do alAdd(x) end
+CollectionService:GetInstanceAddedSignal(AL_TAG):Connect(alAdd)
+CollectionService:GetInstanceRemovedSignal(AL_TAG):Connect(function(x) alParts[x] = nil end)
+local function alZoneNames() -- sent at every check-in, so new zones show up on the website
+	local set, out = {}, {}
+	for part in alParts do
+		if part.Parent then
+			local z = alZone(part)
+			if not set[z] and #out < 50 then set[z] = true table.insert(out, z) end
+		end
+	end
+	return out
+end
+local function alInside(pos) -- the zone a point is in (rotated boxes work), or nil
+	for part in alParts do
+		if part.Parent then
+			local lp, h = part.CFrame:PointToObjectSpace(pos), part.Size / 2
+			if math.abs(lp.X) <= h.X and math.abs(lp.Y) <= h.Y and math.abs(lp.Z) <= h.Z then return alZone(part) end
+		end
+	end
+	return nil
+end
+local function alAllowed(p, z, rule)
+	local allow = AL.allow[z]
+	if allow and allow[p.UserId] then return true end -- a Sentinel staff rank this zone allows (worked out by Sentinel)
+	if rule.minRank > 0 and AL.gid then
+		local g = alGrp[p]
+		if not g or g.gid ~= AL.gid then
+			g = { gid = AL.gid }
+			alGrp[p] = g
+			task.spawn(function()
+				local ok, r = pcall(p.GetRankInGroup, p, AL.gid)
+				g.rank = ok and r or 0
+			end)
+		end
+		if g.rank == nil then return true end -- still asking Roblox (a fraction of a second): nobody is sent back on a guess
+		if g.rank >= rule.minRank then return true end
+	end
+	return false
+end
+local function alCheck(p, now)
+	local char = p.Character
+	local st = alSt[p]
+	if not st or st.char ~= char then st = { n = 0, cool = st and st.cool or 0, char = char } alSt[p] = st end -- a new life: a new safe spot
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hum and hrp) or hum.Health <= 0 then st.n = 0 return end
+	local z = alInside(hrp.Position)
+	local rule = z and AL.zones[z]
+	if not rule or not rule.on or alAllowed(p, z, rule) then
+		st.n = 0
+		if not z and hum.FloorMaterial ~= Enum.Material.Air then st.safe = hrp.CFrame end -- standing outside every zone: a safe spot to send them back to
+		return
+	end
+	if now < st.cool then return end
+	st.n += 1
+	if st.n < 2 then return end -- inside for two checks in a row, so brushing a doorway edge never counts
+	st.n, st.cool = 0, now + 2
+	local from = hrp.Position
+	if st.safe then
+		char:PivotTo(st.safe + Vector3.new(0, 3, 0))
+		for _, bp in char:GetDescendants() do
+			if bp:IsA("BasePart") then bp.AssemblyLinearVelocity, bp.AssemblyAngularVelocity = Vector3.zero, Vector3.zero end
+		end
+	else
+		p:LoadCharacter() -- no safe spot yet (they spawned inside): a fresh start at a spawn
+	end
+	banner(p, rule.msg or "You can't be here.", "warn", "AuthLock")
+	rpEv("authlock", p.UserId, z)
+	queue({ type = "authlock", userId = p.UserId, name = p.Name, zone = z, pos = xInt(from) })
+	rpTrigger({ k = "authlock", uid = p.UserId, x = z })
+	syncSoon()
+end
+local function alRules(a) -- the check-in answer's AuthLock part, with the right types
+	if type(a) ~= "table" or a.on ~= true then AL = nil return end
+	local zones, allow = {}, {}
+	for z, r in (type(a.zones) == "table" and a.zones or {}) do
+		if type(z) == "string" and type(r) == "table" then
+			zones[z] = { on = r.on ~= false, minRank = math.clamp(tonumber(r.minRank) or 0, 0, 255), msg = type(r.msg) == "string" and r.msg ~= "" and string.sub(r.msg, 1, 120) or nil }
+		end
+	end
+	for z, list in (type(a.allow) == "table" and a.allow or {}) do
+		local s = {}
+		if type(list) == "table" then for _, id in list do if type(id) == "number" then s[id] = true end end end
+		allow[z] = s
+	end
+	AL = { gid = tonumber(a.gid), zones = zones, allow = allow }
 end
 
 ------------------------------------------------------------------ !rejoin: a fresh server of the same game
@@ -1305,7 +1519,7 @@ local function sync()
 	local sent = table.clone(pending)
 	local ok, res = pcall(HttpService.RequestAsync, HttpService, {
 		Url = URL .. "/game/sync", Method = "POST", Headers = { ["Content-Type"] = "application/json" },
-		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION, clientV = newestClient(), chat = chatMode(), muteErr = lastMuteErr }),
+		Body = HttpService:JSONEncode({ key = KEY, jobId = game.JobId, placeId = game.PlaceId, players = list, events = sent, scriptV = SCRIPT_VERSION, clientV = newestClient(), chat = chatMode(), muteErr = lastMuteErr, zones = alZoneNames() }),
 	})
 	busy = false
 	if not ok or not res.Success then
@@ -1319,12 +1533,14 @@ local function sync()
 		RP.on = data.rp.on == true
 		RP.min = math.clamp(tonumber(data.rp.min) or 5, 1, 10)
 		RP.after = math.clamp(tonumber(data.rp.after) or 30, 10, 300)
-		if was and not RP.on then rpFrames, rpEvents, rpClip = {}, {}, nil end -- switched off: forget everything
+		if was and not RP.on then rpFrames, rpEvents, rpClip, rpPose, rpMvBase = {}, {}, nil, {}, {} end -- switched off: forget everything
+		poseEvent:SetAttribute("On", RP.on)
 	end
 	if type(data.xd) == "table" then -- exploit flag settings from the website
 		XD.on = data.xd.on ~= false
 		XD.lvl = XL[data.xd.lvl] and data.xd.lvl or "low"
 	end
+	if data.al ~= nil then alRules(data.al) end -- AuthLock rules (off: nil)
 	if type(data.bar) == "table" then applyBar(data.bar) end
 	for _, c in data.commands or {} do task.spawn(handle, c) end
 	muted = {}
@@ -1373,6 +1589,8 @@ Players.PlayerRemoving:Connect(function(p)
 	barLast[p.UserId] = nil
 	clientReady[p], clientVer[p], activeBanner[p], ackWant[p], devSent[p] = nil, nil, nil, nil, nil
 	xs[p], lastRejoin[p.UserId], rejoining[p] = nil, nil, nil
+	alSt[p], alGrp[p] = nil, nil
+	rpPose[p], rpPoseAt[p] = nil, nil
 	if bouncing[p] then bouncing[p] = nil return end
 	rpEv("leave", p.UserId)
 	queue({ type = "leave", userId = p.UserId, name = p.Name })
@@ -1401,6 +1619,7 @@ task.spawn(function() -- replays: 5 samples a second, only while the owner has t
 	while true do
 		task.wait(1 / RP_HZ)
 		if RP.on then
+			if not rpMap3Cache and not rpMap3Busy then task.spawn(pcall, rpMap3) end
 			local ok, err = pcall(rpSample)
 			if not ok then warn("[Sentinel] Replay recording error: " .. tostring(err)) end
 		end
@@ -1412,6 +1631,20 @@ game:BindToClose(function() -- the server is closing (last player left, restart 
 	rpClip = nil
 	local ok, err = pcall(rpSend, c, rpK(), true)
 	if not ok then warn("[Sentinel] Could not upload a replay while closing: " .. tostring(err)) end
+end)
+task.spawn(function() -- AuthLock, 5 times a second (only while it is on and the game has locked zones)
+	while true do
+		task.wait(0.2)
+		if AL and next(alParts) then
+			local now = os.clock()
+			for _, p in Players:GetPlayers() do
+				if not bouncing[p] then
+					local ok, err = pcall(alCheck, p, now)
+					if not ok and DEBUG_FLAGS then warn("[Sentinel debug] AuthLock check failed for " .. p.Name .. ": " .. tostring(err)) end
+				end
+			end
+		end
+	end
 end)
 task.spawn(function() -- exploit checks, once a second
 	while true do
