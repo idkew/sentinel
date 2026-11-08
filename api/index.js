@@ -67,14 +67,14 @@ const defaultRanks = () => ({
   mod: { name: 'Moderator', color: '#0ea5e9', pos: 20, perms: ['mod.warn', 'mod.kick', 'mod.mute', 'mod.ban', 'mod.unban', 'logbook.note', 'reports.handle', 'chat.view', 'chatlogs.view', 'replays.view', 'training.use', 'announce', 'sessions.host', 'points.manage'], quota: 120, limit: 30 },
   helper: { name: 'Trial Moderator', color: '#10b981', pos: 10, perms: ['mod.warn', 'mod.kick', 'logbook.note', 'reports.handle', 'chat.view', 'training.use', 'sessions.host'], quota: 60, limit: 15 },
 });
-const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false, exploit: false, lockdown: true } }); // alerts, digest and health start off; only the owner turns them on
+const DEFAULT_WEBHOOK = () => ({ url: '', events: { approvals: true, forms: true, shifts: true, signals: true, reports: true, bans: true, kicks: false, warns: false, loa: true, sessions: false, appeals: true, watch: true, alerts: false, digest: false, health: false, exploit: false, lockdown: true, authlock: false } }); // alerts, digest and health start off; only the owner turns them on
 const OWNER_EVENTS = ['alerts', 'digest', 'health']; // webhook events only the owner can switch
 const HOOK_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d{5,30}\/[\w-]{20,120}$/;
 
 // ---- storage ----
 const freshD = () => ({ meta: null, members: {}, invites: {}, ranks: {}, rulebook: [], loa: [], webhook: null, daily: {},
   bans: {}, mutes: {}, logs: {}, feed: [], stats: { joins: 0, peak: 0, kicks: 0 }, calls: [], callSeq: 0, session: null, sessions: [],
-  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [], lockdown: { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] }, tcSeq: 0, cov: { last: 0, w: {} } });
+  flagWords: ['scam', 'hack', 'exploit', 'free robux'], play: {}, audit: [], rules: {}, settings: { quotaMinutes: 60 }, appeals: [], watch: {}, hist: {}, forms: [], formsNew: 0, shifts: [], signals: {}, kicks: [], cussWords: null, abuse: {}, notices: [], escal: [], onboard: { lists: {}, done: {}, skip: {} }, training: { cases: [], results: {} }, alertWords: [], alerts: [], discord: null, discordCodes: {}, pending: [], syncSeen: {}, strikes: [], iaIdx: [], lockdown: { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] }, tcSeq: 0, cov: { last: 0, w: {} }, alHits: [] });
 const D = freshD(), R = { servers: {}, cmds: [], history: [], chat: [], flagCount: {}, am: {}, nextId: 1 };
 let VT = { items: [] }; // the evidence vault: its own row, loaded only by the routes that need it
 let ALT = { links: {}, leaves: [], fp: {}, stats: {} }; // linked accounts: their own row, loaded by the game sync and the Linked accounts page
@@ -133,7 +133,7 @@ function banText(x, plain) { // what the banned player reads: Roblox's ban scree
   return `You are banned from ${D.meta ? D.meta.name : 'this game'}. Reason: ${String(x.reason || 'No reason given').slice(0, 160)}. ${len}${ap}${hb}`.slice(0, 395);
 }
 const liveServers = () => Object.values(R.servers).filter(s => Date.now() - s.last < LIVE_MS).length;
-const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx', 'lockdown', 'tcSeq', 'cov'];
+const CORE_KEYS = ['meta', 'members', 'invites', 'ranks', 'rulebook', 'loa', 'webhook', 'daily', 'bans', 'mutes', 'feed', 'kicks', 'cussWords', 'abuse', 'notices', 'escal', 'onboard', 'training', 'alertWords', 'alerts', 'stats', 'callSeq', 'session', 'sessions', 'flagWords', 'audit', 'rules', 'settings', 'appeals', 'watch', 'forms', 'formsNew', 'shifts', 'signals', 'discord', 'discordCodes', 'pending', 'syncSeen', 'strikes', 'iaIdx', 'lockdown', 'tcSeq', 'cov', 'alHits'];
 const ROWS = {
   core: { get: () => Object.fromEntries(CORE_KEYS.map(k => [k, D[k]])), set: v => Object.assign(D, v) },
   logs: { get: () => D.logs, set: v => { D.logs = v; } },
@@ -212,6 +212,8 @@ function migrate() { // bring older workspaces up to date
   D.escal ||= []; D.onboard ||= { lists: {}, done: {}, skip: {} }; D.training ||= { cases: [], results: {} };
   D.alertWords ||= []; D.alerts ||= [];
   D.iaIdx ||= []; D.lockdown ||= { on: false, until: 0, by: '', t: 0, kept: 0, recent: [] };
+  if (!D.meta.v24) { D.meta.v24 = 1; if (!D.settings.authlock || typeof D.settings.authlock !== 'object') D.settings.authlock = alDefault(); D.alHits ||= []; if (D.webhook && D.webhook.events && !('authlock' in D.webhook.events)) D.webhook.events.authlock = false; } // AuthLock: on, warn the first time and kick the third time in an hour; its Discord notice off
+  D.alHits ||= [];
   if (!D.meta.v23) { D.meta.v23 = 1; if (!D.settings.bar || !Array.isArray(D.settings.bar.ranks)) D.settings.bar = { ranks: [] }; } // the in-game staff bar: no ranks until the owner picks them
   if (!D.meta.v22) { D.meta.v22 = 1; if (typeof D.tcSeq !== 'number') D.tcSeq = 0; if (!D.cov || typeof D.cov !== 'object') D.cov = { last: 0, w: {} }; } // team chat counter and the staff coverage grid
   if (!D.meta.v21) { D.meta.v21 = 1; if (!D.settings.lockdown || typeof D.settings.lockdown !== 'object') D.settings.lockdown = { days: 3, auto: 0, mins: 30 }; if (D.webhook && D.webhook.events && !('lockdown' in D.webhook.events)) D.webhook.events.lockdown = true; } // raid lockdown: accounts under 3 days, never on by itself
@@ -662,7 +664,7 @@ async function altRun(req, b, ev) { // called on every game check-in with joins,
   altPrune(now);
 }
 // ---- replays: a short top-down recording of one server, kept in the replays table (see supabase.sql). The game only uploads when something happens
-const RP_DAYS = [7, 14, 30], RP_AFTER = 30, RP_NOW_V = 29, RP_MAX_MB = +env.REPLAY_MAX_MB || 25, RP_GLOBAL_MB = +env.REPLAY_GLOBAL_MAX_MB || 200, RP_KINDS = ['report', 'action', 'automod', 'alert', 'staff', 'button', 'xflag', 'view'], RP_ID_RE = /^[A-Z0-9]{9}-[A-Z0-9]{8}$/;
+const RP_DAYS = [7, 14, 30], RP_AFTER = 30, RP_NOW_V = 29, RP_MAX_MB = +env.REPLAY_MAX_MB || 50, RP_GLOBAL_MB = +env.REPLAY_GLOBAL_MAX_MB || 400, RP_KINDS = ['report', 'action', 'automod', 'alert', 'staff', 'button', 'xflag', 'view', 'authlock'], RP_ID_RE = /^[A-Z0-9]{9}-[A-Z0-9]{8}$/;
 const rpSet = () => { const x = D.settings.replays || {}; return { on: x.on === true, days: RP_DAYS.includes(x.days) ? x.days : 7 }; };
 const rpCap = () => { const v = D.meta && D.meta.caps && D.meta.caps.replayMB; return (Number.isInteger(v) && v > 0 ? v : RP_MAX_MB) * 1e6; };
 const rpId = (wid, job, clip) => { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', h = hash('rp:' + wid + ':' + job + ':' + clip); let x = ''; for (let i = 0; i < 17; i++) x += A[h[i] % 36]; return x.slice(0, 9) + '-' + x.slice(9); }; // the same for every chunk of one clip, so chunks can arrive in any order
@@ -680,10 +682,10 @@ function rpTerr(t) { // terrain from Bridge 33: { x0, z0, c (cell size), w, d, h
   const h = runs(t.h, v => int(v) && (v === -9999 || Math.abs(v) < 1e5)), m = runs(t.m, v => int(v) && v >= 0 && v <= 20); return h && m ? { x0, z0, c, w, d, h, m } : null;
 }
 const rpLight = l => { if (!l || typeof l !== 'object') return null; const c = v => Number.isInteger(v) && v >= 0 && v <= 0xffffff, n = (v, a, b) => Number.isFinite(v) && v >= a && v <= b; return n(l.time, 0, 24) && c(l.amb) && c(l.out) && c(l.fog) && n(l.fogEnd, 0, 1e6) && n(l.br, 0, 20) ? { time: l.time, amb: l.amb, out: l.out, fog: l.fog, fogEnd: l.fogEnd, br: l.br } : null; }; // the game's time of day, light and fog
-const RP_EV = ['chat', 'death', 'join', 'leave', 'tool', 'use'];
+const RP_EV = ['chat', 'death', 'join', 'leave', 'tool', 'use', 'authlock'];
 const rpEvs = ev => (Array.isArray(ev) ? ev : []).slice(0, 6000).filter(e => Array.isArray(e) && Number.isInteger(e[0]) && e[0] >= 0 && RP_EV.includes(e[1]) && Number.isInteger(e[2]) && e[2] > 0).map(e => { // [tick, kind, player, extra]: chat text, the killer, the tool held ('' when none) or the name on join
   const x = [e[0], e[1], e[2]];
-  if (e[1] === 'chat') x.push(String(e[3] ?? '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 300)); else if (e[1] === 'death') { if (Number.isInteger(e[3]) && e[3] > 0) x.push(e[3]); } else if (e[1] === 'tool') x.push(cleanName(e[3], 40)); else if (e[1] === 'join' && typeof e[3] === 'string') x.push(cleanName(e[3], 40));
+  if (e[1] === 'chat') x.push(String(e[3] ?? '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 300)); else if (e[1] === 'death') { if (Number.isInteger(e[3]) && e[3] > 0) x.push(e[3]); } else if (e[1] === 'tool') x.push(cleanName(e[3], 40)); else if (e[1] === 'join' && typeof e[3] === 'string') x.push(cleanName(e[3], 40)); else if (e[1] === 'authlock') x.push(alName(e[3]) || 'Zone');
   return x;
 });
 const RP_NOTES = 100; // staff notes pinned to moments of a replay, in an extra row of the clip (seq -1)
@@ -692,6 +694,13 @@ async function rpNotesSave(rid, head, notes) {
   const dz = rpZ(JSON.stringify(notes)), row = { id: rid, seq: -1, wid: CTX.wid, server: head.server, started_at: null, ended_at: null, trigger: [], user_ids: [], data: dz, bytes: dz.length, keep_until: head.keep_until, evidence: !!head.evidence };
   try { const x = await cbFetch('replays?on_conflict=id,seq', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify([row]), ms: 6000 }); return x.ok; } catch { return false; }
 }
+const RP_POSE_RE = /^[A-Za-z0-9_-]{23}$/;
+const rpPoses = P => { const o = {}; if (!P || typeof P !== 'object' || Array.isArray(P)) return o; let n = 0; // per player [tick, pose text, ...]: from player script 8, for drawing only
+  for (const [id, L] of Object.entries(P)) { if (++n > 60 || !/^\d{1,15}$/.test(id) || !Array.isArray(L)) continue; const a = []; for (let i = 0; i + 1 < L.length && a.length < 8000; i += 2) if (Number.isInteger(L[i]) && L[i] >= 0 && typeof L[i + 1] === 'string' && RP_POSE_RE.test(L[i + 1])) a.push(L[i], L[i + 1]); if (a.length) o[id] = a; }
+  return o; };
+const rpMv = M => { const o = {}; if (!M || typeof M !== 'object' || Array.isArray(M)) return o; let n = 0; // moving parts: per map row [tick, x, y, z, rot x, rot y, rot z, ...]
+  for (const [id, L] of Object.entries(M)) { if (++n > 200 || !/^\d{1,4}$/.test(id) || +id < 1 || +id > 1200 || !Array.isArray(L)) continue; const a = []; for (let i = 0; i + 6 < L.length && a.length < 70000; i += 7) { const r = L.slice(i, i + 7); if (Number.isInteger(r[0]) && r[0] >= 0 && r.every(v => Number.isFinite(v) && Math.abs(v) < 1e7)) a.push(...r.map(Math.round)); } if (a.length) o[id] = a; }
+  return o; };
 function rpTrim(rows, head, from, to) { // keep only from..to (seconds from the start): tracks, events and notes cut and re-chunked, so only that part uses storage
   let meta; try { meta = JSON.parse(rpUnz(head.data)); } catch { return { error: 'This replay could not be read.' }; }
   const parts = rows.filter(x => x.seq > 0 && x.seq <= meta.total).sort((a, b) => a.seq - b.seq); if (parts.length < meta.total) return { error: 'This replay is still uploading. Try again in a minute.' };
@@ -708,7 +717,9 @@ function rpTrim(rows, head, from, to) { // keep only from..to (seconds from the 
     }
     if (out.length) tracks[id] = out;
   }
-  const t0 = (Number.isFinite(clip.t0) ? clip.t0 : Date.parse(head.started_at)) + Math.round(a * 1000 / hz), nc = { ...clip, t0, len: b - a, tracks, ev: (clip.ev || []).filter(e => Array.isArray(e) && e[0] >= a && e[0] <= b).map(e => [e[0] - a, ...e.slice(1)]) };
+  const poses = {}; for (const [id, L] of Object.entries(rpPoses(clip.poses))) { const o = []; for (let i = 0; i < L.length; i += 2) if (L[i] >= a && L[i] <= b) o.push(L[i] - a, L[i + 1]); if (o.length) poses[id] = o; }
+  const mv = {}; for (const [id, L] of Object.entries(rpMv(clip.mv))) { let st = null; const o = []; for (let i = 0; i < L.length; i += 7) { if (L[i] <= a) st = L.slice(i + 1, i + 7); else if (L[i] <= b) o.push(L[i] - a, ...L.slice(i + 1, i + 7)); } if (st) o.unshift(0, ...st); if (o.length) mv[id] = o; } // where each part was when the kept part starts, then how it moved
+  const t0 = (Number.isFinite(clip.t0) ? clip.t0 : Date.parse(head.started_at)) + Math.round(a * 1000 / hz), nc = { ...clip, t0, len: b - a, tracks, poses, mv, ev: (clip.ev || []).filter(e => Array.isArray(e) && e[0] >= a && e[0] <= b).map(e => [e[0] - a, ...e.slice(1)]) };
   const json = JSON.stringify(nc), pieces = []; for (let i = 0; i < json.length; i += 60000) pieces.push(json.slice(i, i + 60000));
   const hd = rpZ(JSON.stringify({ ...meta, total: pieces.length })), sec = a / hz, out = [{ ...head, started_at: new Date(t0).toISOString(), ended_at: new Date(t0 + Math.round((b - a) * 1000 / hz)).toISOString(), trigger: (head.trigger || []).filter(w => !Number.isInteger(w.at) || (w.at >= a && w.at <= b)).map(w => Number.isInteger(w.at) ? { ...w, at: w.at - a } : w), user_ids: Object.keys(tracks).map(Number), data: hd, bytes: hd.length }];
   pieces.forEach((p, i) => { const dz = rpZ(p); out.push({ ...head, seq: i + 1, started_at: null, ended_at: null, trigger: [], user_ids: [], data: dz, bytes: dz.length }); });
@@ -761,6 +772,53 @@ function xfText(x) {
   return x.kind === 'speed' ? `Moved at ${e.v} studs/s on the ground (limit ${e.lim}, walk speed ${e.ws})` : x.kind === 'teleport' ? `Moved ${e.dist} studs in about one second (limit ${e.lim})` : `In the air for ${e.air} s without falling, with nothing below`;
 }
 const xfOut = x => ({ id: x.id, userId: x.uid, name: x.name, kind: x.kind, strength: x.strength, text: xfText(x), ev: x.ev, server: x.server, t: x.t, status: x.status, by: x.by || null, at: x.at || null });
+// AuthLock: locked areas in the game (parts tagged SentinelAuthLock). The game sends a player back; Sentinel tells staff and steps up on repeats
+const AL_ACTS = { warn: 'Warning', kick: 'Kick', ban: 'Suspension', perm: 'Permanent ban' }, AL_WIN = [10, 30, 60, 240, 1440], AL_MAXZ = 50, AL_HITS = 300, AL_BAN_MIN = [60, 360, 1440, 4320, 10080, 43200];
+const alName = z => String(z ?? '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+const alDefRanks = () => Object.entries(D.ranks).filter(([, r]) => (r.perms || []).includes('mod.ban')).map(([k]) => k); // a new zone lets in Moderator and up
+const alDefault = () => ({ on: true, win: 60, ladder: [{ n: 1, act: 'warn', minutes: 0 }, { n: 3, act: 'kick', minutes: 0 }], zones: {} });
+const alSet = () => { const x = D.settings.authlock || {}, d = alDefault(); return { on: x.on !== false, win: AL_WIN.includes(x.win) ? x.win : 60, ladder: Array.isArray(x.ladder) ? x.ladder : d.ladder, zones: x.zones && typeof x.zones === 'object' ? x.zones : {} }; };
+const alLadder = l => (Array.isArray(l) ? l : []).slice(0, 4).filter(x => x && Number.isInteger(x.n) && x.n >= 1 && x.n <= 20 && AL_ACTS[x.act]).map(x => ({ n: x.n, act: x.act, minutes: x.act === 'ban' ? (AL_BAN_MIN.includes(x.minutes) ? x.minutes : 1440) : 0 })).sort((a, b) => a.n - b.n).filter((x, i, a) => !i || a[i - 1].n !== x.n);
+function alSeen(b) { // zone names the game reports at check-in: new ones are added with the default rule
+  if (!Array.isArray(b.zones) || !b.zones.length) return;
+  if (!D.settings.authlock || typeof D.settings.authlock !== 'object') D.settings.authlock = alDefault();
+  const A = D.settings.authlock; A.zones ||= {}; const now = Date.now();
+  for (const z0 of b.zones.slice(0, AL_MAXZ)) {
+    const z = alName(z0); if (!z) continue; const Z = A.zones[z];
+    if (Z) { if (now - (Z.seen || 0) > 36e5) Z.seen = now; } // once an hour is enough for "last seen"
+    else if (Object.keys(A.zones).length < AL_MAXZ) { A.zones[z] = { on: true, ranks: alDefRanks(), minRank: 0, msg: '', seen: now, isNew: true }; feed(`AuthLock: new zone "${z}" found in the game`); }
+  }
+}
+function alOut(job) { // the rules for one game server, with the staff in it that each zone lets in
+  const s = alSet(); if (!s.on) return { on: false };
+  const here = ((R.servers[job] || {}).players || []).map(x => x.userId), zones = {}, allow = {};
+  for (const [z, Z] of Object.entries(s.zones)) {
+    zones[z] = { on: Z.on !== false, minRank: Number.isInteger(Z.minRank) ? Z.minRank : 0, msg: Z.msg || '' };
+    const rs = new Set(Z.ranks || []);
+    allow[z] = here.filter(id => { const m = memberOfRid(id); return m && (m === D.meta.owner || (D.members[m] && rs.has(D.members[m].rank))); });
+  }
+  return { on: true, gid: D.meta.group && D.meta.group.id ? +D.meta.group.id || null : null, zones, allow };
+}
+async function alRun(b, ev) { // someone got into a zone they may not be in: the game already sent them back
+  const list = ev.filter(e => e && e.type === 'authlock' && Number.isInteger(e.userId) && e.userId > 0).slice(0, 20);
+  if (!list.length) return; const s = alSet(); if (!s.on) return;
+  const now = Date.now(), job = String(b.jobId || 'studio').slice(0, 8), ladder = alLadder(s.ladder), top = ladder.length ? ladder[ladder.length - 1].n : 0;
+  for (const e of list) {
+    const z = alName(e.zone); if (!z || !s.zones[z]) continue;
+    const mine = D.alHits.filter(h => h.uid === e.userId);
+    if (mine.some(h => now - h.t < 1500)) continue; // the game waits 2 seconds between two; anything faster is a repeat of the same one
+    const name = cleanName(e.name, 40) || (D.play[e.userId] || {}).name || 'User ' + e.userId;
+    const n = mine.filter(h => now - h.t < s.win * 60000).length + 1;
+    const step = ladder.find(x => x.n === n) || (n > top && top ? ladder[ladder.length - 1] : null); // past the last step, the last step again
+    const pos = Array.isArray(e.pos) && e.pos.length === 3 && e.pos.every(v => Number.isFinite(v) && Math.abs(v) < 1e6) ? e.pos.map(Math.round) : null;
+    const h = { id: rnd(8), uid: e.userId, name, zone: z, t: now, server: job, pos, n, act: step ? step.act : null, minutes: step ? step.minutes : 0 };
+    D.alHits = [h, ...D.alHits].slice(0, AL_HITS);
+    feed(`AuthLock: ${name} got into ${z} and was sent back`);
+    notify('authlock', `AuthLock: ${name} got into ${z}`, `They were sent back to where they were.${step ? ' ' + AL_ACTS[step.act] + ' given.' : ''}`, [['Server', job], [`Times in ${fmtMin(s.win)}`, String(n)]], 0xe5484d);
+    if (step) { await need('logs'); act({ action: step.act === 'perm' ? 'ban' : step.act, userId: e.userId, name, reason: `AuthLock: got into ${z} (${n} time${n === 1 ? '' : 's'} in ${fmtMin(s.win)})`, minutes: step.act === 'ban' ? step.minutes : 0, by: 'AuthLock' }); }
+  }
+}
+const alHitOut = h => ({ id: h.id, userId: h.uid, name: h.name, zone: h.zone, t: h.t, server: h.server, pos: h.pos, n: h.n, act: h.act, minutes: h.minutes || 0 });
 async function xflagRun(b, ev) { // flags arrive inside the normal check-in. They only ever go to the review queue
   const list = ev.filter(e => e && e.type === 'xflag' && Number.isInteger(e.userId) && e.userId > 0 && XF_KINDS.includes(e.kind) && e.ev && typeof e.ev === 'object').slice(0, 20);
   if (!list.length || !xfSet().on) return;
@@ -1135,7 +1193,7 @@ async function erasePlayer(id) { // everything this workspace stores about one p
   D.appeals = D.appeals.filter(a => a.uid !== id); D.kicks = (D.kicks || []).filter(k => k.userId !== id);
   await forgetInBoxes(CTX.wid, id); for (const o of Object.values(CBO)) o.msgs = o.msgs.filter(m => m.userId !== id);
   await need('alts'); for (const [k, L] of Object.entries(ALT.links)) if (L.a === id || L.b === id) delete ALT.links[k]; ALT.leaves = ALT.leaves.filter(x => x[0] !== id); for (const x of Object.values(ALT.fp)) x.u = x.u.filter(z => z !== id);
-  await need('xflags'); XF.list = XF.list.filter(x => x.uid !== id); await rpForget(id);
+  await need('xflags'); XF.list = XF.list.filter(x => x.uid !== id); D.alHits = (D.alHits || []).filter(h => h.uid !== id); await rpForget(id);
   await need('ia'); IA.list = IA.list.filter(x => !(x.subj.kind === 'player' && x.subj.uid === id)); for (const x of IA.list) x.ev = x.ev.filter(e => e.uid !== id); iaIndex(); // cases about them go, and copies of their logbook entries leave staff cases
   await need('vault'); VT.items = VT.items.filter(x => x.uid !== id); for (const x of VT.items) if (x.msgs) x.msgs = x.msgs.filter(m => m.userId !== id);
   if (D.session) delete D.session.attendees[id]; D.sessions.forEach(s => s.attendees = s.attendees.filter(a => a.userId !== id));
@@ -1510,7 +1568,7 @@ function auditExtras(id, online) {
 }
 async function profile(id) {
   await need(shOf(id));
-  let rb = null; try { const x = await j('https://users.roblox.com/v1/users/' + id); if (x && x.id) rb = x; } catch {}
+  let rb = null; try { const x = await j(RBX_USERS + '/v1/users/' + id); if (x && x.id) rb = x; } catch {}
   const local = D.play[id], online = allPlayers().find(p => p.userId === id);
   if (!rb && !local && !online && !D.logs[id]) return null;
   const ban = D.bans[id], mute = D.mutes[id], ws = weekStart(Date.now());
@@ -1616,7 +1674,7 @@ async function personScan(rid, withData, from) { // every workspace that stores 
     const rows = logs.length + (play ? 1 : 0) + calls.length + chat.length + boxes.length + (ban ? 1 : 0) + (mute ? 1 : 0) + (signal ? 1 : 0) + appeals.length + (hist ? 1 : 0) + inReports + vault.length + altl.length + xfl.length;
     if (!rows) continue;
     const x = { wid: w, name: ws[i].name, rows, logbook: logs.length, chatLogs: boxes.length, reports: calls.length + inReports, appeals: appeals.length, ban: !!ban, mute: !!mute };
-    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, linkedAccounts: altl, exploitFlags: xfl, evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
+    if (withData) x.data = { logbook: logs, activity: play, playtime: hist, ban, mute, hint: signal, appeals, reportsFiled: calls, recentChat: chat, linkedAccounts: altl, exploitFlags: xfl, authLock: (core.alHits || []).filter(h => h.uid === rid).map(alHitOut), evidenceVault: vault.map(({ log, msgs, ...x }) => ({ ...x, ...(x.uid === rid ? { msgs } : { msgs: (msgs || []).filter(m => m.userId === rid) }) })), chatLogs: boxes.flatMap(b => (b.msgs || []).filter(m => m.userId === rid).map(m => ({ box: b.id, t: m.t, text: m.text }))) };
     found.push(x);
   }
   return { found, next: null };
@@ -2735,7 +2793,7 @@ async function route(req, res, url, p) {
         const sid = String(b.jobId || 'studio').slice(0, 64), say = text => cmd({ type: 'message', kind: 'info', userId: e.userId, target: sid, title: 'Replay', text });
         if (!isStaffId(e.userId)) say('Only staff can save replays.'); else if (!rpSet().on) say('Replays are switched off for this game. The owner can turn them on in Settings, Automations.'); else if (rpCmd(sid, { k: 'staff', uid: e.userId, by: cleanName(e.name, 40) })) say('Saving a replay of this server. It will be ready on the website in about a minute.'); else say('This server could not save a replay yet. Try again in a few seconds.');
       }
-      const out = sync(b); await iaReports(); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; out.bar = ((R.servers[job] || {}).players || []).map(x => x.userId).filter(x => barOn(memberOfRid(x))); await banSyncPull(); // bar: the players here who get the in-game staff bar
+      const out = sync(b); await iaReports(); healthSync(Date.now()); await signalCheck(req, fresh, joined); await altRun(req, b, ev); await xflagRun(b, ev); alSeen(b); await alRun(b, ev); out.al = alOut(job); out.xd = xfSet(); out.rp = { on: rpSet().on, min: 5, after: RP_AFTER }; out.bar = ((R.servers[job] || {}).players || []).map(x => x.userId).filter(x => barOn(memberOfRid(x))); await banSyncPull(); // bar: the players here who get the in-game staff bar
       return send(res, 200, out);
     }
 
@@ -3062,7 +3120,7 @@ async function route(req, res, url, p) {
       for (const x of XF.list) if (inR(x.t) && uids.includes(x.uid)) markers.push({ t: x.t, kind: 'xflag', uid: x.uid, text: xfText(x), x: x.kind });
       for (const a of D.alerts || []) if (inR(a.t) && uids.includes(a.userId)) markers.push({ t: a.t, kind: 'alert', uid: a.userId, text: `Chat alert "${a.word}"` });
       markers.sort((a, b) => a.t - b.t);
-      return send(res, 200, { ...base, hz: clip.hz || meta.hz || 2, t0: Number.isFinite(clip.t0) ? clip.t0 : t0, len: clip.len || 0, names: { ...(clip.names || {}), ...base.names }, tracks: clip.tracks || {}, ev: rpEvs(clip.ev), map: base.map || rpMap(clip.map), map3: rpMap3(clip.map3), terrain: rpTerr(clip.terrain), light: rpLight(clip.light), v: [2, 3].includes(clip.v) ? clip.v : 1, flagWords: D.flagWords, markers, notes: rpNotes(rows).map(n => ({ ...n, del: n.byUid === uid || has(u, 'logbook.revert') })) });
+      return send(res, 200, { ...base, hz: clip.hz || meta.hz || 2, t0: Number.isFinite(clip.t0) ? clip.t0 : t0, len: clip.len || 0, names: { ...(clip.names || {}), ...base.names }, tracks: clip.tracks || {}, poses: rpPoses(clip.poses), mv: rpMv(clip.mv), ev: rpEvs(clip.ev), map: base.map || rpMap(clip.map), map3: rpMap3(clip.map3), terrain: rpTerr(clip.terrain), light: rpLight(clip.light), v: [2, 3].includes(clip.v) ? clip.v : 1, flagWords: D.flagWords, markers, notes: rpNotes(rows).map(n => ({ ...n, del: n.byUid === uid || has(u, 'logbook.revert') })) });
     }
     if (req.method === 'GET' && p === '/api/avatar3d') { // a player's 3D avatar for the replay viewer, fetched from Roblox here so the browser never has to
       if (!has(u, 'replays.view')) return deny(res);
@@ -3301,6 +3359,35 @@ async function route(req, res, url, p) {
         if (open) return send(res, 409, { error: 'Close the case before deleting it.' }); IA.list = IA.list.filter(y => y !== x); audit(u.user, `Deleted case ${x.id}`);
       } else return send(res, 400, { error: 'bad request' });
       iaIndex(); return ok(res);
+    }
+    if (req.method === 'GET' && p === '/api/authlock') { // AuthLock rules, zones and recent hits
+      const id = +url.searchParams.get('userId') || 0;
+      if (!(has(u, 'automations.manage') || has(u, 'mod.kick') || has(u, 'replays.view'))) return deny(res);
+      const hits = (id ? D.alHits.filter(h => h.uid === id) : D.alHits).slice(0, id ? 50 : 100).map(alHitOut);
+      return send(res, 200, { settings: { ...alSet(), ladder: alLadder(alSet().ladder) }, hits, group: !!(D.meta.group && D.meta.group.id), canEdit: has(u, 'automations.manage') });
+    }
+    if (req.method === 'POST' && p === '/api/authlock') {
+      if (!has(u, 'automations.manage')) return deny(res);
+      if (!D.settings.authlock || typeof D.settings.authlock !== 'object') D.settings.authlock = alDefault();
+      const A = D.settings.authlock; A.zones ||= {};
+      if (B.op === 'settings') {
+        if (B.win !== undefined && !AL_WIN.includes(B.win)) return send(res, 400, { error: 'Pick one of the time windows.' });
+        if (B.ladder !== undefined) { const l = alLadder(B.ladder); if (!Array.isArray(B.ladder) || l.length !== B.ladder.length) return send(res, 400, { error: 'Each step needs a different count from 1 to 20 and an action.' }); A.ladder = l; }
+        if (B.on !== undefined) A.on = !!B.on; if (B.win !== undefined) A.win = B.win;
+        audit(u.user, `AuthLock ${A.on === false ? 'off' : 'on'}${B.ladder !== undefined ? ', steps: ' + (A.ladder.map(x => `${x.n}x ${AL_ACTS[x.act]}${x.act === 'ban' ? ' ' + fmtMin(x.minutes) : ''}`).join(', ') || 'none') : ''}${B.win !== undefined ? ', counted over ' + fmtMin(A.win) : ''}`); return ok(res);
+      }
+      const z = alName(B.zone), Z = A.zones[z];
+      if (!z || !Z) return send(res, 404, { error: 'That zone is not there any more.' });
+      if (B.op === 'zone') {
+        if (B.ranks !== undefined) { if (!Array.isArray(B.ranks) || B.ranks.some(r => !D.ranks[r])) return send(res, 400, { error: 'Pick ranks from the list.' }); Z.ranks = [...new Set(B.ranks)]; }
+        if (B.minRank !== undefined) { if (!Number.isInteger(B.minRank) || B.minRank < 0 || B.minRank > 255) return send(res, 400, { error: 'The group rank is a number from 0 to 255 (0: not used).' }); Z.minRank = B.minRank; }
+        if (B.msg !== undefined) Z.msg = String(B.msg).replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 120);
+        if (B.on !== undefined) Z.on = !!B.on;
+        delete Z.isNew;
+        audit(u.user, `AuthLock zone "${z}": ${Z.on === false ? 'off' : 'on'}, lets in ${(Z.ranks || []).map(r => (D.ranks[r] || {}).name).filter(Boolean).join(', ') || 'no staff ranks'}${Z.minRank ? ', group rank ' + Z.minRank + ' and up' : ''}`); return ok(res);
+      }
+      if (B.op === 'zone-del') { delete A.zones[z]; audit(u.user, `Removed AuthLock zone "${z}"`); return ok(res); }
+      return send(res, 400, { error: 'bad op' });
     }
     if (req.method === 'GET' && p === '/api/xflags') { // exploit flags for staff to review
       if (!has(u, 'mod.kick')) return deny(res);
@@ -4034,7 +4121,7 @@ async function route(req, res, url, p) {
       await need(shOf(id)); audit(u.user, `Exported stored data for user ${id}`);
       const data = { exportedAt: new Date().toISOString(), userId: id, activity: D.play[id] || null, playtimeHistory: (D.hist[id % SH] || {})[id] || null, logbook: D.logs[id] || [], ban: D.bans[id] || null, mute: D.mutes[id] || null,
         cases: IA.list.filter(x => x.subj.kind === 'player' && x.subj.uid === id).map(x => ({ id: x.id, type: IA_CATS[x.cat], status: x.status, opened: x.t, closed: x.closedAt || null, decision: x.decision ? iaLbl(x.decision) : null, finding: x.finding ? IA_FIND[x.finding] : null })),
-        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x), exploitFlags: XF.list.filter(x => x.uid === id).map(xfOut), replays: await (async () => { try { const r = await cbFetch(`replays?select=id,started_at,ended_at,server,evidence&wid=eq.${CTX.wid}&seq=eq.0&user_ids=cs.%7B${id}%7D&limit=500`, { ms: 4000 }); return r.ok ? await r.json() : []; } catch { return []; } })(), linkedAccounts: Object.values(ALT.links).filter(L => L.a === id || L.b === id).map(altOut) };
+        reportsFiled: D.calls.filter(c => c.from.userId === id), chatInStoredReports: D.calls.flatMap(c => c.chat.filter(m => m.userId === id).map(m => ({ report: c.id, ...m }))), recentChat: R.chat.filter(m => m.userId === id), chatLogs: await boxesOf(id), evidenceVault: vaultItems().filter(x => x.uid === id).map(({ log, ...x }) => x), exploitFlags: XF.list.filter(x => x.uid === id).map(xfOut), authLock: (D.alHits || []).filter(h => h.uid === id).map(alHitOut), replays: await (async () => { try { const r = await cbFetch(`replays?select=id,started_at,ended_at,server,evidence&wid=eq.${CTX.wid}&seq=eq.0&user_ids=cs.%7B${id}%7D&limit=500`, { ms: 4000 }); return r.ok ? await r.json() : []; } catch { return []; } })(), linkedAccounts: Object.values(ALT.links).filter(L => L.a === id || L.b === id).map(altOut) };
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="player-${id}.json"` }); return res.end(JSON.stringify(data, null, 2));
     }
     if (req.method === 'POST' && p === '/api/erase') {
