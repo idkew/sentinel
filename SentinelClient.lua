@@ -13,6 +13,8 @@
 	  4. Staff in the ranks the owner picks on the website (Settings, Game) get a bar at the bottom of the screen to moderate players,
 	     handle reports and use server tools without leaving the game. Their rank decides what they can do, the same as on the website.
 	     It needs SentinelBridge version 31 or newer. Nobody else ever sees the bar.
+	  5. While the owner has replays on, it tells the server 5 times a second how this player's character is posed (neck, shoulders, hips)
+	     and which way their camera looks, so replays show real movement instead of a made-up walk. Needs SentinelBridge version 34.
 
 	HOW TO ADD IT (1 minute)
 	  1. In Roblox Studio, open the Explorer and find StarterPlayer, then StarterPlayerScripts.
@@ -28,7 +30,7 @@ local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
 local StarterGui = game:GetService("StarterGui")
 
-local CLIENT_VERSION = 7 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
+local CLIENT_VERSION = 8 -- raised whenever this script changes, so the Sentinel website can tell you when to update it
 local player = Players.LocalPlayer
 local savedInput = nil -- what the chat bar was set to before we hid it
 local hidden = false
@@ -971,4 +973,45 @@ end
 task.spawn(function()
 	local ok, err = pcall(buildBar)
 	if not ok then warn("[Sentinel] Could not build the staff bar: " .. tostring(err)) end
+end)
+
+------------------------------------------------------------------ replays: how this player's own character is posed, and where their camera looks
+-- Only while the owner has replays on (SentinelBridge sets the On attribute). 5 times a second: the turn of the neck, shoulders and hips,
+-- and the camera's direction. It is only used to draw the replay; nothing is ever decided from it.
+task.spawn(function()
+	local poseEvent = ReplicatedStorage:WaitForChild("SentinelPose", 60)
+	if not poseEvent then return end
+	local JOINTS = { { "Neck" }, { "LeftShoulder", "Left Shoulder" }, { "RightShoulder", "Right Shoulder" }, { "LeftHip", "Left Hip" }, { "RightHip", "Right Hip" } }
+	local function q(a) return math.clamp(math.floor((a + math.pi) / (2 * math.pi) * 255 + 0.5), 0, 255) end
+	local cache, cacheChar = {}, nil
+	while true do
+		task.wait(0.2)
+		local char = player.Character
+		if poseEvent:GetAttribute("On") == true and char then
+			if cacheChar ~= char then cache, cacheChar = {}, char end
+			local out = {}
+			for i, names in JOINTS do
+				local m = cache[i]
+				if not (m and m.Parent) then
+					m = nil
+					for _, n in names do
+						local f = char:FindFirstChild(n, true)
+						if f and f:IsA("Motor6D") then m = f break end
+					end
+					cache[i] = m
+				end
+				local rx, ry, rz = 0, 0, 0
+				if m then
+					local r0 = m.C0.Rotation
+					rx, ry, rz = (r0 * m.Transform.Rotation * r0:Inverse()):ToEulerAnglesXYZ() -- the turn in the body's own directions
+				end
+				table.insert(out, q(rx)) table.insert(out, q(ry)) table.insert(out, q(rz))
+			end
+			local cam = workspace.CurrentCamera
+			local lv = cam and cam.CFrame.LookVector or Vector3.new(0, 0, -1)
+			table.insert(out, q(math.atan2(-lv.X, -lv.Z)))
+			table.insert(out, q(math.asin(math.clamp(lv.Y, -1, 1))))
+			pcall(poseEvent.FireServer, poseEvent, out)
+		end
+	end
 end)
